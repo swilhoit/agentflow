@@ -15,6 +15,8 @@ import { logger } from '../utils/logger';
 import { RealtimeVoiceReceiver } from './realtimeVoiceReceiver';
 import { CloudDeploymentService } from '../services/cloudDeployment';
 import { SubAgentManager } from '../agents/subAgentManager';
+import { getDatabase, DatabaseService } from '../services/database';
+import { ChannelNotifier } from '../services/channelNotifier';
 
 /**
  * Discord Bot with OpenAI Realtime API Integration
@@ -28,6 +30,20 @@ export class DiscordBotRealtime {
   private orchestratorApiKey: string;
   private cloudDeployment: CloudDeploymentService;
   private subAgentManager: SubAgentManager;
+  private db: DatabaseService;
+  private channelNotifier: ChannelNotifier;
+
+  // Rate limiting for text messages (user -> last message timestamp)
+  private messageRateLimits: Map<string, number> = new Map();
+  private readonly RATE_LIMIT_MS = 3000; // 3 seconds between messages
+
+  // Agent event listener cleanup tracking
+  private agentEventListeners: Map<string, {
+    stepStarted: (step: any) => void;
+    taskCompleted: (result: any) => Promise<void>;
+    warning: (warning: any) => void;
+    error: (error: any) => void;
+  }> = new Map();
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -42,6 +58,9 @@ export class DiscordBotRealtime {
     // Initialize Sub-Agent Manager
     this.subAgentManager = new SubAgentManager(config);
 
+    // Initialize database
+    this.db = getDatabase();
+
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -50,6 +69,9 @@ export class DiscordBotRealtime {
         GatewayIntentBits.MessageContent
       ]
     });
+
+    // Initialize channel notifier (needs client)
+    this.channelNotifier = new ChannelNotifier(this.client);
 
     this.setupEventHandlers();
   }
@@ -74,6 +96,19 @@ export class DiscordBotRealtime {
       }
       logger.info('User authorized, checking commands...');
 
+      // Save text message to database
+      if (message.guild) {
+        this.db.saveMessage({
+          guildId: message.guild.id,
+          channelId: message.channel.id,
+          userId: message.author.id,
+          username: message.author.tag,
+          message: message.content,
+          messageType: 'text',
+          timestamp: message.createdAt
+        });
+      }
+
       // Handle text commands
       if (message.content.startsWith('!join')) {
         logger.info('!join command detected, calling handler');
@@ -82,6 +117,9 @@ export class DiscordBotRealtime {
         await this.handleLeaveCommand(message);
       } else if (message.content.startsWith('!status')) {
         await this.handleStatusCommand(message);
+      } else if (!message.content.startsWith('!')) {
+        // Handle general text messages (not commands)
+        await this.handleTextMessage(message);
       }
     });
 
@@ -136,13 +174,33 @@ export class DiscordBotRealtime {
       const receiver = new RealtimeVoiceReceiver(this.config.openaiApiKey);
       this.realtimeReceivers.set(message.guild!.id, receiver);
 
+      // Capture channel ID and guild ID in closure-safe variables
+      const channelId = member.voice.channel.id;
+      const guildId = message.guild!.id;
+
+      // Set context for message logging
+      receiver.setContext(guildId, channelId);
+
+      // Set up message callback to save to database
+      receiver.onMessage((userId: string, username: string, msg: string, isBot: boolean) => {
+        this.db.saveMessage({
+          guildId,
+          channelId,
+          userId,
+          username,
+          message: msg,
+          messageType: isBot ? 'agent_response' : 'voice',
+          timestamp: new Date()
+        });
+      });
+
       // Set up function calling to integrate with Claude orchestrator
       receiver.onFunctionCall(async (name: string, args: any) => {
-        return await this.handleFunctionCall(name, args, message.author.id, message.guild!.id, message.channel.id);
+        return await this.handleFunctionCall(name, args, message.author.id, guildId, channelId);
       });
 
       // Start listening (pass bot user ID to filter out bot's own audio)
-      await receiver.startListening(connection, message.author.id, this.client.user!.id);
+      await receiver.startListening(connection, message.author.id, this.client.user!.id, message.author.tag);
 
       await message.reply('Joined voice channel and started listening! (Realtime API Mode - Natural Conversations)');
     } catch (error) {
@@ -181,6 +239,78 @@ export class DiscordBotRealtime {
     status += `- Mode: OpenAI Realtime API (Natural Conversations)\n`;
 
     await message.reply(status);
+  }
+
+  /**
+   * Handle general text messages (for AI responses)
+   */
+  private async handleTextMessage(message: Message): Promise<void> {
+    try {
+      if (!message.guild) return;
+
+      // Rate limiting: Check if user is sending messages too quickly
+      const userId = message.author.id;
+      const now = Date.now();
+      const lastMessageTime = this.messageRateLimits.get(userId) || 0;
+
+      if (now - lastMessageTime < this.RATE_LIMIT_MS) {
+        const remainingTime = Math.ceil((this.RATE_LIMIT_MS - (now - lastMessageTime)) / 1000);
+        await message.react('⏱️');
+        logger.info(`Rate limit: User ${message.author.tag} must wait ${remainingTime}s`);
+        return;
+      }
+
+      // Update last message time
+      this.messageRateLimits.set(userId, now);
+
+      // Get conversation context from database
+      const context = this.db.getConversationContext(
+        message.guild.id,
+        message.channel.id,
+        20
+      );
+
+      // Send to orchestrator or OpenAI for response
+      const response = await fetch(`${this.orchestratorUrl}/command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': this.orchestratorApiKey
+        },
+        body: JSON.stringify({
+          command: message.content,
+          context: {
+            conversationHistory: context,
+            userId: message.author.id,
+            guildId: message.guild.id,
+            channelId: message.channel.id,
+            timestamp: new Date()
+          },
+          priority: 'normal',
+          requiresSubAgents: false
+        })
+      });
+
+      const result = await response.json() as any;
+
+      if (result.success && result.message) {
+        await message.reply(result.message);
+
+        // Save bot response to database
+        this.db.saveMessage({
+          guildId: message.guild.id,
+          channelId: message.channel.id,
+          userId: this.client.user!.id,
+          username: this.client.user!.tag,
+          message: result.message,
+          messageType: 'agent_response',
+          timestamp: new Date()
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to handle text message', error);
+      // Don't reply on error to avoid spamming
+    }
   }
 
   /**
@@ -298,9 +428,18 @@ export class DiscordBotRealtime {
       try {
         logger.info(`🤖 Spawning autonomous agent for task: ${args.task_description}`);
 
+        // Get conversation context from database
+        const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+
+        // Enhance task description with context
+        let enhancedTaskDescription = args.task_description;
+        if (conversationContext) {
+          enhancedTaskDescription += `\n\nRecent conversation context:\n${conversationContext}`;
+        }
+
         const { sessionId, agent } = await this.subAgentManager.spawnClaudeCodeAgent(
           `voice_${guildId}_${Date.now()}`,
-          args.task_description,
+          enhancedTaskDescription,
           {
             contextFiles: args.context_files,
             requirements: args.requirements,
@@ -309,14 +448,121 @@ export class DiscordBotRealtime {
           }
         );
 
-        // Stream agent output back to voice
+        // Post agent start notification to channel
+        await this.channelNotifier.notifyAgentStart(
+          guildId,
+          channelId,
+          sessionId,
+          args.task_description,
+          userId
+        );
+
+        // Create agent task in database
+        this.db.createAgentTask({
+          agentId: sessionId,
+          guildId,
+          channelId,
+          userId,
+          taskDescription: args.task_description,
+          status: 'running',
+          startedAt: new Date()
+        });
+
+        // Stream agent output to channel
         const receiver = this.realtimeReceivers.get(guildId);
         if (receiver) {
           this.subAgentManager.streamAgentOutput(sessionId, (data) => {
             logger.info(`[Agent ${sessionId}] ${data}`);
-            // Optionally send progress updates via voice
           });
         }
+
+        // Listen to agent events - track listeners for cleanup
+        const stepStartedHandler = (step: any) => {
+          // Only notify on every 5th step or important milestones to reduce spam
+          if (step.step % 5 === 0 || step.step === 1 || step.step === step.totalSteps) {
+            this.channelNotifier.notifyAgentProgress(guildId, channelId, {
+              agentId: sessionId,
+              step: step.step,
+              totalSteps: step.totalSteps || 20,
+              action: step.action,
+              status: 'running'
+            }).catch((err) => logger.error('Failed to notify agent progress', err));
+          }
+        };
+
+        const taskCompletedHandler = async (result: any) => {
+          try {
+            // Update database
+            this.db.updateAgentTask(sessionId, {
+              status: result.success ? 'completed' : 'failed',
+              completedAt: new Date(),
+              result: JSON.stringify(result),
+              error: result.success ? undefined : result.error?.message
+            });
+
+            // Post completion notification
+            await this.channelNotifier.notifyAgentComplete(
+              guildId,
+              channelId,
+              sessionId,
+              result.success,
+              result.success
+                ? `Task completed successfully in ${(result.duration / 1000).toFixed(2)}s`
+                : `Task failed: ${result.error?.message || 'Unknown error'}`,
+              {
+                duration: result.duration,
+                steps: result.steps.length,
+                testResults: result.testResults
+              }
+            );
+
+            // Clean up event listeners to prevent memory leak
+            this.removeAgentListeners(sessionId, agent);
+          } catch (error) {
+            logger.error('Error in task completion handler', error);
+          }
+        };
+
+        const warningHandler = (warning: any) => {
+          // Only log critical warnings to reduce spam
+          if (warning.type === 'critical' || warning.type === 'security') {
+            this.channelNotifier.notifyAgentLog(guildId, channelId, {
+              agentId: sessionId,
+              logType: 'warning',
+              message: warning.message,
+              details: warning.type
+            }).catch((err) => logger.error('Failed to notify warning', err));
+          } else {
+            // Just log to console for non-critical warnings
+            logger.warn(`Agent ${sessionId} warning: ${warning.message}`);
+          }
+        };
+
+        const errorHandler = (error: any) => {
+          this.channelNotifier.notifyAgentLog(guildId, channelId, {
+            agentId: sessionId,
+            logType: 'error',
+            message: error.message,
+            details: error.stack
+          }).catch((err) => logger.error('Failed to notify error', err));
+
+          // Clean up on error
+          this.removeAgentListeners(sessionId, agent);
+        };
+
+        // Store listener references for cleanup
+        this.agentEventListeners.set(sessionId, {
+          stepStarted: stepStartedHandler,
+          taskCompleted: taskCompletedHandler,
+          warning: warningHandler,
+          error: errorHandler
+        });
+
+        // Attach event listeners
+        agent.on('step:started', stepStartedHandler);
+        agent.on('task:completed', taskCompletedHandler);
+        agent.on('warning', warningHandler);
+        agent.on('error', errorHandler);
 
         return {
           success: true,
@@ -448,6 +694,21 @@ export class DiscordBotRealtime {
   async start(): Promise<void> {
     await this.client.login(this.config.discordToken);
     logger.info('Discord bot started (Realtime API Mode)');
+  }
+
+  /**
+   * Remove event listeners from an agent to prevent memory leaks
+   */
+  private removeAgentListeners(sessionId: string, agent: any): void {
+    const listeners = this.agentEventListeners.get(sessionId);
+    if (listeners) {
+      agent.off('step:started', listeners.stepStarted);
+      agent.off('task:completed', listeners.taskCompleted);
+      agent.off('warning', listeners.warning);
+      agent.off('error', listeners.error);
+      this.agentEventListeners.delete(sessionId);
+      logger.info(`Cleaned up event listeners for agent ${sessionId}`);
+    }
   }
 
   async stop(): Promise<void> {

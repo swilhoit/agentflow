@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
+import * as fs from 'fs';
 import { logger } from '../utils/logger';
 
 export interface ConversationMessage {
@@ -45,6 +46,14 @@ export class DatabaseService {
 
   constructor(dbPath?: string) {
     const defaultPath = path.join(process.cwd(), 'data', 'agentflow.db');
+
+    // Ensure data directory exists
+    const dataDir = path.dirname(dbPath || defaultPath);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+      logger.info(`Created database directory: ${dataDir}`);
+    }
+
     this.db = new Database(dbPath || defaultPath);
 
     logger.info(`Database initialized at: ${dbPath || defaultPath}`);
@@ -67,11 +76,15 @@ export class DatabaseService {
         message TEXT NOT NULL,
         message_type TEXT NOT NULL CHECK(message_type IN ('voice', 'text', 'agent_response')),
         timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        metadata TEXT,
-        INDEX idx_guild_channel (guild_id, channel_id),
-        INDEX idx_timestamp (timestamp)
+        metadata TEXT
       )
     `);
+
+    // Create indexes for conversations
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_guild_channel_time
+                   ON conversations(guild_id, channel_id, timestamp DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_user
+                   ON conversations(user_id)`);
 
     // Create agent_logs table
     this.db.exec(`
@@ -84,12 +97,17 @@ export class DatabaseService {
         log_type TEXT NOT NULL CHECK(log_type IN ('info', 'warning', 'error', 'success', 'step')),
         message TEXT NOT NULL,
         details TEXT,
-        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_agent (agent_id),
-        INDEX idx_task (task_id),
-        INDEX idx_guild_channel (guild_id, channel_id)
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Create indexes for agent_logs
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_logs_agent
+                   ON agent_logs(agent_id, timestamp DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_logs_task
+                   ON agent_logs(task_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_logs_guild_channel
+                   ON agent_logs(guild_id, channel_id)`);
 
     // Create agent_tasks table
     this.db.exec(`
@@ -104,12 +122,17 @@ export class DatabaseService {
         started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at DATETIME,
         result TEXT,
-        error TEXT,
-        INDEX idx_agent (agent_id),
-        INDEX idx_guild_channel (guild_id, channel_id),
-        INDEX idx_status (status)
+        error TEXT
       )
     `);
+
+    // Create indexes for agent_tasks
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent
+                   ON agent_tasks(agent_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_guild_channel
+                   ON agent_tasks(guild_id, channel_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status
+                   ON agent_tasks(status, started_at DESC)`);
 
     logger.info('Database schema initialized');
   }

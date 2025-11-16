@@ -4,6 +4,7 @@ import { DiscordBot } from './bot/discordBot';
 import { DiscordBotRealtime } from './bot/discordBotRealtime';
 import { OrchestratorServer } from './orchestrator/orchestratorServer';
 import { VoiceCommand, OrchestratorRequest } from './types';
+import { getDatabase } from './services/database';
 
 async function main() {
   try {
@@ -39,12 +40,14 @@ async function main() {
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
         await bot.stop();
+        getDatabase().close();
         process.exit(0);
       });
 
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         await bot.stop();
+        getDatabase().close();
         process.exit(0);
       });
 

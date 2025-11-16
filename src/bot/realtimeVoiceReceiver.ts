@@ -30,6 +30,13 @@ export class RealtimeVoiceReceiver {
   // Track if we already have an active audio subscription for the user
   private hasActiveUserStream: boolean = false;
 
+  // Callbacks and context
+  private onMessageCallback: ((userId: string, username: string, message: string, isBot: boolean) => void) | null = null;
+  private guildId: string | null = null;
+  private channelId: string | null = null;
+  private currentUserId: string | null = null;
+  private currentUsername: string = 'Unknown User';
+
   constructor(apiKey: string) {
     this.audioPlayer = createAudioPlayer();
 
@@ -255,6 +262,11 @@ Be friendly, helpful, and conversational!`;
     // When transcription is available
     this.realtimeService.on('transcription', (text: string) => {
       logger.info(`User said: ${text}`);
+
+      // Invoke callback to save user message
+      if (this.onMessageCallback && this.currentUserId) {
+        this.onMessageCallback(this.currentUserId, this.currentUsername, text, false);
+      }
     });
 
     // When assistant starts responding
@@ -273,6 +285,17 @@ Be friendly, helpful, and conversational!`;
     this.realtimeService.on('response_done', (response: any) => {
       logger.info('Assistant finished responding');
       this.isProcessingAudio = false;
+
+      // Invoke callback to save bot response
+      if (this.onMessageCallback && this.botUserId && response?.output) {
+        const responseText = Array.isArray(response.output)
+          ? response.output.map((item: any) => item.content || item.text || '').join(' ')
+          : (response.output.content || response.output.text || '');
+
+        if (responseText) {
+          this.onMessageCallback(this.botUserId, 'AgentFlow Bot', responseText, true);
+        }
+      }
 
       // End the audio stream
       if (this.currentAudioStream) {
@@ -295,13 +318,15 @@ Be friendly, helpful, and conversational!`;
   /**
    * Start listening to Discord voice and streaming to Realtime API
    */
-  async startListening(connection: VoiceConnection, userId: string, botUserId: string): Promise<void> {
+  async startListening(connection: VoiceConnection, userId: string, botUserId: string, username?: string): Promise<void> {
     if (this.isListening) {
       logger.warn('Already listening, ignoring duplicate request');
       return;
     }
 
     this.botUserId = botUserId;
+    this.currentUserId = userId;
+    this.currentUsername = username || 'Unknown User';
     this.isListening = true;
     this.currentConnection = connection;
 
@@ -600,5 +625,20 @@ Be friendly, helpful, and conversational!`;
    */
   sendText(text: string): void {
     this.realtimeService.sendText(text);
+  }
+
+  /**
+   * Set callback for message transcriptions
+   */
+  onMessage(callback: (userId: string, username: string, message: string, isBot: boolean) => void): void {
+    this.onMessageCallback = callback;
+  }
+
+  /**
+   * Set guild and channel context for message logging
+   */
+  setContext(guildId: string, channelId: string): void {
+    this.guildId = guildId;
+    this.channelId = channelId;
   }
 }
