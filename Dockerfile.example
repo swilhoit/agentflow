@@ -1,0 +1,58 @@
+# Example Dockerfile with Claude Code CLI
+# This demonstrates how to deploy containers with Claude Code enabled to Google Cloud Run
+
+FROM node:20-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI
+RUN curl -fsSL https://storage.googleapis.com/anthropic-cli/install.sh | sh
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy application code
+COPY . .
+
+# Build TypeScript
+RUN npm run build
+
+# Expose port (Cloud Run requires port 8080)
+EXPOSE 8080
+
+# Set environment variables
+ENV PORT=8080
+ENV NODE_ENV=production
+ENV ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+
+# Configure GitHub CLI authentication
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+      echo "$GITHUB_TOKEN" | gh auth login --with-token; \
+    fi
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8080/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start command
+CMD ["npm", "start"]

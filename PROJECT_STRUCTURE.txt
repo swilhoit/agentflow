@@ -1,0 +1,160 @@
+AgentFlow - Complete Project Structure
+=======================================
+
+agentflow/
+├── README.md                      # User documentation and quick reference
+├── SETUP_GUIDE.md                 # Step-by-step setup instructions
+├── PROJECT_SUMMARY.md             # Technical overview and architecture
+├── PROJECT_STRUCTURE.txt          # This file
+├── package.json                   # Dependencies and npm scripts
+├── package-lock.json              # Locked dependency versions
+├── tsconfig.json                  # TypeScript compiler configuration
+├── Dockerfile                     # Production Docker image definition
+├── docker-compose.yml             # Local Docker orchestration
+├── .dockerignore                  # Docker build exclusions
+├── .gitignore                     # Git exclusions
+├── .env.example                   # Environment variable template
+├── quick-start.sh                 # Automated setup script
+│
+├── src/                           # Source code (TypeScript)
+│   ├── index.ts                   # Main application entry point
+│   │
+│   ├── bot/                       # Discord bot implementation
+│   │   ├── discordBot.ts          # Main bot class with commands
+│   │   └── voiceReceiver.ts       # Voice audio capture and processing
+│   │
+│   ├── orchestrator/              # Claude AI orchestration layer
+│   │   ├── claudeClient.ts        # Claude API integration
+│   │   └── orchestratorServer.ts  # Express REST API server
+│   │
+│   ├── agents/                    # Sub-agent management
+│   │   └── subAgentManager.ts     # Agent lifecycle and execution
+│   │
+│   ├── utils/                     # Utility modules
+│   │   ├── config.ts              # Environment configuration loader
+│   │   ├── logger.ts              # Logging utility
+│   │   └── whisper.ts             # Whisper transcription service
+│   │
+│   └── types/                     # TypeScript type definitions
+│       └── index.ts               # Shared interfaces and types
+│
+├── deploy/                        # Cloud deployment scripts
+│   ├── aws-ecs.sh                 # AWS Elastic Container Service
+│   ├── gcp-cloud-run.sh           # Google Cloud Run
+│   └── digital-ocean.sh           # Digital Ocean App Platform
+│
+├── dist/                          # Compiled JavaScript (generated)
+│   └── [build output]
+│
+├── node_modules/                  # NPM dependencies (generated)
+│   └── [dependencies]
+│
+├── audio/                         # Temporary audio files (generated)
+│   └── [*.wav, *.pcm]
+│
+└── temp/                          # Temporary processing files (generated)
+    └── [temporary files]
+
+Key Files Description
+====================
+
+Configuration & Setup
+---------------------
+.env                     - Your API keys and secrets (create from .env.example)
+.env.example             - Template for environment variables
+tsconfig.json            - TypeScript compiler options
+package.json             - Project metadata, dependencies, scripts
+docker-compose.yml       - Local development with Docker
+Dockerfile               - Production container image
+
+Documentation
+-------------
+README.md                - Main user guide and quick start
+SETUP_GUIDE.md           - Detailed setup walkthrough
+PROJECT_SUMMARY.md       - Technical architecture overview
+PROJECT_STRUCTURE.txt    - This file structure reference
+
+Entry Points
+-----------
+src/index.ts             - Application entry point
+quick-start.sh           - Automated setup helper
+
+Core Modules
+-----------
+src/bot/discordBot.ts           - Discord bot logic (!join, !leave, !status)
+src/bot/voiceReceiver.ts        - Captures and processes voice audio
+src/utils/whisper.ts            - Transcribes audio with OpenAI Whisper
+src/orchestrator/claudeClient.ts - Interprets commands with Claude AI
+src/orchestrator/orchestratorServer.ts - REST API for command processing
+src/agents/subAgentManager.ts   - Spawns and manages sub-agents
+
+Utilities
+--------
+src/utils/config.ts      - Loads and validates environment config
+src/utils/logger.ts      - Structured logging
+src/types/index.ts       - TypeScript type definitions
+
+Deployment
+---------
+deploy/aws-ecs.sh        - Deploy to AWS
+deploy/gcp-cloud-run.sh  - Deploy to Google Cloud
+deploy/digital-ocean.sh  - Deploy to Digital Ocean
+
+NPM Scripts
+===========
+npm install              - Install dependencies
+npm run build            - Compile TypeScript to JavaScript
+npm start                - Start production server
+npm run dev              - Start with hot-reload for development
+npm run clean            - Remove build artifacts
+npm run rebuild          - Clean and rebuild
+
+Docker Commands
+==============
+docker build -t agentflow .                    - Build image
+docker-compose up -d                           - Start with Docker Compose
+docker-compose logs -f                         - View logs
+docker-compose down                            - Stop services
+
+Discord Commands
+===============
+!join                    - Bot joins your voice channel
+!leave                   - Bot leaves voice channel
+!status                  - Check bot connection status
+
+API Endpoints
+============
+GET  /health                        - Health check
+POST /command                       - Process voice command
+GET  /task/:taskId                  - Get task status
+GET  /agents                        - List active agents
+DELETE /agent/:agentId              - Terminate agent
+DELETE /history/:guildId/:userId    - Clear conversation history
+
+Environment Variables
+====================
+DISCORD_TOKEN            - Required: Discord bot token
+DISCORD_CLIENT_ID        - Required: Discord application client ID
+OPENAI_API_KEY           - Required: OpenAI API key for Whisper
+ANTHROPIC_API_KEY        - Required: Anthropic API key for Claude
+ORCHESTRATOR_URL         - Required: Orchestrator server URL
+ORCHESTRATOR_API_KEY     - Required: API authentication key
+ALLOWED_USER_IDS         - Optional: Comma-separated Discord user IDs
+MAX_CONCURRENT_AGENTS    - Optional: Max parallel agents (default: 5)
+LOG_LEVEL                - Optional: DEBUG|INFO|WARN|ERROR (default: INFO)
+
+Quick Reference
+==============
+1. Copy .env.example to .env and fill in API keys
+2. Run ./quick-start.sh for automated setup
+3. Or manually: npm install && npm run build && npm start
+4. Invite bot to Discord server
+5. Join voice channel and use !join
+6. Speak commands to the bot
+7. Check logs for transcription and execution
+
+Architecture Flow
+================
+Discord Voice → VoiceReceiver → Whisper → ClaudeClient → SubAgentManager → Execution
+     ↑                                                                          ↓
+     └─────────────────────── Results/Status ──────────────────────────────────┘

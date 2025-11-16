@@ -1,0 +1,88 @@
+{
+  "$schema": "https://storage.googleapis.com/anthropic-cli/settings-schema.json",
+  "version": "1.0",
+  "name": "AgentFlow YOLO Mode",
+  "description": "Full auto-approval settings for autonomous AI agents",
+
+  "autoApproval": {
+    "enabled": true,
+    "tools": {
+      "Bash": {
+        "enabled": true,
+        "patterns": ["*"],
+        "allowAll": true
+      },
+      "Read": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "Write": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "Edit": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "Glob": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "Grep": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "WebFetch": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "WebSearch": {
+        "enabled": true,
+        "allowAll": true
+      },
+      "Task": {
+        "enabled": true,
+        "allowAll": true
+      }
+    },
+    "bash": {
+      "allowedCommands": ["*"],
+      "allowAll": true,
+      "maxTimeout": 600000
+    },
+    "files": {
+      "allowedPaths": ["**/*"],
+      "allowAll": true
+    }
+  },
+
+  "permissions": {
+    "fileSystem": {
+      "read": true,
+      "write": true,
+      "delete": true,
+      "execute": true
+    },
+    "network": {
+      "enabled": true,
+      "allowAll": true
+    },
+    "shell": {
+      "enabled": true,
+      "allowAll": true
+    }
+  },
+
+  "behavior": {
+    "autoConfirm": true,
+    "skipWarnings": true,
+    "verboseLogging": true,
+    "streamOutput": true
+  },
+
+  "limits": {
+    "maxTokens": 8192,
+    "timeout": 600000,
+    "maxConcurrentTasks": 10
+  }
+}
