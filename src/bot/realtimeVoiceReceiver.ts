@@ -6,16 +6,16 @@ import {
   StreamType
 } from '@discordjs/voice';
 import { logger } from '../utils/logger';
-import { RealtimeVoiceService } from '../utils/realtimeVoice';
+import { ElevenLabsVoiceService } from '../utils/elevenLabsVoice';
 import { Readable, Transform } from 'stream';
 import * as prism from 'prism-media';
 
 /**
  * Realtime Voice Receiver
- * Bridges Discord voice with OpenAI Realtime API
+ * Bridges Discord voice with ElevenLabs Conversational AI
  */
 export class RealtimeVoiceReceiver {
-  private realtimeService: RealtimeVoiceService;
+  private voiceService: ElevenLabsVoiceService;
   private audioPlayer: AudioPlayer;
   private currentAudioStream: Readable | null = null;
   private isProcessingAudio: boolean = false;
@@ -48,24 +48,22 @@ export class RealtimeVoiceReceiver {
   private currentUserId: string | null = null;
   private currentUsername: string = 'Unknown User';
 
-  constructor(apiKey: string, speed: number = 1.25) {
+  constructor(apiKey: string, agentId: string, speed: number = 1.25) {
     this.audioPlayer = createAudioPlayer();
 
-    // Initialize Realtime API service with function calling enabled
-    this.realtimeService = new RealtimeVoiceService({
+    // Initialize ElevenLabs Conversational AI service
+    this.voiceService = new ElevenLabsVoiceService({
       apiKey,
-      voice: 'alloy',
-      instructions: this.getSystemInstructions(),
-      tools: this.getFunctionDefinitions(),
-      speed: speed // Speech speed (0.25 to 4.0, 1.0 is normal)
+      agentId,
+      instructions: this.getSystemInstructions()
     });
 
-    // Increase max listeners for the Realtime service to prevent warnings
-    this.realtimeService.setMaxListeners(20);
+    // Increase max listeners to prevent warnings
+    this.voiceService.setMaxListeners(20);
 
     this.setupEventHandlers();
     
-    logger.info(`Realtime Voice Receiver initialized with speech speed: ${speed}x`);
+    logger.info(`ElevenLabs Voice Receiver initialized for agent: ${agentId}`);
   }
 
   /**
@@ -179,13 +177,34 @@ User: "Show my Cloud Run services"
 Your response: "I'll list your services - check Discord for the list."
 [CALL list_cloud_services function]
 
+🚨 CRITICAL: COMPLEX MULTI-STEP TASKS 🚨
+When user asks for tasks involving MULTIPLE SYSTEMS or COMPLEX WORKFLOWS, use task_type: "coding":
+
+User: "Go through my GitHub repos and create Trello cards for the most recent 5 projects"
+Your response: "I'll fetch your GitHub repos and create Trello cards for the top 5. Watch Discord for progress."
+[CALL execute_task with task_description: "Fetch recent 5 GitHub repos using gh CLI and create Trello cards for each on AgentFlow board with project analysis", task_type: "coding"]
+
+User: "Analyze my repos and update Trello with next steps"
+Your response: "I'll analyze your repositories and update Trello cards with next steps. Discord will show the progress."
+[CALL execute_task with task_description: "Analyze GitHub repositories and create/update Trello cards with next steps for each project", task_type: "coding"]
+
+User: "Create Trello lists for my GitHub projects"
+Your response: "I'll fetch your GitHub projects and create Trello lists for them. Updates in Discord."
+[CALL execute_task with task_description: "Fetch GitHub projects and create corresponding Trello lists on AgentFlow board", task_type: "coding"]
+
+TASK TYPE RULES:
+- task_type: "trello" → ONLY for simple, single Trello operations (list boards, create one card, search cards)
+- task_type: "terminal" → ONLY for simple shell commands (gh repo list, gcloud projects list)
+- task_type: "coding" → For ANY multi-step workflow, GitHub+Trello integration, analysis, or complex automation
+
 REMEMBER:
 - You're executing commands on the USER'S machine
-- The USER is logged in, not you  
+- The USER is logged in, not you
 - You have FULL Trello access via REST API
 - Your job is to be a helpful command executor
 - ALWAYS try execute_task instead of refusing
-- For Trello: USE execute_task with task_type: "trello"
+- For SIMPLE Trello: task_type: "trello"
+- For COMPLEX workflows: task_type: "coding"
 - ALWAYS remind user that they'll see updates/results in Discord channel
 
 ⚠️ CRITICAL RULE: When the user asks you to DO something (create, rename, update, check, list, etc.), you MUST call the execute_task function. DO NOT just talk about it - ACT ON IT.
@@ -375,26 +394,11 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
   }
 
   /**
-   * Set up event handlers for Realtime API
+   * Set up event handlers for ElevenLabs Conversational AI
    */
   private setupEventHandlers(): void {
-    // When user starts speaking
-    this.realtimeService.on('speech_started', () => {
-      logger.info('🎤 User started speaking (VAD detected) - interrupting bot');
-
-      // Cancel any ongoing response - use the interrupt method for consistency
-      if (this.isProcessingAudio || this.currentAudioStream) {
-        this.interrupt();
-      }
-    });
-
-    // When user stops speaking
-    this.realtimeService.on('speech_stopped', () => {
-      logger.info('User stopped speaking (VAD detected)');
-    });
-
     // When transcription is available
-    this.realtimeService.on('transcription', async (text: string) => {
+    this.voiceService.on('transcription', async (text: string) => {
       logger.info(`User said: ${text}`);
 
       // Send Discord message showing what user said
@@ -429,7 +433,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
         logger.info(`[HYBRID] Detected action command: "${text}" - forcing execute_task`);
 
         try {
-          // Immediately call execute_task - bypass unreliable Realtime API function calling
+          // Immediately call execute_task
           const result = await this.onFunctionCallCallback('execute_task', {
             task_description: text,
             task_type: 'auto' // Auto-detect task type
@@ -440,89 +444,106 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
           // The execute_task function already sends Discord notifications
           // and returns voiceMessage, so we don't need to duplicate that here
 
-          // Cancel Realtime API's response since we're handling it ourselves
-          this.realtimeService.cancelResponse();
-
           // Speak the voice-friendly response
           const spokenResponse = result.voiceMessage || "I'm working on that now.";
-          this.realtimeService.sendText(spokenResponse);
+          this.voiceService.sendText(spokenResponse);
 
         } catch (error) {
           logger.error('[HYBRID] Error executing task:', error);
 
-          // Fallback: let Realtime API handle it (though it will probably just talk about it)
-          logger.warn('[HYBRID] Falling back to Realtime API natural handling');
+          // Fallback: let ElevenLabs handle it naturally
+          logger.warn('[HYBRID] Falling back to ElevenLabs natural handling');
         }
       } else {
-        logger.info(`[HYBRID] Conversational message detected: "${text}" - letting Realtime API handle naturally`);
-        // For non-action messages (greetings, questions, etc.), let Realtime API respond naturally
+        logger.info(`[HYBRID] Conversational message detected: "${text}" - letting ElevenLabs handle naturally`);
+        // For non-action messages (greetings, questions, etc.), let ElevenLabs respond naturally
       }
     });
 
-    // When assistant starts responding
-    this.realtimeService.on('response_started', () => {
-      logger.info('Assistant started responding');
-      this.isProcessingAudio = true;
-      this.currentAssistantTranscript = ''; // Reset transcript accumulator
-    });
-
     // Accumulate assistant transcript as it streams
-    this.realtimeService.on('assistant_transcript_delta', (delta: string) => {
+    this.voiceService.on('assistant_transcript_delta', (delta: string) => {
       this.currentAssistantTranscript += delta;
+      
+      // Check if this is the first delta (start of response)
+      if (this.currentAssistantTranscript.length === delta.length) {
+        logger.info('Assistant started responding');
+        this.isProcessingAudio = true;
+      }
     });
 
     // When audio chunks arrive from assistant
-    this.realtimeService.on('audio', (audioBuffer: Buffer) => {
+    this.voiceService.on('audio', (audioBuffer: Buffer) => {
+      // ElevenLabs provides 16kHz audio, we need to upsample to 48kHz for Discord
       // Stream audio to Discord
       this.streamAudioToDiscord(audioBuffer);
     });
 
-    // When assistant finishes responding
-    this.realtimeService.on('response_done', async (response: any) => {
-      logger.info('Assistant finished responding');
-      this.isProcessingAudio = false;
-
-      // Send Discord message showing what assistant said
-      if (this.onDiscordMessageCallback && this.channelId && this.currentAssistantTranscript.trim()) {
-        logger.info(`[VOICE RECEIVER] Sending assistant response to channel ${this.channelId}`);
-        await this.onDiscordMessageCallback(
-          this.channelId,
-          `🤖 **Agent**: ${this.currentAssistantTranscript.trim()}`
-        );
-      } else {
-        logger.warn(`[VOICE RECEIVER] Cannot send assistant response - callback: ${!!this.onDiscordMessageCallback}, channelId: ${this.channelId}, transcript: "${this.currentAssistantTranscript.trim()}"`);
-      }
-
-      // Invoke callback to save bot response
-      if (this.onMessageCallback && this.botUserId) {
-        const responseText = this.currentAssistantTranscript.trim() ||
-          (response?.output && (Array.isArray(response.output)
-            ? response.output.map((item: any) => item.content || item.text || '').join(' ')
-            : (response.output.content || response.output.text || '')));
-
-        if (responseText) {
-          this.onMessageCallback(this.botUserId, 'AgentFlow Bot', responseText, true);
-        }
-      }
-
-      // End the audio stream
-      if (this.currentAudioStream) {
-        this.currentAudioStream.push(null);
-        this.currentAudioStream = null;
-      }
+    // Handle connection events
+    this.voiceService.on('connected', () => {
+      logger.info('Connected to ElevenLabs Conversational AI');
     });
 
-    // Note: Function calls are handled by realtimeVoice.ts directly via onFunctionCall()
+    this.voiceService.on('disconnected', () => {
+      logger.info('Disconnected from ElevenLabs Conversational AI');
+    });
+
+    // Note: ElevenLabs doesn't have a clear "response_done" event like OpenAI
+    // We'll detect completion based on transcript finalization
+    // Track timeout for detecting end of response
+    let transcriptFinalizationTimeout: NodeJS.Timeout | null = null;
+    
+    this.voiceService.on('assistant_transcript_delta', async (delta: string) => {
+      // Clear existing timeout
+      if (transcriptFinalizationTimeout) {
+        clearTimeout(transcriptFinalizationTimeout);
+      }
+      
+      // Set new timeout to finalize response after silence
+      transcriptFinalizationTimeout = setTimeout(async () => {
+        logger.info('Assistant finished responding');
+        this.isProcessingAudio = false;
+
+        // Send Discord message showing what assistant said
+        if (this.onDiscordMessageCallback && this.channelId && this.currentAssistantTranscript.trim()) {
+          logger.info(`[VOICE RECEIVER] Sending assistant response to channel ${this.channelId}`);
+          await this.onDiscordMessageCallback(
+            this.channelId,
+            `🤖 **Agent**: ${this.currentAssistantTranscript.trim()}`
+          );
+        } else {
+          logger.warn(`[VOICE RECEIVER] Cannot send assistant response - callback: ${!!this.onDiscordMessageCallback}, channelId: ${this.channelId}, transcript: "${this.currentAssistantTranscript.trim()}"`);
+        }
+
+        // Invoke callback to save bot response
+        if (this.onMessageCallback && this.botUserId) {
+          const responseText = this.currentAssistantTranscript.trim();
+          if (responseText) {
+            this.onMessageCallback(this.botUserId, 'AgentFlow Bot', responseText, true);
+          }
+        }
+
+        // End the audio stream
+        if (this.currentAudioStream) {
+          this.currentAudioStream.push(null);
+          this.currentAudioStream = null;
+        }
+        
+        // Reset transcript for next response
+        this.currentAssistantTranscript = '';
+      }, 500); // Wait 500ms after last transcript delta to consider response complete
+    });
+
+    // Note: Function calls are handled by elevenLabsVoice.ts directly via onFunctionCall()
     // which calls our registered callback. No need for duplicate event listener here.
 
     // Errors
-    this.realtimeService.on('error', (error: any) => {
-      logger.error('Realtime API error', error);
+    this.voiceService.on('error', (error: any) => {
+      logger.error('ElevenLabs API error', error);
     });
   }
 
   /**
-   * Start listening to Discord voice and streaming to Realtime API
+   * Start listening to Discord voice and streaming to ElevenLabs Conversational AI
    */
   async startListening(connection: VoiceConnection, userId: string, botUserId: string, username?: string): Promise<void> {
     if (this.isListening) {
@@ -536,9 +557,9 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
     this.isListening = true;
     this.currentConnection = connection;
 
-    // Connect to Realtime API
-    if (!this.realtimeService.isConnected()) {
-      await this.realtimeService.connect();
+    // Connect to ElevenLabs Conversational AI
+    if (!this.voiceService.isConnected()) {
+      await this.voiceService.connect();
     }
 
     // Subscribe the audio player to the connection
@@ -563,7 +584,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
         return;
       }
 
-      // Allow user audio even during bot playback - Realtime API VAD will handle interruptions
+      // Allow user audio even during bot playback - ElevenLabs will handle interruptions
       if (this.isProcessingAudio) {
         logger.info(`Bot is speaking but allowing user ${userId} audio for natural interruptions`);
       }
@@ -574,7 +595,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
       const audioStream = receiver.subscribe(speakingUserId);
 
       // Discord provides Opus at 48kHz stereo
-      // We need PCM16 at 24kHz mono for Realtime API
+      // We need PCM16 at 24kHz mono for ElevenLabs (will be downsampled to 16kHz in voiceService)
 
       // Step 1: Decode Opus to PCM 48kHz stereo
       const opusDecoder = new prism.opus.Decoder({
@@ -615,45 +636,45 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
             outIndex += 2;
           }
 
-          // Removed frequent logging - only log errors
+            // Removed frequent logging - only log errors
 
-          if (this.isListening && outputBuffer.length > 0) {
-            // Simple amplitude-based speech detection
-            let hasSignificantAudio = false;
-            for (let i = 0; i < outputBuffer.length; i += 2) {
-              const sample = Math.abs(outputBuffer.readInt16LE(i));
-              if (sample > 500) { // Threshold for considering it "speech" vs background noise
-                hasSignificantAudio = true;
-                break;
-              }
-            }
-
-            this.realtimeService.sendAudio(outputBuffer);
-
-            if (hasSignificantAudio) {
-              // User is speaking
-              if (!this.isSpeaking) {
-                this.isSpeaking = true;
-                logger.info('🎤 Speech detected (client-side VAD)');
-              }
-              this.lastAudioTime = Date.now();
-
-              // Clear existing timer
-              if (this.autoCommitTimer) {
-                clearTimeout(this.autoCommitTimer);
-              }
-
-              // Set timer to commit audio after silence threshold
-              this.autoCommitTimer = setTimeout(() => {
-                if (this.isSpeaking && Date.now() - this.lastAudioTime >= this.silenceThreshold) {
-                  logger.info(`✅ Silence detected after ${this.silenceThreshold}ms - committing audio`);
-                  this.realtimeService.commitAudio();
-                  this.isSpeaking = false;
-                  this.autoCommitTimer = null;
+            if (this.isListening && outputBuffer.length > 0) {
+              // Simple amplitude-based speech detection
+              let hasSignificantAudio = false;
+              for (let i = 0; i < outputBuffer.length; i += 2) {
+                const sample = Math.abs(outputBuffer.readInt16LE(i));
+                if (sample > 500) { // Threshold for considering it "speech" vs background noise
+                  hasSignificantAudio = true;
+                  break;
                 }
-              }, this.silenceThreshold);
+              }
+
+              // Send audio to ElevenLabs (will be downsampled from 24kHz to 16kHz)
+              this.voiceService.sendAudio(outputBuffer);
+
+              if (hasSignificantAudio) {
+                // User is speaking
+                if (!this.isSpeaking) {
+                  this.isSpeaking = true;
+                  logger.info('🎤 Speech detected (client-side VAD)');
+                }
+                this.lastAudioTime = Date.now();
+
+                // Clear existing timer
+                if (this.autoCommitTimer) {
+                  clearTimeout(this.autoCommitTimer);
+                }
+
+                // Note: ElevenLabs handles VAD internally, no need to manually commit
+                this.autoCommitTimer = setTimeout(() => {
+                  if (this.isSpeaking && Date.now() - this.lastAudioTime >= this.silenceThreshold) {
+                    logger.info(`✅ Silence detected after ${this.silenceThreshold}ms`);
+                    this.isSpeaking = false;
+                    this.autoCommitTimer = null;
+                  }
+                }, this.silenceThreshold);
+              }
             }
-          }
         } catch (error) {
           logger.error('[Audio Pipeline] Resampling error', error);
         }
@@ -700,7 +721,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
   }
 
   /**
-   * Stream audio from Realtime API back to Discord
+   * Stream audio from ElevenLabs back to Discord
    */
   private streamAudioToDiscord(audioBuffer: Buffer): void {
     // Create or continue the audio stream
@@ -709,15 +730,15 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
         read() {}
       });
 
-      // Realtime API provides PCM16 at 24kHz mono
+      // ElevenLabs provides PCM16 at 16kHz mono
       // Discord needs 48kHz stereo
-      // Manual upsampling: duplicate each sample (24kHz -> 48kHz) and duplicate to stereo
+      // Manual upsampling: 16kHz -> 48kHz (3x) and mono to stereo
 
       const upsamplerTransform = new Transform({
         transform(chunk: Buffer, encoding, callback) {
           try {
-            // chunk is 24kHz mono PCM16
-            // We need to upsample by 2x and convert to stereo with linear interpolation
+            // chunk is 16kHz mono PCM16
+            // We need to upsample by 3x (16kHz -> 48kHz) and convert to stereo
             const inputSamples = Math.floor(chunk.length / 2); // Number of complete mono samples
             
             // Ensure we only process complete samples
@@ -726,28 +747,20 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
               return;
             }
 
-            const outputBuffer = Buffer.alloc(inputSamples * 2 * 2 * 2); // 2x samples, 2 channels, 2 bytes
+            const outputBuffer = Buffer.alloc(inputSamples * 3 * 2 * 2); // 3x samples, 2 channels, 2 bytes
 
             let outIndex = 0;
             for (let i = 0; i < inputSamples; i++) {
               const byteIndex = i * 2;
-              const sample1 = chunk.readInt16LE(byteIndex);
-              const sample2 = (i + 1) < inputSamples ? chunk.readInt16LE(byteIndex + 2) : sample1;
+              const sample = chunk.readInt16LE(byteIndex);
 
-              // Linear interpolation between samples for smoother upsampling
-              const interpolated = Math.floor((sample1 + sample2) / 2);
-
-              // Write original sample to both channels (stereo)
-              outputBuffer.writeInt16LE(sample1, outIndex);     // Left original
-              outputBuffer.writeInt16LE(sample1, outIndex + 2); // Right original
-
-              // Write interpolated sample to both channels (stereo)
-              outputBuffer.writeInt16LE(interpolated, outIndex + 4); // Left interpolated
-              outputBuffer.writeInt16LE(interpolated, outIndex + 6); // Right interpolated
-              outIndex += 8;
+              // Write each sample 3 times (3x upsampling) to both channels (stereo)
+              for (let j = 0; j < 3; j++) {
+                outputBuffer.writeInt16LE(sample, outIndex);     // Left
+                outputBuffer.writeInt16LE(sample, outIndex + 2); // Right
+                outIndex += 4;
+              }
             }
-
-            // Removed frequent logging - only log errors
             
             this.push(outputBuffer);
             callback();
@@ -809,8 +822,8 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
   onFunctionCall(handler: (name: string, args: any) => Promise<any>): void {
     // Store the callback for use in our internal handler
     this.onFunctionCallCallback = handler;
-    // Also register with realtimeService to pass through
-    this.realtimeService.onFunctionCall(handler);
+    // Also register with voiceService to pass through
+    this.voiceService.onFunctionCall(handler);
   }
 
   /**
@@ -823,9 +836,9 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
     // Stop audio playback immediately
     this.audioPlayer.stop();
 
-    // Cancel the current response from the Realtime API
+    // Cancel the current response from ElevenLabs
     if (this.isProcessingAudio) {
-      this.realtimeService.cancelResponse();
+      this.voiceService.cancelResponse();
       this.isProcessingAudio = false;
     }
 
@@ -857,7 +870,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
     this.isListening = false;
     this.hasActiveUserStream = false;
     this.audioPlayer.stop();
-    this.realtimeService.disconnect();
+    this.voiceService.disconnect();
 
     if (this.currentAudioStream) {
       this.currentAudioStream.push(null);
@@ -900,17 +913,17 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
   }
 
   /**
-   * Check if connected to Realtime API
+   * Check if connected to ElevenLabs Conversational AI
    */
   isConnected(): boolean {
-    return this.realtimeService.isConnected();
+    return this.voiceService.isConnected();
   }
 
   /**
    * Send a text message (for hybrid interactions)
    */
   sendText(text: string): void {
-    this.realtimeService.sendText(text);
+    this.voiceService.sendText(text);
   }
 
   /**

@@ -5,6 +5,60 @@ import { DiscordBotRealtime } from './bot/discordBotRealtime';
 import { OrchestratorServer } from './orchestrator/orchestratorServer';
 import { VoiceCommand, OrchestratorRequest } from './types';
 import { getDatabase } from './services/database';
+import { TrelloService } from './services/trello';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Process lock file management
+const LOCK_FILE = path.join(process.cwd(), 'data', '.agentflow.lock');
+
+function checkAndCreateLock(): boolean {
+  try {
+    // Ensure data directory exists
+    const dataDir = path.dirname(LOCK_FILE);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    // Check if lock file exists
+    if (fs.existsSync(LOCK_FILE)) {
+      const pidStr = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
+      const oldPid = parseInt(pidStr, 10);
+
+      // Check if the process is still running
+      try {
+        process.kill(oldPid, 0); // Signal 0 checks if process exists
+        logger.error(`❌ CRITICAL: Another instance (PID: ${oldPid}) is already running!`);
+        logger.error('Please stop the other instance first or remove the lock file if it\'s stale.');
+        logger.error(`Lock file: ${LOCK_FILE}`);
+        return false;
+      } catch (e) {
+        // Process doesn't exist, lock file is stale
+        logger.warn(`Removing stale lock file from PID ${oldPid}`);
+        fs.unlinkSync(LOCK_FILE);
+      }
+    }
+
+    // Create new lock file with current PID
+    fs.writeFileSync(LOCK_FILE, process.pid.toString());
+    logger.info(`Created process lock file: ${LOCK_FILE} (PID: ${process.pid})`);
+    return true;
+  } catch (error) {
+    logger.error('Failed to create process lock', error);
+    return false;
+  }
+}
+
+function removeLock(): void {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      fs.unlinkSync(LOCK_FILE);
+      logger.info('Removed process lock file');
+    }
+  } catch (error) {
+    logger.error('Failed to remove lock file', error);
+  }
+}
 
 async function main() {
   try {
@@ -14,14 +68,33 @@ async function main() {
 
     logger.info('Starting AgentFlow...');
 
+    // Check for existing instance
+    if (!checkAndCreateLock()) {
+      process.exit(1);
+    }
+
     // Load and validate configuration
     const config = loadConfig();
     validateConfig(config);
 
     logger.info('Configuration loaded successfully');
 
-    // Start orchestrator server
-    const orchestratorServer = new OrchestratorServer(config);
+    // Initialize Trello service if credentials are provided
+    let trelloService: TrelloService | undefined;
+    if (config.trelloApiKey && config.trelloApiToken) {
+      try {
+        trelloService = new TrelloService(config.trelloApiKey, config.trelloApiToken);
+        logger.info('✅ Trello service initialized successfully');
+      } catch (error) {
+        logger.error('Failed to initialize Trello service:', error);
+        logger.warn('Continuing without Trello integration');
+      }
+    } else {
+      logger.info('Trello credentials not configured - Trello integration disabled');
+    }
+
+    // Start orchestrator server with Trello service
+    const orchestratorServer = new OrchestratorServer(config, 3001, trelloService);
     await orchestratorServer.start();
 
     logger.info('Orchestrator server started');
@@ -43,14 +116,18 @@ async function main() {
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
         await bot.stop();
+        await orchestratorServer.stop();
         getDatabase().close();
+        removeLock();
         process.exit(0);
       });
 
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         await bot.stop();
+        await orchestratorServer.stop();
         getDatabase().close();
+        removeLock();
         process.exit(0);
       });
 
@@ -126,12 +203,18 @@ async function main() {
     process.on('SIGINT', async () => {
       logger.info('Shutting down gracefully...');
       await bot.stop();
+      await orchestratorServer.stop();
+      getDatabase().close();
+      removeLock();
       process.exit(0);
     });
 
     process.on('SIGTERM', async () => {
       logger.info('Shutting down gracefully...');
       await bot.stop();
+      await orchestratorServer.stop();
+      getDatabase().close();
+      removeLock();
       process.exit(0);
     });
 

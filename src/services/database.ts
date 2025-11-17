@@ -41,6 +41,17 @@ export interface AgentTask {
   error?: string;
 }
 
+export interface DailyGoal {
+  id?: number;
+  guildId: string;
+  userId: string;
+  username: string;
+  date: string; // Format: YYYY-MM-DD
+  goals: string;
+  timestamp: Date;
+  metadata?: string; // JSON string for additional data
+}
+
 export class DatabaseService {
   private db: Database.Database;
 
@@ -133,6 +144,26 @@ export class DatabaseService {
                    ON agent_tasks(guild_id, channel_id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status
                    ON agent_tasks(status, started_at DESC)`);
+
+    // Create daily_goals table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS daily_goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        date TEXT NOT NULL,
+        goals TEXT NOT NULL,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT
+      )
+    `);
+
+    // Create indexes for daily_goals
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_daily_goals_user_date
+                   ON daily_goals(user_id, date DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_daily_goals_guild_date
+                   ON daily_goals(guild_id, date DESC)`);
 
     logger.info('Database schema initialized');
   }
@@ -403,6 +434,104 @@ export class DatabaseService {
       username: row.username,
       message: row.message,
       messageType: row.message_type,
+      timestamp: new Date(row.timestamp),
+      metadata: row.metadata
+    }));
+  }
+
+  /**
+   * Save daily goals
+   */
+  saveDailyGoal(goal: DailyGoal): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO daily_goals (guild_id, user_id, username, date, goals, timestamp, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      goal.guildId,
+      goal.userId,
+      goal.username,
+      goal.date,
+      goal.goals,
+      goal.timestamp.toISOString(),
+      goal.metadata || null
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Get daily goals for a user on a specific date
+   */
+  getDailyGoal(userId: string, date: string): DailyGoal | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM daily_goals
+      WHERE user_id = ? AND date = ?
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+
+    const row = stmt.get(userId, date) as any;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      guildId: row.guild_id,
+      userId: row.user_id,
+      username: row.username,
+      date: row.date,
+      goals: row.goals,
+      timestamp: new Date(row.timestamp),
+      metadata: row.metadata
+    };
+  }
+
+  /**
+   * Get all daily goals for a user (with optional limit)
+   */
+  getUserGoalsHistory(userId: string, limit: number = 30): DailyGoal[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM daily_goals
+      WHERE user_id = ?
+      ORDER BY date DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(userId, limit) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      guildId: row.guild_id,
+      userId: row.user_id,
+      username: row.username,
+      date: row.date,
+      goals: row.goals,
+      timestamp: new Date(row.timestamp),
+      metadata: row.metadata
+    }));
+  }
+
+  /**
+   * Get all goals for a specific date across all users in a guild
+   */
+  getGuildGoalsForDate(guildId: string, date: string): DailyGoal[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM daily_goals
+      WHERE guild_id = ? AND date = ?
+      ORDER BY timestamp DESC
+    `);
+
+    const rows = stmt.all(guildId, date) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      guildId: row.guild_id,
+      userId: row.user_id,
+      username: row.username,
+      date: row.date,
+      goals: row.goals,
       timestamp: new Date(row.timestamp),
       metadata: row.metadata
     }));

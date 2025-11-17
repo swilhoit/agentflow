@@ -7,7 +7,8 @@ export function loadConfig(): BotConfig {
   const requiredEnvVars = [
     'DISCORD_TOKEN',
     'DISCORD_CLIENT_ID',
-    'OPENAI_API_KEY',
+    'ELEVENLABS_API_KEY',
+    'ELEVENLABS_AGENT_ID',
     'ANTHROPIC_API_KEY',
     'ORCHESTRATOR_URL',
     'ORCHESTRATOR_API_KEY'
@@ -19,11 +20,15 @@ export function loadConfig(): BotConfig {
     }
   }
 
+  const ttsSpeed = parseFloat(process.env.TTS_SPEED || '1.0');
+
   return {
     discordToken: process.env.DISCORD_TOKEN!,
     discordClientId: process.env.DISCORD_CLIENT_ID!,
-    openaiApiKey: process.env.OPENAI_API_KEY!,
+    openaiApiKey: process.env.OPENAI_API_KEY || '', // Now optional since we use ElevenLabs
     anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
+    elevenLabsApiKey: process.env.ELEVENLABS_API_KEY!,
+    elevenLabsAgentId: process.env.ELEVENLABS_AGENT_ID!,
     groqApiKey: process.env.GROQ_API_KEY,
     orchestratorUrl: process.env.ORCHESTRATOR_URL!,
     orchestratorApiKey: process.env.ORCHESTRATOR_API_KEY!,
@@ -31,7 +36,10 @@ export function loadConfig(): BotConfig {
     maxConcurrentAgents: parseInt(process.env.MAX_CONCURRENT_AGENTS || '5', 10),
     useRealtimeApi: process.env.USE_REALTIME_API === 'true',
     systemNotificationGuildId: process.env.SYSTEM_NOTIFICATION_GUILD_ID,
-    systemNotificationChannelId: process.env.SYSTEM_NOTIFICATION_CHANNEL_ID
+    systemNotificationChannelId: process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
+    ttsSpeed: Math.max(0.25, Math.min(4.0, ttsSpeed)),
+    trelloApiKey: process.env.TRELLO_API_KEY,
+    trelloApiToken: process.env.TRELLO_API_TOKEN
   };
 }
 
@@ -42,5 +50,9 @@ export function validateConfig(config: BotConfig): void {
 
   if (!config.orchestratorUrl.startsWith('http')) {
     throw new Error('ORCHESTRATOR_URL must be a valid HTTP/HTTPS URL');
+  }
+
+  if (config.ttsSpeed !== undefined && (config.ttsSpeed < 0.25 || config.ttsSpeed > 4.0)) {
+    throw new Error('TTS_SPEED must be between 0.25 and 4.0');
   }
 }

@@ -24,7 +24,10 @@ export class SubAgentManager {
     this.sendDiscordMessage = handler;
   }
 
-  private async sendNotification(message: string): Promise<void> {
+  /**
+   * Send notification to Discord channel (public method for orchestrator)
+   */
+  async sendNotification(message: string): Promise<void> {
     if (this.sendDiscordMessage && this.notificationChannelId) {
       try {
         await this.sendDiscordMessage(this.notificationChannelId, message);
@@ -122,7 +125,12 @@ export class SubAgentManager {
 
     try {
       logger.info(`Executing command: ${command}`);
-      await this.sendNotification(`⚙️ **Executing Command**\n\`\`\`bash\n${command.substring(0, 200)}\n\`\`\``);
+      
+      // Notify command starting
+      await this.sendNotification(`▶️ **Starting Command**\n\`\`\`bash\n${command.substring(0, 200)}\n\`\`\``);
+
+      // Notify running status
+      await this.sendNotification(`⏳ **Command Running...**\nExecuting bash command on your system`);
 
       const result = await this.runBashCommand(command);
 
@@ -132,7 +140,17 @@ export class SubAgentManager {
       session.status = 'idle';
 
       logger.info(`Task ${task.id} completed successfully`);
-      await this.sendNotification(`✅ **Command Completed**\n\`\`\`\nTask: ${task.id}\n\`\`\``);
+
+      // Send result in notification (truncate if too long for Discord)
+      const truncatedResult = result.length > 1800
+        ? result.substring(0, 1800) + '\n...(truncated)'
+        : result;
+
+      await this.sendNotification(
+        `✅ **Command Completed**\n` +
+        `\`\`\`bash\n${command}\n\`\`\`\n` +
+        `**Output:**\n\`\`\`\n${truncatedResult}\n\`\`\``
+      );
     } catch (error) {
       task.status = 'failed';
       task.error = error instanceof Error ? error.message : 'Unknown error';
@@ -190,33 +208,46 @@ export class SubAgentManager {
 
   private runBashCommand(command: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const process = spawn('bash', ['-c', command]);
+      logger.info(`[runBashCommand] Executing: ${command}`);
 
-      let stdout = '';
-      let stderr = '';
+      // Use exec instead of spawn for better shell compatibility
+      const { exec } = require('child_process');
 
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
+      const env = {
+        ...process.env,
+        PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+        HOME: require('os').homedir(),
+        SHELL: '/bin/bash',
+        // Preserve Google Cloud and GitHub auth
+        CLOUDSDK_CONFIG: process.env.CLOUDSDK_CONFIG || `${require('os').homedir()}/.config/gcloud`,
+        GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      };
 
-      process.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      process.on('close', (code) => {
-        if (code === 0) {
-          resolve(stdout);
-        } else {
-          reject(new Error(`Command failed with code ${code}: ${stderr}`));
+      const childProcess = exec(
+        command,
+        {
+          env,
+          cwd: process.cwd(),
+          maxBuffer: 1024 * 1024 * 5, // 5MB buffer for large outputs
+          shell: '/bin/bash'
+        },
+        (error: Error | null, stdout: string, stderr: string) => {
+          if (error) {
+            // On error, combine stdout and stderr for context
+            const errorOutput = stderr || stdout || error.message;
+            logger.error(`[runBashCommand] Failed: ${errorOutput.substring(0, 200)}`);
+            reject(new Error(`Command failed: ${errorOutput}`));
+          } else {
+            // Return stdout, or stderr if stdout is empty
+            const output = stdout || stderr || '(no output)';
+            logger.info(`[runBashCommand] Success: ${output.substring(0, 100)}...`);
+            resolve(output);
+          }
         }
-      });
-
-      process.on('error', (error) => {
-        reject(error);
-      });
+      );
 
       // Store process reference for potential termination
-      this.processes.set(command, process);
+      this.processes.set(command, childProcess);
     });
   }
 
@@ -270,26 +301,47 @@ export class SubAgentManager {
       requirements?: string[];
       maxIterations?: number;
       workingDirectory?: string;
+      channelId?: string; // Add channelId parameter
     }
   ): Promise<{ sessionId: string; agent: ClaudeCodeAgent }> {
     const sessionId = this.generateSessionId();
     const workingDirectory = options?.workingDirectory || process.cwd();
+    const channelId = options?.channelId || this.notificationChannelId;
 
-    logger.info(`🤖 Spawning Claude Code agent: ${sessionId}`);
+    logger.info(`🤖 Spawning Claude Code agent: ${sessionId} for channel: ${channelId}`);
 
     const agent = new ClaudeCodeAgent(sessionId, workingDirectory);
+
+    // Set notification handler so agent can send Discord messages directly
+    // Use the provided channelId if available, otherwise fall back to configured one
+    agent.setNotificationHandler(async (message: string) => {
+      if (channelId && this.sendDiscordMessage) {
+        await this.sendDiscordMessage(channelId, message);
+      } else {
+        await this.sendNotification(message);
+      }
+    });
+
+    // Helper to send notifications to the correct channel
+    const notify = async (msg: string) => {
+      if (channelId && this.sendDiscordMessage) {
+        await this.sendDiscordMessage(channelId, msg);
+      } else {
+        await this.sendNotification(msg);
+      }
+    };
 
     // Listen to agent events
     agent.on('task:started', async (data) => {
       const msg = `🚀 **Agent Started**\n\`\`\`\nTask: ${data.description}\nAgent ID: ${sessionId}\n\`\`\``;
       logger.info(`[${sessionId}] Task started: ${data.description}`);
-      await this.sendNotification(msg);
+      await notify(msg);
     });
 
     agent.on('step:started', async (step) => {
       const msg = `📋 **Step ${step.step}**: ${step.action}\n\`Agent: ${sessionId}\``;
       logger.info(`[${sessionId}] Step ${step.step}: ${step.action}`);
-      await this.sendNotification(msg);
+      await notify(msg);
     });
 
     agent.on('output', (data) => {
@@ -300,7 +352,13 @@ export class SubAgentManager {
     agent.on('warning', async (warning) => {
       const msg = `⚠️ **Warning**\n\`\`\`\nType: ${warning.type}\nAgent: ${sessionId}\n\`\`\``;
       logger.warn(`[${sessionId}] Warning: ${warning.type}`);
-      await this.sendNotification(msg);
+      await notify(msg);
+    });
+
+    agent.on('error', async (errorData) => {
+      const msg = `❌ **Agent Error**\n\`\`\`\nAgent: ${sessionId}\nError: ${errorData.error}\n\`\`\``;
+      logger.error(`[${sessionId}] Error: ${errorData.error}`);
+      await notify(msg);
     });
 
     agent.on('task:completed', async (result: AgentResult) => {
@@ -308,13 +366,13 @@ export class SubAgentManager {
       const duration = (result.duration / 1000).toFixed(2);
       const msg = `🏁 **Task Completed**\n\`\`\`\nStatus: ${status}\nAgent: ${sessionId}\nDuration: ${duration}s\nSteps: ${result.steps.length}\n\`\`\``;
       logger.info(`[${sessionId}] Task completed: ${result.success ? '✅' : '❌'}`);
-      await this.sendNotification(msg);
+      await notify(msg);
     });
 
     agent.on('task:failed', async (result: AgentResult) => {
       const msg = `❌ **Task Failed**\n\`\`\`\nAgent: ${sessionId}\nError: ${result.error || 'Unknown error'}\nDuration: ${(result.duration / 1000).toFixed(2)}s\n\`\`\``;
       logger.error(`[${sessionId}] Task failed: ${result.error}`);
-      await this.sendNotification(msg);
+      await notify(msg);
     });
 
     // Store agent

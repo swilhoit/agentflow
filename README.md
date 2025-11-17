@@ -37,6 +37,9 @@ A sophisticated Discord voice bot that transcribes conversations using Whisper a
 - **Claude AI Integration**: Intelligent command interpretation and task planning
 - **Sub-Agent Spawning**: Dynamically creates specialized agents for complex tasks
 - **Terminal Execution**: Runs bash commands based on voice input
+- **Natural Interruptions**: Interrupt the bot at any time by speaking or using `!stop` command
+- **Trello Integration**: Full project management capabilities - create, read, update cards via voice or text commands
+- **Daily Goals Tracker**: Automated daily reminders to set goals, with database storage and history tracking
 - **Cloud-Ready**: Docker support with deployment scripts for AWS, GCP, and Digital Ocean
 - **API-First Design**: RESTful orchestrator API for monitoring and control
 - **Security**: API key authentication and user whitelist
@@ -78,6 +81,10 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 ORCHESTRATOR_URL=http://localhost:3001
 ORCHESTRATOR_API_KEY=your_secure_random_key
 ALLOWED_USER_IDS=discord_user_id1,discord_user_id2
+
+# Optional: Trello Integration
+TRELLO_API_KEY=your_trello_api_key
+TRELLO_API_TOKEN=your_trello_api_token
 ```
 
 5. Build the project:
@@ -119,9 +126,31 @@ npm run dev
 
 Once the bot is in your server and running:
 
+**Voice & Status:**
 - `!join` - Bot joins your current voice channel and starts listening
 - `!leave` - Bot leaves the voice channel
 - `!status` - Check bot connection status
+- `!stop` / `!interrupt` - Interrupt the bot's current speech (also happens automatically when you start speaking)
+
+**Trello Integration:**
+- `!trello-help` - Show all Trello commands and usage examples
+- `!trello-boards` - List all your Trello boards
+- `!trello-lists <board-id-or-name>` - List all lists on a board
+- `!trello-cards <list-id>` - List all cards on a list
+- `!trello-create` - Create a new card (multi-line format)
+- `!trello-update` - Update an existing card (multi-line format)
+- `!trello-search <query>` - Search for cards across all boards
+
+See [TRELLO_INTEGRATION.md](./TRELLO_INTEGRATION.md) for detailed Trello documentation.
+
+**Daily Goals Tracker:**
+- `!goals-setup <channel> <user> [time] [timezone]` - Schedule daily goals reminder (e.g., `!goals-setup this @me`)
+- `!goals-test [@user]` - Trigger a test reminder immediately
+- `!goals-history [@user] [limit]` - View goals history (default: last 7 days)
+- `!goals-cancel <user>` - Cancel scheduled reminder for a user
+- `!goals-help` - Show all goals commands and usage examples
+
+See [DAILY_GOALS_GUIDE.md](./DAILY_GOALS_GUIDE.md) for detailed goals tracker documentation.
 
 ### Voice Commands
 
@@ -135,10 +164,17 @@ Simply speak in the voice channel where the bot is connected. The bot will:
 
 ### Example Voice Commands
 
+**System Commands:**
 - "List all files in the current directory"
 - "Check the system uptime and memory usage"
 - "Create a new Python script that prints hello world"
 - "Deploy the latest changes to production"
+
+**Trello Commands:**
+- "Show me my Trello boards"
+- "Create a card on my backlog list called 'Fix navigation bug'"
+- "Search Trello for authentication issues"
+- "What cards are in the In Progress list?"
 
 ## API Documentation
 
@@ -299,7 +335,10 @@ agentflow/
 | `ORCHESTRATOR_API_KEY` | API key for orchestrator auth | Yes |
 | `ALLOWED_USER_IDS` | Comma-separated Discord user IDs | No |
 | `MAX_CONCURRENT_AGENTS` | Max number of concurrent sub-agents (1-20) | No (default: 5) |
+| `TTS_SPEED` | Speech speed for text-to-speech (0.25-4.0) | No (default: 1.0) |
 | `LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | No (default: INFO) |
+| `TRELLO_API_KEY` | Trello API key for project management | No |
+| `TRELLO_API_TOKEN` | Trello API token for authentication | No |
 
 ## Security
 

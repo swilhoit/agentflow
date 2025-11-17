@@ -45,11 +45,21 @@ export class HybridOrchestrator {
 
   /**
    * Process command with smart routing
+   *
+   * IMPORTANT: For multi-step tasks, GitHub/Trello operations, or anything requiring
+   * conversation context, we ALWAYS use Claude (not Groq) because:
+   * - Claude has conversation history (remembers previous context)
+   * - Claude has Trello/GitHub tool access
+   * - Claude can execute multi-step workflows
+   *
+   * Groq is ONLY for truly simple queries like "what's the weather" or "hello"
    */
   async processCommand(request: OrchestratorRequest): Promise<HybridResponse> {
     const startTime = Date.now();
 
     try {
+      logger.info(`🔄 Processing: "${request.command.substring(0, 100)}..."`);
+
       // If Groq is not available, fall back to Claude
       if (!this.groqClient) {
         return await this.processWithClaude(request, startTime);
@@ -58,27 +68,53 @@ export class HybridOrchestrator {
       // Classify intent
       const intent = await this.groqClient.classifyIntent(request.command);
 
-      if (intent === 'simple') {
-        // Use Groq for simple queries (10-20x faster!)
-        return await this.processWithGroq(request, startTime);
-      } else {
-        // Use Claude for complex tasks (better reasoning)
+      // OVERRIDE: Always use Claude for anything that might need context or tools
+      const commandLower = request.command.toLowerCase();
+      const requiresClaude =
+        commandLower.includes('trello') ||
+        commandLower.includes('github') ||
+        commandLower.includes('create') ||
+        commandLower.includes('list') ||
+        commandLower.includes('show') ||
+        commandLower.includes('get') ||
+        commandLower.includes('repo') ||
+        commandLower.includes('card') ||
+        commandLower.includes('board') ||
+        commandLower.includes('deploy') ||
+        commandLower.includes('run') ||
+        commandLower.includes('execute') ||
+        commandLower.includes('analyze') ||
+        commandLower.includes('fetch') ||
+        commandLower.includes('go through') ||
+        commandLower.includes('my ') || // "my repos", "my boards", etc.
+        intent === 'complex';
+
+      if (requiresClaude) {
+        logger.info('🧠 Using Claude (requires context/tools)');
         return await this.processWithClaude(request, startTime);
+      } else {
+        // Use Groq ONLY for truly simple queries
+        logger.info('⚡ Using Groq (simple query)');
+        return await this.processWithGroq(request, startTime);
       }
     } catch (error) {
-      logger.error('Hybrid orchestrator error', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Hybrid orchestrator error:', errorMessage);
 
       // Fall back to Claude if Groq fails
       try {
-        logger.warn('Falling back to Claude due to Groq error');
+        logger.warn('⚠️ Falling back to Claude due to error');
         return await this.processWithClaude(request, startTime);
       } catch (claudeError) {
+        const claudeErrorMsg = claudeError instanceof Error ? claudeError.message : 'Unknown error';
+        logger.error('❌ Both Groq and Claude failed:', claudeErrorMsg);
+
         return {
           success: false,
-          message: '',
+          message: `I encountered an error while processing your request: ${claudeErrorMsg}`,
           model: 'claude',
           responseTime: Date.now() - startTime,
-          error: claudeError instanceof Error ? claudeError.message : 'Unknown error'
+          error: claudeErrorMsg
         };
       }
     }
@@ -97,11 +133,17 @@ export class HybridOrchestrator {
 
     logger.info('⚡ Using Groq (fast path)');
 
-    const systemPrompt = `You are AgentFlow, an AI assistant for cloud deployments and DevOps.
-You help with deployments, monitoring, and development tasks.
+    const systemPrompt = `You are AgentFlow, a command executor for the user's system.
 
-Keep responses concise and conversational since this is voice chat.
-For simple questions, answer directly in 1-3 sentences.`;
+USER'S SYSTEM HAS: gh CLI (GitHub authenticated as swilhoit), gcloud CLI (GCP authenticated).
+
+When user asks about "my GitHub repos" or "my Google Cloud projects":
+- DO NOT say you lack access
+- DO NOT ask for authentication
+- Say: "Let me run that command" and describe what you'd run (e.g., "gh repo list")
+
+For simple questions, answer directly in 1-2 sentences.
+Keep responses concise and helpful.`;
 
     const response = await this.groqClient.processSimpleQuery(
       request.command,

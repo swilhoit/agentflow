@@ -46,6 +46,13 @@ AgentFlow is a sophisticated voice-driven Discord bot that combines multiple AI 
 - **Health Checks**: Docker health monitoring
 - **Volume Management**: Persistent storage for logs and audio
 
+### 8. Trello Integration
+- **Project Management**: Full CRUD operations for Trello cards, lists, and boards
+- **Discord Commands**: Text-based commands for managing Trello directly from Discord
+- **Voice Commands**: Natural language Trello operations via voice
+- **Search & Filter**: Find cards across all boards with keyword search
+- **Automation Ready**: Programmatic API for workflow automation
+
 ## Architecture
 
 ```
@@ -137,6 +144,10 @@ agentflow/
 │   │   └── orchestratorServer.ts   # Express API server
 │   ├── agents/
 │   │   └── subAgentManager.ts      # Sub-agent lifecycle management
+│   ├── services/
+│   │   ├── trello.ts               # Trello API integration
+│   │   ├── database.ts             # Database service
+│   │   └── channelNotifier.ts      # Discord notifications
 │   ├── utils/
 │   │   ├── config.ts               # Configuration loader
 │   │   ├── logger.ts               # Logging utility
@@ -177,7 +188,11 @@ agentflow/
 |----------|---------|---------|
 | `ALLOWED_USER_IDS` | Empty | User access control |
 | `MAX_CONCURRENT_AGENTS` | 5 | Resource limiting |
+| `TTS_SPEED` | 1.0 | Speech speed (0.25-4.0, higher is faster) |
+| `USE_REALTIME_API` | false | Use OpenAI Realtime API for voice |
 | `LOG_LEVEL` | INFO | Logging verbosity |
+| `TRELLO_API_KEY` | Empty | Trello API key (optional) |
+| `TRELLO_API_TOKEN` | Empty | Trello API token (optional) |
 
 ## API Endpoints
 
@@ -197,9 +212,21 @@ agentflow/
 
 ## Discord Commands
 
+### Voice & Status
 - `!join` - Bot joins your voice channel
 - `!leave` - Bot leaves voice channel
 - `!status` - Check bot connection status
+
+### Trello Integration
+- `!trello-help` - Show all Trello commands
+- `!trello-boards` - List all your boards
+- `!trello-lists <board>` - List all lists on a board
+- `!trello-cards <list>` - List all cards on a list
+- `!trello-create` - Create a new card
+- `!trello-update` - Update an existing card
+- `!trello-search <query>` - Search for cards
+
+See [TRELLO_INTEGRATION.md](./TRELLO_INTEGRATION.md) for detailed documentation.
 
 ## Voice Command Flow
 

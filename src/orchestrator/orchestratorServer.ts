@@ -1,22 +1,37 @@
 import express, { Request, Response } from 'express';
-import { ClaudeClient } from './claudeClient';
+import { ToolBasedAgent } from '../agents/toolBasedAgent';
 import { SubAgentManager } from '../agents/subAgentManager';
 import { OrchestratorRequest, OrchestratorResponse } from '../types';
 import { logger } from '../utils/logger';
 import { BotConfig } from '../types';
+import { TrelloService } from '../services/trello';
 
+/**
+ * OrchestratorServer with Native Tool Use API
+ *
+ * Uses Anthropic's native tool calling - no external dependencies!
+ * Claude directly calls tools (bash, Trello, etc.), sees results, and iterates.
+ *
+ * This is the same approach Claude Code/Cursor uses.
+ */
 export class OrchestratorServer {
   private app: express.Application;
-  private claudeClient: ClaudeClient;
+  private toolBasedAgent: ToolBasedAgent;
   private subAgentManager: SubAgentManager;
   private config: BotConfig;
   private port: number;
+  private server: any; // HTTP server instance for cleanup
 
-  constructor(config: BotConfig, port: number = 3001) {
+  constructor(config: BotConfig, port: number = 3001, trelloService?: TrelloService) {
     this.config = config;
     this.port = port;
     this.app = express();
-    this.claudeClient = new ClaudeClient(config.anthropicApiKey);
+
+    // Initialize ToolBasedAgent with native Anthropic tool calling
+    this.toolBasedAgent = new ToolBasedAgent(config.anthropicApiKey, trelloService);
+
+    logger.info('🚀 OrchestratorServer: Native Tool Use API (Docker-ready, no CLI needed)');
+
     this.subAgentManager = new SubAgentManager(config);
 
     this.setupMiddleware();
@@ -63,7 +78,7 @@ export class OrchestratorServer {
       });
     });
 
-    // Process command
+    // Process command - Native Tool Use API with iterative execution
     this.app.post('/command', async (req: Request, res: Response) => {
       try {
         const request: OrchestratorRequest = req.body;
@@ -72,38 +87,88 @@ export class OrchestratorServer {
           return res.status(400).json({ error: 'Invalid request format' });
         }
 
-        logger.info(`Processing command: ${request.command}`);
+        logger.info(`📥 Command received: ${request.command}`);
 
-        // Get response from Claude
-        const response = await this.claudeClient.processCommand(request);
+        // Set up notification handler for the agent
+        this.toolBasedAgent.setNotificationHandler(async (message: string) => {
+          try {
+            await this.subAgentManager.sendNotification(message);
+          } catch (error) {
+            logger.error('Failed to send notification', error);
+          }
+        });
 
-        if (!response.success) {
-          return res.status(500).json(response);
-        }
+        // Return immediately - agent runs in background
+        const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-        // Extract bash commands if any
-        const bashCommands = this.claudeClient.extractBashCommands(response.message);
+        res.json({
+          success: true,
+          message: `Agent started for task: ${request.command}`,
+          taskId,
+          agentIds: [taskId]
+        });
 
-        // If sub-agents are required, spawn them
-        if (response.agentIds && response.agentIds.length > 0) {
-          const agentTasks = response.executionPlan || [];
-          const spawnedAgents = await this.subAgentManager.spawnAgents(
-            response.taskId,
-            agentTasks,
-            bashCommands
-          );
+        // Execute task asynchronously with native tool calling
+        logger.info(`🚀 Starting ToolBasedAgent for task: ${taskId}`);
 
-          response.agentIds = spawnedAgents.map(a => a.sessionId);
-        }
+        this.toolBasedAgent.executeTask({
+          command: request.command,
+          context: request.context
+        })
+          .then(async (result) => {
+            logger.info(`✅ Task ${taskId} completed: ${result.success ? 'SUCCESS' : 'FAILED'}`);
 
-        res.json(response);
+            // Send final summary
+            try {
+              const summary = `
+🏁 **Task Complete**
+
+**Task ID:** \`${taskId}\`
+**Status:** ${result.success ? '✅ Success' : '❌ Failed'}
+**Iterations:** ${result.iterations}
+**Tool Calls:** ${result.toolCalls}
+
+**Summary:**
+${result.message}
+
+${result.error ? `**Error:** \`${result.error}\`` : ''}
+              `.trim();
+
+              await this.subAgentManager.sendNotification(summary);
+            } catch (notifError) {
+              logger.warn('Failed to send completion notification', notifError);
+            }
+          })
+          .catch(async (error) => {
+            logger.error(`❌ Task ${taskId} failed:`, error);
+
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            try {
+              await this.subAgentManager.sendNotification(
+                `❌ **Task Failed**\n\`\`\`\n${errorMessage}\n\`\`\`\n**Task ID:** \`${taskId}\``
+              );
+            } catch (notifError) {
+              logger.warn('Failed to send failure notification', notifError);
+            }
+          });
+
       } catch (error) {
         logger.error('Error processing command', error);
+
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        try {
+          await this.subAgentManager.sendNotification(
+            `❌ **Critical Error**\n\`\`\`\n${errorMessage}\n\`\`\``
+          );
+        } catch (notifError) {
+          logger.warn('Failed to send critical error notification', notifError);
+        }
+
         res.status(500).json({
           success: false,
-          message: 'Internal server error',
+          message: `Error: ${errorMessage}`,
           taskId: '',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: errorMessage
         });
       }
     });
@@ -138,20 +203,43 @@ export class OrchestratorServer {
       res.json({ success: true, message: 'Agent terminated' });
     });
 
-    // Clear conversation history
+    // Clear conversation history (no-op with ToolBasedAgent - each task is independent)
     this.app.delete('/history/:guildId/:userId', (req: Request, res: Response) => {
-      const { guildId, userId } = req.params;
-      this.claudeClient.clearHistory(guildId, userId);
-      res.json({ success: true, message: 'History cleared' });
+      logger.info('History clearing not needed with ToolBasedAgent (stateless tasks)');
+      res.json({ success: true, message: 'ToolBasedAgent is stateless - no history to clear' });
     });
   }
 
   async start(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.server = this.app.listen(this.port)
+        .on('listening', () => {
+          logger.info(`Orchestrator server listening on port ${this.port}`);
+          resolve();
+        })
+        .on('error', (error: any) => {
+          if (error.code === 'EADDRINUSE') {
+            logger.error(`❌ CRITICAL: Port ${this.port} is already in use! Another instance may be running.`);
+            logger.error('Please check for other running instances with: ps aux | grep "node dist/index.js"');
+            reject(new Error(`Port ${this.port} is already in use. Cannot start server.`));
+          } else {
+            logger.error('Failed to start orchestrator server', error);
+            reject(error);
+          }
+        });
+    });
+  }
+
+  async stop(): Promise<void> {
     return new Promise((resolve) => {
-      this.app.listen(this.port, () => {
-        logger.info(`Orchestrator server listening on port ${this.port}`);
+      if (this.server) {
+        this.server.close(() => {
+          logger.info('Orchestrator server stopped');
+          resolve();
+        });
+      } else {
         resolve();
-      });
+      }
     });
   }
 }

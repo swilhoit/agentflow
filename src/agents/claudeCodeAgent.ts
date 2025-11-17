@@ -62,11 +62,32 @@ export class ClaudeCodeAgent extends EventEmitter {
   private outputBuffer: string = '';
   private startTime: number = 0;
   private maxIterations: number = 20;
+  private sendNotification?: (message: string) => Promise<void>;
 
   constructor(taskId: string, workingDirectory: string = process.cwd()) {
     super();
     this.taskId = taskId;
     this.workingDirectory = workingDirectory;
+  }
+
+  /**
+   * Set Discord notification handler
+   */
+  setNotificationHandler(handler: (message: string) => Promise<void>): void {
+    this.sendNotification = handler;
+  }
+
+  /**
+   * Send Discord notification (if handler is set)
+   */
+  private async notify(message: string): Promise<void> {
+    if (this.sendNotification) {
+      try {
+        await this.sendNotification(message);
+      } catch (error) {
+        logger.error('Failed to send Discord notification', error);
+      }
+    }
   }
 
   /**
@@ -79,28 +100,51 @@ export class ClaudeCodeAgent extends EventEmitter {
 
     logger.info(`🚀 Starting autonomous task: ${task.description}`);
     this.emit('task:started', { taskId: this.taskId, description: task.description });
+    await this.notify(`🚀 **Agent Started**\n\`\`\`\nTask: ${task.description}\nAgent ID: ${this.taskId}\n\`\`\``);
 
     try {
       // Step 1: Initialize and plan
+      logger.info('📋 Step 1: Planning task...');
+      await this.notify(`📋 **Planning Task**\nAnalyzing requirements and creating execution plan...`);
       await this.planTask(task);
+      await this.notify(`✅ **Planning Complete**\nExecution plan created. Starting implementation...`);
 
       // Step 2: Execute iteratively with feedback
+      logger.info('⚙️ Step 2: Executing task iteratively...');
+      await this.notify(`⚙️ **Executing Task**\nStarting iterative implementation (max ${this.maxIterations} iterations)...`);
       await this.executeIterative(task);
 
       // Step 3: Test and verify
+      logger.info('🧪 Step 3: Running tests and validation...');
+      await this.notify(`🧪 **Running Tests**\nValidating implementation and running test suite...`);
       const testResults = await this.runTests(task);
+      
+      const passedTests = testResults.filter(t => t.passed).length;
+      const failedTests = testResults.length - passedTests;
+      await this.notify(`📊 **Test Results**\n✅ Passed: ${passedTests}\n❌ Failed: ${failedTests}`);
 
       // Step 4: Generate final report
+      logger.info('📊 Step 4: Generating final report...');
       const result = await this.generateResult(task, testResults);
 
       this.isRunning = false;
+      const duration = Math.round((Date.now() - this.startTime) / 1000);
+      logger.info('✅ Task completed successfully');
       this.emit('task:completed', result);
+      await this.notify(`🏁 **Task Complete**\n\`\`\`\nDuration: ${duration}s\nSteps: ${this.currentStep}\nStatus: ${result.success ? 'Success' : 'Failed'}\n\`\`\``);
 
       return result;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`❌ Task failed: ${errorMessage}`, error);
+      
+      // Emit detailed error information
+      this.emit('error', { 
+        taskId: this.taskId, 
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined
+      });
 
       const result: AgentResult = {
         taskId: this.taskId,
@@ -178,13 +222,19 @@ Provide ONLY the plan in JSON format:
     while (shouldContinue && iteration < this.maxIterations) {
       iteration++;
       logger.info(`🔄 Iteration ${iteration}/${this.maxIterations}`);
+      await this.notify(`🔄 **Iteration ${iteration}/${this.maxIterations}**\nExecuting next step...`);
 
       const step = this.createStep(`Iteration ${iteration}: Execute and analyze`);
+
+      // Notify what we're about to do
+      await this.notify(`🤔 **Analyzing current state**\nReviewing previous steps and determining next actions...`);
 
       // Build context-aware prompt
       const iterativePrompt = this.buildIterativePrompt(task, iteration);
 
       try {
+        await this.notify(`⚡ **Invoking Claude Code Agent**\nProcessing iteration ${iteration} with full context...`);
+        
         const output = await this.runClaudeCode(iterativePrompt, {
           streamOutput: true,
           autoConfirm: true,
@@ -192,6 +242,9 @@ Provide ONLY the plan in JSON format:
         });
 
         step.output = output;
+
+        // Notify analysis phase
+        await this.notify(`📊 **Analyzing Results**\nReviewing output and making decisions...`);
 
         // Analyze output and make decisions
         const decision = await this.analyzeOutputAndDecide(output, task);
@@ -201,26 +254,42 @@ Provide ONLY the plan in JSON format:
         if (decision.shouldContinue) {
           step.status = 'completed';
           logger.info(`✅ Iteration ${iteration} completed. Continuing...`);
+          
+          // Send update with brief output preview and next steps
+          const outputPreview = output.length > 300 ? output.substring(0, 300) + '...' : output;
+          const nextStepsText = decision.nextSteps.length > 0 
+            ? `\n**Next:** ${decision.nextSteps[0]}` 
+            : '';
+          await this.notify(`✅ **Step ${iteration} Complete**\n\`\`\`\n${outputPreview}\n\`\`\`${nextStepsText}`);
+          
+          // Add brief thinking update about decision
+          await this.notify(`🤔 **Decision:** ${decision.reasoning}`);
         } else {
           step.status = 'completed';
           shouldContinue = false;
           logger.info(`🎯 Task appears complete after ${iteration} iterations`);
+          await this.notify(`🎯 **Implementation Complete**\nCompleted after ${iteration} iterations. Moving to testing phase...`);
         }
 
       } catch (error) {
         step.status = 'failed';
         step.output = error instanceof Error ? error.message : 'Execution failed';
+        
+        await this.notify(`⚠️ **Error in Iteration ${iteration}**\n\`\`\`\n${step.output}\n\`\`\`\nAttempting recovery...`);
 
         // Try to recover from errors
         const canRecover = await this.attemptErrorRecovery(error, task);
         if (!canRecover) {
+          await this.notify(`❌ **Recovery Failed**\nCannot recover from error. Task failed.`);
           throw error;
         }
+        await this.notify(`✅ **Recovered from Error**\nContinuing with next iteration...`);
       }
     }
 
     if (iteration >= this.maxIterations) {
       logger.warn(`⚠️ Reached maximum iterations (${this.maxIterations})`);
+      await this.notify(`⚠️ **Max Iterations Reached**\nCompleted ${this.maxIterations} iterations. Proceeding to validation...`);
     }
   }
 
@@ -242,12 +311,20 @@ ITERATION: ${iteration}
 PREVIOUS STEPS:
 ${previousSteps || 'This is the first iteration'}
 
+📢 CRITICAL NOTIFICATION REQUIREMENT:
+⚠️ THE USER CANNOT SEE YOUR TERMINAL OUTPUT! ⚠️
+- You MUST send Discord messages with frequent updates about what you're doing
+- After EVERY significant action (running commands, reading files, making changes), send a status update to Discord
+- Use the SubAgentManager's sendNotification method to post updates
+- Include what command you're running and brief results
+- The user is NOT watching your terminal - Discord messages are their ONLY visibility
+
 INSTRUCTIONS:
 1. Analyze what's been done so far
 2. Read any necessary files to understand current state
 3. Make required changes to complete the task
 4. Run tests if applicable
-5. Report your progress
+5. Report your progress TO DISCORD frequently
 
 Remember:
 - You have full auto-approval - take action directly
@@ -255,11 +332,13 @@ Remember:
 - If you encounter errors, debug and fix them
 - Use git to check changes if needed
 - Be thorough but efficient
+- SEND DISCORD UPDATES FREQUENTLY - this is how the user tracks your progress
 
-IMPORTANT: After each action, describe:
-- What you did
-- What the output/result was
-- Whether the task is complete or what's next`;
+IMPORTANT: After each action:
+1. Send a Discord message describing what you did and the result
+2. Include relevant terminal output in your Discord updates
+3. Tell the user whether the task is complete or what's next
+4. Make updates concise but informative (2-3 sentences max per update)`;
   }
 
   /**
@@ -447,7 +526,13 @@ OUTPUT: [details]`;
         cwd: this.workingDirectory,
         env: {
           ...process.env,
-          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+          // Ensure proper PATH for CLI tools
+          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+          // Set home directory for credential access
+          HOME: process.env.HOME || require('os').homedir(),
+          // Google Cloud SDK config
+          CLOUDSDK_CONFIG: process.env.CLOUDSDK_CONFIG || `${require('os').homedir()}/.config/gcloud`,
         }
       });
 
@@ -493,23 +578,49 @@ OUTPUT: [details]`;
   /**
    * Handle real-time output during execution
    */
-  private handleRealtimeOutput(data: string, step: AgentStep): void {
+  private async handleRealtimeOutput(data: string, step: AgentStep): Promise<void> {
     this.outputBuffer += data;
 
-    // Look for important patterns in real-time
+    // Look for important patterns in real-time and notify
     if (data.includes('error') || data.includes('Error')) {
       logger.warn('⚠️ Error detected in output');
       this.emit('warning', { type: 'error_detected', data });
+      await this.notify(`⚠️ **Error Detected**\nProcessing error in real-time...`);
     }
 
     if (data.includes('test') && data.includes('pass')) {
       logger.info('✅ Test passed');
       this.emit('test:passed', data);
+      await this.notify(`✅ **Test Passed**\nValidation successful`);
     }
 
     if (data.includes('Writing') || data.includes('Created')) {
       logger.info('📝 File modification detected');
       this.emit('file:modified', data);
+      // Extract filename if possible
+      const fileMatch = data.match(/(?:Writing|Created)\s+([^\s]+)/);
+      const filename = fileMatch ? fileMatch[1] : 'file';
+      await this.notify(`✍️ **Writing File:** \`${filename}\``);
+    }
+
+    if (data.includes('Reading') || data.includes('Opening')) {
+      const fileMatch = data.match(/(?:Reading|Opening)\s+([^\s]+)/);
+      const filename = fileMatch ? fileMatch[1] : 'file';
+      await this.notify(`📖 **Reading File:** \`${filename}\``);
+    }
+
+    if (data.includes('Running') || data.includes('Executing')) {
+      const cmdMatch = data.match(/(?:Running|Executing)\s+([^\n]+)/);
+      const command = cmdMatch ? cmdMatch[1].substring(0, 100) : 'command';
+      await this.notify(`🔧 **Running Command:** \`${command}\``);
+    }
+
+    if (data.includes('Installing') || data.includes('npm install')) {
+      await this.notify(`📦 **Installing Dependencies**\nInstalling required packages...`);
+    }
+
+    if (data.includes('git commit') || data.includes('Committing')) {
+      await this.notify(`💾 **Committing Changes**\nSaving changes to git...`);
     }
   }
 

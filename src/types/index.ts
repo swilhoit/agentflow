@@ -51,6 +51,8 @@ export interface BotConfig {
   discordClientId: string;
   openaiApiKey: string;
   anthropicApiKey: string;
+  elevenLabsApiKey: string;
+  elevenLabsAgentId: string;
   groqApiKey?: string;
   orchestratorUrl: string;
   orchestratorApiKey: string;
@@ -59,4 +61,20 @@ export interface BotConfig {
   useRealtimeApi?: boolean;
   systemNotificationGuildId?: string;
   systemNotificationChannelId?: string;
+  ttsSpeed?: number; // 0.25 to 4.0, default 1.0, higher is faster
+  trelloApiKey?: string;
+  trelloApiToken?: string;
+}
+
+export interface TrelloTaskRequest {
+  action: 'create' | 'update' | 'read' | 'delete' | 'search' | 'move';
+  boardName?: string;
+  listName?: string;
+  cardId?: string;
+  cardName?: string;
+  description?: string;
+  dueDate?: string;
+  labels?: string[];
+  members?: string[];
+  query?: string;
 }

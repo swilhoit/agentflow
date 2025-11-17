@@ -22,7 +22,7 @@ export interface GroqResponse {
  */
 export class GroqClient {
   private client: Groq;
-  private model: string = 'llama-3.1-70b-versatile';
+  private model: string = 'llama-3.3-70b-versatile';
 
   constructor(apiKey: string) {
     this.client = new Groq({
@@ -179,8 +179,8 @@ For simple questions, answer directly. For complex tasks, you can delegate to sp
           {
             role: 'system',
             content: `You are a routing classifier. Analyze the user's message and determine if it's:
-- SIMPLE: Quick questions, status checks, greetings, acknowledgments, simple info requests
-- COMPLEX: Deployment tasks, code generation, multi-step operations, debugging, architecture decisions
+- SIMPLE: Quick questions, status checks, greetings, acknowledgments, general info
+- COMPLEX: Deployment tasks, code generation, multi-step operations, debugging, GitHub/GCP queries, system commands
 
 Respond with ONLY one word: "simple" or "complex"`
           },

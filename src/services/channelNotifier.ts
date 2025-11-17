@@ -12,17 +12,36 @@ export interface ProgressUpdate {
 
 export interface LogUpdate {
   agentId: string;
-  logType: 'info' | 'warning' | 'error' | 'success' | 'step';
+  logType: 'info' | 'warning' | 'error' | 'success' | 'step' | 'thinking' | 'action' | 'command' | 'reading' | 'writing';
   message: string;
   details?: string;
+}
+
+export interface ThinkingUpdate {
+  agentId: string;
+  thought: string;
+  context?: string;
+}
+
+export interface ActionUpdate {
+  agentId: string;
+  action: string;
+  target?: string;
+  status: 'starting' | 'in_progress' | 'completed';
 }
 
 export class ChannelNotifier {
   private client: Client;
   private db = getDatabase();
+  private systemNotificationChannelId?: string;
 
-  constructor(client: Client) {
+  constructor(client: Client, systemNotificationChannelId?: string) {
     this.client = client;
+    this.systemNotificationChannelId = systemNotificationChannelId;
+  }
+
+  setSystemNotificationChannelId(channelId: string): void {
+    this.systemNotificationChannelId = channelId;
   }
 
   /**
@@ -36,7 +55,9 @@ export class ChannelNotifier {
     userId: string
   ): Promise<void> {
     try {
-      const channel = await this.getTextChannel(guildId, channelId);
+      // Use system notification channel if configured, otherwise use conversation channel
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
       if (!channel) return;
 
       const embed = new EmbedBuilder()
@@ -77,7 +98,9 @@ export class ChannelNotifier {
     update: ProgressUpdate
   ): Promise<void> {
     try {
-      const channel = await this.getTextChannel(guildId, channelId);
+      // Use system notification channel if configured, otherwise use conversation channel
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
       if (!channel) return;
 
       const progressBar = this.createProgressBar(update.step, update.totalSteps);
@@ -126,44 +149,67 @@ export class ChannelNotifier {
     log: LogUpdate
   ): Promise<void> {
     try {
-      const channel = await this.getTextChannel(guildId, channelId);
+      // Use system notification channel if configured, otherwise use conversation channel
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
       if (!channel) return;
 
-      // Skip posting every single log - only post important ones
-      if (log.logType !== 'error' && log.logType !== 'success' && log.logType !== 'warning') {
-        // Still log to database
-        this.db.logAgentActivity({
-          agentId: log.agentId,
-          taskId: log.agentId,
-          guildId,
-          channelId,
-          logType: log.logType,
-          message: log.message,
-          details: log.details,
-          timestamp: new Date()
-        });
+      // Skip posting every single log - only post important ones (but include new granular types)
+      const shouldPost = ['error', 'success', 'warning', 'thinking', 'action', 'command', 'reading', 'writing'].includes(log.logType);
+      
+      // Map new log types to database-compatible types
+      const dbLogType: 'info' | 'warning' | 'error' | 'success' | 'step' = 
+        log.logType === 'error' ? 'error' :
+        log.logType === 'warning' ? 'warning' :
+        log.logType === 'success' ? 'success' :
+        log.logType === 'step' ? 'step' :
+        'info'; // Default for thinking, action, command, reading, writing
+      
+      // Still log to database
+      this.db.logAgentActivity({
+        agentId: log.agentId,
+        taskId: log.agentId,
+        guildId,
+        channelId,
+        logType: dbLogType,
+        message: log.message,
+        details: log.details,
+        timestamp: new Date()
+      });
+      
+      if (!shouldPost) {
         return;
       }
 
-      const colors = {
+      const colors: Record<string, any> = {
         info: Colors.Blue,
         warning: Colors.Yellow,
         error: Colors.Red,
         success: Colors.Green,
-        step: Colors.Blue
+        step: Colors.Blue,
+        thinking: Colors.Purple,
+        action: Colors.Orange,
+        command: Colors.Yellow,
+        reading: Colors.Blue,
+        writing: Colors.Green
       };
 
-      const emojis = {
+      const emojis: Record<string, string> = {
         info: 'ℹ️',
         warning: '⚠️',
         error: '❌',
         success: '✅',
-        step: '📝'
+        step: '📝',
+        thinking: '🤔',
+        action: '⚡',
+        command: '🔧',
+        reading: '📖',
+        writing: '✍️'
       };
 
       const embed = new EmbedBuilder()
-        .setColor(colors[log.logType])
-        .setTitle(`${emojis[log.logType]} Agent ${log.logType.toUpperCase()}`)
+        .setColor(colors[log.logType] || Colors.Blue)
+        .setTitle(`${emojis[log.logType] || 'ℹ️'} ${log.logType.toUpperCase()}`)
         .setDescription(log.message)
         .setTimestamp()
         .setFooter({ text: `Agent ID: ${log.agentId}` });
@@ -173,20 +219,129 @@ export class ChannelNotifier {
       }
 
       await channel.send({ embeds: [embed] });
+    } catch (error) {
+      logger.error('Failed to notify agent log', error);
+    }
+  }
+
+  /**
+   * Post agent thinking update (brief, non-intrusive)
+   */
+  async notifyAgentThinking(
+    guildId: string,
+    channelId: string,
+    update: ThinkingUpdate
+  ): Promise<void> {
+    try {
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
+      if (!channel) return;
+
+      // Use simple message format for thinking updates to avoid Discord spam
+      const message = `🤔 **Thinking:** ${update.thought}${update.context ? ` (${update.context})` : ''}`;
+      await channel.send(message);
 
       // Log to database
       this.db.logAgentActivity({
-        agentId: log.agentId,
-        taskId: log.agentId,
+        agentId: update.agentId,
+        taskId: update.agentId,
         guildId,
         channelId,
-        logType: log.logType,
-        message: log.message,
-        details: log.details,
+        logType: 'info',
+        message: update.thought,
+        details: update.context,
         timestamp: new Date()
       });
     } catch (error) {
-      logger.error('Failed to notify agent log', error);
+      logger.error('Failed to notify agent thinking', error);
+    }
+  }
+
+  /**
+   * Post agent action update
+   */
+  async notifyAgentAction(
+    guildId: string,
+    channelId: string,
+    update: ActionUpdate
+  ): Promise<void> {
+    try {
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
+      if (!channel) return;
+
+      const statusEmoji = {
+        starting: '▶️',
+        in_progress: '⏳',
+        completed: '✅'
+      }[update.status];
+
+      const message = `${statusEmoji} **${update.action}**${update.target ? `: \`${update.target}\`` : ''}`;
+      await channel.send(message);
+
+      // Log to database
+      this.db.logAgentActivity({
+        agentId: update.agentId,
+        taskId: update.agentId,
+        guildId,
+        channelId,
+        logType: 'info',
+        message: `${update.action}: ${update.target || 'N/A'}`,
+        details: update.status,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      logger.error('Failed to notify agent action', error);
+    }
+  }
+
+  /**
+   * Post command execution update (real-time)
+   */
+  async notifyCommandExecution(
+    guildId: string,
+    channelId: string,
+    agentId: string,
+    command: string,
+    status: 'starting' | 'running' | 'completed' | 'failed',
+    output?: string
+  ): Promise<void> {
+    try {
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
+      if (!channel) return;
+
+      const statusEmoji = {
+        starting: '▶️',
+        running: '⏳',
+        completed: '✅',
+        failed: '❌'
+      }[status];
+
+      let message = `${statusEmoji} **Command ${status}**\n\`\`\`bash\n${command.slice(0, 200)}\n\`\`\``;
+      
+      if (output && status === 'completed') {
+        const truncatedOutput = output.length > 500 ? output.slice(0, 500) + '\n...(truncated)' : output;
+        message += `\n**Output:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
+      } else if (output && status === 'failed') {
+        message += `\n**Error:**\n\`\`\`\n${output.slice(0, 500)}\n\`\`\``;
+      }
+
+      await channel.send(message);
+
+      // Log to database
+      this.db.logAgentActivity({
+        agentId,
+        taskId: agentId,
+        guildId,
+        channelId,
+        logType: status === 'failed' ? 'error' : 'info',
+        message: `Command ${status}: ${command}`,
+        details: output,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      logger.error('Failed to notify command execution', error);
     }
   }
 
@@ -202,7 +357,9 @@ export class ChannelNotifier {
     details?: any
   ): Promise<void> {
     try {
-      const channel = await this.getTextChannel(guildId, channelId);
+      // Use system notification channel if configured, otherwise use conversation channel
+      const targetChannelId = this.systemNotificationChannelId || channelId;
+      const channel = await this.getTextChannel(guildId, targetChannelId);
       if (!channel) return;
 
       const embed = new EmbedBuilder()

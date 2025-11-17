@@ -20,7 +20,7 @@ import { ChannelNotifier } from '../services/channelNotifier';
 import { DirectCommandExecutor } from '../services/directCommandExecutor';
 
 /**
- * Discord Bot with OpenAI Realtime API Integration
+ * Discord Bot with ElevenLabs Conversational AI Integration
  * Provides natural voice conversations with sub-second latency
  */
 export class DiscordBotRealtime {
@@ -102,7 +102,7 @@ export class DiscordBotRealtime {
 
   private setupEventHandlers(): void {
     this.client.on('ready', () => {
-      logger.info(`Bot logged in as ${this.client.user?.tag} (Realtime API Mode)`);
+      logger.info(`Bot logged in as ${this.client.user?.tag} (ElevenLabs Conversational AI Mode)`);
       // Setup notifications after client is ready
       this.setupSubAgentNotifications();
     });
@@ -225,12 +225,16 @@ export class DiscordBotRealtime {
         throw new Error('Voice connection timed out or was rejected. Please ensure the bot has proper permissions and try again.');
       }
 
-      // Create Realtime Voice Receiver with configurable speech speed
+      // Create ElevenLabs Voice Receiver
       const speechSpeed = this.config.ttsSpeed || 1.25; // Default to 1.25x speed (25% faster)
-      const receiver = new RealtimeVoiceReceiver(this.config.openaiApiKey, speechSpeed);
+      const receiver = new RealtimeVoiceReceiver(
+        this.config.elevenLabsApiKey, 
+        this.config.elevenLabsAgentId,
+        speechSpeed
+      );
       this.realtimeReceivers.set(message.guild!.id, receiver);
 
-      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n🔄 **Step 3/4:** Connecting to OpenAI Realtime API...');
+      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n🔄 **Step 3/4:** Connecting to ElevenLabs Conversational AI...');
 
       // Capture channel ID and guild ID in closure-safe variables
       const channelId = member.voice.channel.id;
@@ -287,11 +291,11 @@ export class DiscordBotRealtime {
       });
 
       // Start listening (pass bot user ID to filter out bot's own audio)
-      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n✅ **Step 3/4:** Connected to OpenAI API\n🔄 **Step 4/4:** Starting audio streams...');
+      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n✅ **Step 3/4:** Connected to ElevenLabs AI\n🔄 **Step 4/4:** Starting audio streams...');
 
       await receiver.startListening(connection, message.author.id, this.client.user!.id, message.author.tag);
 
-      await statusMsg.edit('✅ **All systems ready!**\n\n🎤 Voice agent is now listening in **' + member.voice.channel.name + '**\n\n_Mode: OpenAI Realtime API with natural interruptions_');
+      await statusMsg.edit('✅ **All systems ready!**\n\n🎤 Voice agent is now listening in **' + member.voice.channel.name + '**\n\n_Mode: ElevenLabs Conversational AI with natural interruptions_');
     } catch (error) {
       logger.error('Failed to join voice channel', error);
 
@@ -300,8 +304,8 @@ export class DiscordBotRealtime {
         if (error instanceof Error) {
           if (error.message.includes('timeout') || error.message.includes('aborted')) {
             await statusMsg.edit('❌ **Connection Failed**\n\nConnection timed out. Possible causes:\n• Missing bot permissions (Connect, Speak, Use Voice Activity)\n• Network connectivity issues\n• Discord voice server issues\n\nPlease verify permissions and try again.');
-          } else if (error.message.includes('OpenAI') || error.message.includes('API')) {
-            await statusMsg.edit('❌ **Step 3/4 Failed:** Could not connect to OpenAI Realtime API\n\n' + error.message);
+          } else if (error.message.includes('ElevenLabs') || error.message.includes('API') || error.message.includes('Agent')) {
+            await statusMsg.edit('❌ **Step 3/4 Failed:** Could not connect to ElevenLabs Conversational AI\n\n' + error.message);
           } else {
             await statusMsg.edit('❌ **Startup Failed**\n\n' + error.message);
           }
@@ -352,8 +356,8 @@ export class DiscordBotRealtime {
     let status = 'Bot Status:\n';
     status += `- Discord: ${this.client.user?.tag}\n`;
     status += `- Voice: ${connection ? 'Connected' : 'Not connected'}\n`;
-    status += `- Realtime API: ${receiver?.isConnected() ? 'Connected' : 'Not connected'}\n`;
-    status += `- Mode: OpenAI Realtime API (Natural Conversations)\n`;
+    status += `- ElevenLabs AI: ${receiver?.isConnected() ? 'Connected' : 'Not connected'}\n`;
+    status += `- Mode: ElevenLabs Conversational AI (Natural Conversations)\n`;
 
     await message.reply(status);
   }
@@ -1014,7 +1018,7 @@ export class DiscordBotRealtime {
 
   async start(): Promise<void> {
     await this.client.login(this.config.discordToken);
-    logger.info('Discord bot started (Realtime API Mode)');
+    logger.info('Discord bot started (ElevenLabs Conversational AI Mode)');
 
     // Send system startup notification if configured
     if (this.config.systemNotificationGuildId && this.config.systemNotificationChannelId) {
@@ -1022,7 +1026,7 @@ export class DiscordBotRealtime {
         type: 'startup',
         component: 'AgentFlow Bot',
         message: 'AgentFlow system started successfully',
-        details: `Mode: Realtime API\nMax Concurrent Agents: ${this.config.maxConcurrentAgents}`,
+        details: `Mode: ElevenLabs Conversational AI\nMax Concurrent Agents: ${this.config.maxConcurrentAgents}`,
         metrics: {
           'Node Version': process.version,
           'Platform': process.platform,
