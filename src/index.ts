@@ -69,6 +69,23 @@ async function main() {
 
     logger.info('Starting AgentFlow...');
 
+    // Auto-detect GitHub token from gh CLI if not already set
+    if (!process.env.GITHUB_TOKEN && !process.env.GH_TOKEN) {
+      try {
+        const { execSync } = require('child_process');
+        const token = execSync('gh auth token 2>/dev/null', { encoding: 'utf-8' }).trim();
+        if (token && token.startsWith('gho_') || token.startsWith('ghp_')) {
+          process.env.GITHUB_TOKEN = token;
+          process.env.GH_TOKEN = token;
+          logger.info('✅ Auto-detected GitHub token from gh CLI');
+        }
+      } catch (error) {
+        logger.warn('⚠️ Could not auto-detect GitHub token from gh CLI (this is OK if gh is authenticated via keyring)');
+      }
+    } else {
+      logger.info('✅ GitHub token found in environment');
+    }
+
     // Check for existing instance
     if (!checkAndCreateLock()) {
       process.exit(1);

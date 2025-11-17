@@ -68,6 +68,14 @@ export class RealtimeVoiceReceiver {
 
   /**
    * System instructions for the voice assistant
+   * 
+   * Note: ElevenLabs Conversational AI automatically handles:
+   * - Voice Activity Detection (VAD)
+   * - Turn-taking (who should speak when)
+   * - Natural interruptions (user can speak anytime)
+   * - Conversation flow and timing
+   * 
+   * No manual interruption handling needed - it's built into the platform!
    */
   private getSystemInstructions(): string {
     return `🚨🚨🚨 MANDATORY FUNCTION CALLING RULE 🚨🚨🚨
@@ -584,9 +592,11 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
         return;
       }
 
-      // Allow user audio even during bot playback - ElevenLabs will handle interruptions
+      // ElevenLabs automatically handles turn-taking and interruptions via its built-in VAD
+      // When the user starts speaking, ElevenLabs will automatically stop the agent and listen
+      // We just need to keep streaming audio - no manual interruption handling needed!
       if (this.isProcessingAudio) {
-        logger.info(`Bot is speaking but allowing user ${userId} audio for natural interruptions`);
+        logger.info(`Bot is speaking - ElevenLabs will auto-detect user speech and handle turn-taking`);
       }
 
       logger.info(`Started streaming audio from user ${userId}`);
@@ -828,19 +838,21 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
 
   /**
    * Interrupt the bot's current speech
-   * This method can be called to manually stop the bot from speaking
+   * 
+   * Note: ElevenLabs Conversational AI handles interruptions automatically through its
+   * turn-taking model. When a user starts speaking, the agent automatically stops.
+   * This method provides a manual way to trigger the same behavior (e.g., via !stop command).
    */
   interrupt(): void {
-    logger.info('🛑 Interrupting bot speech');
+    logger.info('🛑 Manually interrupting bot speech');
 
-    // Stop audio playback immediately
+    // Stop local audio playback immediately
     this.audioPlayer.stop();
 
-    // Cancel the current response from ElevenLabs
-    if (this.isProcessingAudio) {
-      this.voiceService.cancelResponse();
-      this.isProcessingAudio = false;
-    }
+    // Signal to ElevenLabs that we're interrupting
+    // The turn-taking model will handle the rest automatically
+    this.voiceService.interrupt();
+    this.isProcessingAudio = false;
 
     // Clear the current audio stream
     if (this.currentAudioStream) {
@@ -848,7 +860,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
       this.currentAudioStream = null;
     }
 
-    // Clean up any active output streams (the audio being played)
+    // Clean up any active output streams
     this.activeOutputStreams.forEach(stream => {
       if (stream && typeof stream.destroy === 'function') {
         try {
@@ -860,7 +872,7 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
     });
     this.activeOutputStreams.clear();
 
-    logger.info('Bot speech interrupted successfully');
+    logger.info('✅ Bot speech interrupted - ready for user input');
   }
 
   /**

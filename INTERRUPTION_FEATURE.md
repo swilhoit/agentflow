@@ -1,21 +1,24 @@
 # Bot Interruption Feature
 
 ## Overview
-The AgentFlow Discord bot now supports interrupting the bot's speech at any time, giving users full control over the conversation flow.
+The AgentFlow Discord bot uses **ElevenLabs Conversational AI**, which provides built-in, automatic interruption handling through its proprietary turn-taking model. Users can interrupt the bot naturally at any time.
 
-## How to Interrupt the Bot
+## How Interruptions Work
 
-### 1. Voice Interruption (Automatic)
-When the bot is speaking in a voice channel, simply start speaking. The bot's Voice Activity Detection (VAD) will automatically detect your speech and:
-- Stop the bot's current audio playback immediately
-- Cancel the ongoing response from the OpenAI Realtime API
-- Clear any queued audio
-- Be ready to listen to your new input
+### 1. Automatic Voice Interruption (Built-in to ElevenLabs)
+ElevenLabs Conversational AI automatically detects when you start speaking and handles interruptions seamlessly:
 
-**This happens automatically** - no commands needed!
+**What ElevenLabs Does Automatically:**
+- **Voice Activity Detection (VAD)**: Detects when you start speaking
+- **Turn-Taking Management**: Determines who should speak and when
+- **Automatic Agent Stopping**: Stops the agent's response when you interrupt
+- **Natural Conversation Flow**: Manages pauses, interruptions, and speaker transitions
+- **Zero Configuration**: Works out of the box without any manual setup
 
-### 2. Text Command Interruption (Manual)
-You can also interrupt the bot by typing a text command in the Discord channel:
+**This happens automatically** - no commands or configuration needed!
+
+### 2. Manual Text Command Interruption (Backup Option)
+You can also interrupt the bot manually by typing a text command in the Discord channel:
 
 ```
 !stop
@@ -26,53 +29,66 @@ or
 ```
 
 These commands will:
-- Immediately stop the bot from speaking
-- Cancel any ongoing response
+- Immediately stop the bot's local audio playback
 - Clear the audio queue
+- Signal to ElevenLabs that we're interrupting (though ElevenLabs already handles this automatically)
 - Provide confirmation that the bot was interrupted
+
+**Note:** This is rarely needed since ElevenLabs handles interruptions automatically via voice!
 
 ## Technical Implementation
 
-### Files Modified
-1. **`src/bot/discordBotRealtime.ts`**
-   - Added `!stop` and `!interrupt` command handlers
-   - Implemented `handleStopCommand()` method
+### How ElevenLabs Handles Interruptions (Automatic)
+
+**ElevenLabs Conversational AI** includes a proprietary **turn-taking model** that manages all conversation dynamics:
+
+1. **Continuous Audio Monitoring**: ElevenLabs constantly monitors incoming audio via its WebSocket connection
+2. **Voice Activity Detection**: Built-in VAD detects when the user starts speaking
+3. **Automatic Agent Stopping**: The agent automatically stops generating and playing audio when user speech is detected
+4. **Turn Management**: The system determines when it's appropriate for the agent to respond
+5. **No Manual Code Required**: All of this happens automatically - we just stream audio bidirectionally
+
+### Files Involved
+1. **`src/utils/elevenLabsVoice.ts`**
+   - Manages connection to ElevenLabs Conversational AI
+   - Streams audio to/from ElevenLabs
+   - Provides `interrupt()` method for manual interruption (rarely needed)
 
 2. **`src/bot/realtimeVoiceReceiver.ts`**
-   - Added `interrupt()` public method
-   - Enhanced automatic VAD-based interruption
-   - Updated system instructions to mention interruption capability
+   - Bridges Discord voice with ElevenLabs
+   - Handles audio resampling and format conversion
+   - Provides `interrupt()` public method for manual control
 
-### How It Works
+3. **`src/bot/discordBotRealtime.ts`**
+   - Discord bot interface
+   - Implements `!stop` and `!interrupt` commands for manual interruption
 
-#### Voice Interruption Flow
-1. User starts speaking
-2. OpenAI Realtime API's VAD detects speech
-3. `speech_started` event is emitted
-4. Bot's `interrupt()` method is called
-5. Audio player stops
-6. Realtime API response is cancelled
-7. Audio streams are cleared
-8. Bot is ready to listen to new input
+### Automatic Voice Interruption Flow (Handled by ElevenLabs)
+1. User starts speaking while bot is talking
+2. ElevenLabs' VAD detects speech **automatically**
+3. ElevenLabs stops the agent's response **automatically**
+4. ElevenLabs begins processing user input **automatically**
+5. Bot is ready to listen and respond
 
-#### Text Command Interruption Flow
+### Manual Text Command Interruption Flow (Backup)
 1. User types `!stop` or `!interrupt`
 2. Command handler retrieves the active receiver
 3. `interrupt()` method is called
-4. Same cleanup process as voice interruption
-5. Confirmation message is sent to user
+4. Local audio playback stops immediately
+5. Audio streams are cleaned up
+6. Confirmation message is sent to user
 
-### interrupt() Method
+**Note:** This is a manual override - ElevenLabs already handles interruptions automatically!
+
+### interrupt() Method (Manual Control)
 ```typescript
 interrupt(): void {
-  // Stop audio playback immediately
+  // Stop local audio playback immediately
   this.audioPlayer.stop();
 
-  // Cancel the current response from the Realtime API
-  if (this.isProcessingAudio) {
-    this.realtimeService.cancelResponse();
-    this.isProcessingAudio = false;
-  }
+  // Signal to ElevenLabs (though it already handles this automatically)
+  this.voiceService.interrupt();
+  this.isProcessingAudio = false;
 
   // Clear the current audio stream
   if (this.currentAudioStream) {
@@ -89,6 +105,8 @@ interrupt(): void {
   this.activeOutputStreams.clear();
 }
 ```
+
+**Important:** The actual interruption is handled by ElevenLabs' turn-taking model. This method just provides manual control for edge cases.
 
 ## Use Cases
 

@@ -112,14 +112,26 @@ Discord Voice → RealtimeVoiceReceiver → ElevenLabsVoiceService → Conversat
 
 ## Features
 
-### Natural Interruptions
+### Natural Interruptions (Automatic)
 
-ElevenLabs Conversational AI automatically handles:
-- Voice Activity Detection (VAD)
-- Turn-taking management
-- Conversation flow
+**ElevenLabs Conversational AI** includes a **proprietary turn-taking model** that automatically handles interruptions without any configuration:
 
-Users can interrupt the bot naturally by speaking, and the system will handle it gracefully.
+**Automatic Features:**
+- **Voice Activity Detection (VAD)**: Detects when users start speaking
+- **Turn-Taking Management**: Determines who should speak and when
+- **Natural Interruptions**: Users can speak at any time, and the agent will automatically stop
+- **Conversation Flow**: Manages pauses, interruptions, and speaker transitions seamlessly
+
+**How it works:**
+1. User starts speaking while agent is talking
+2. ElevenLabs detects speech via built-in VAD (automatic)
+3. Agent stops speaking and starts listening (automatic)
+4. No manual code needed - it's all built into the platform!
+
+**Manual Override (Optional):**
+- `!stop` or `!interrupt` commands provide manual control
+- Useful for edge cases or when the automatic system needs assistance
+- Rarely needed in practice
 
 ### Function Calling
 

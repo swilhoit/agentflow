@@ -47,7 +47,9 @@ class DiscordAudioInterface extends AudioInterface {
 
   interrupt(): void {
     logger.info('[ElevenLabs Audio] Interrupting audio output');
-    // Handle interruption - signal to stop current audio playback
+    // Stop local audio playback immediately
+    // The Conversation's turn-taking model will handle the rest
+    this.isActive = false;
   }
 
   /**
@@ -210,16 +212,24 @@ export class ElevenLabsVoiceService extends EventEmitter {
   }
 
   /**
-   * Cancel the current response / interrupt the agent
+   * Interrupt the agent's current response
+   * 
+   * Note: ElevenLabs Conversational AI handles interruptions automatically via its 
+   * turn-taking model. When the user starts speaking, the agent will automatically
+   * stop and listen. This method provides a manual way to trigger the same behavior.
    */
-  cancelResponse(): void {
+  interrupt(): void {
     if (!this.conversation) {
       return;
     }
 
-    // ElevenLabs handles interruptions automatically via the audio interface
+    // Signal to the audio interface that we want to interrupt
+    // This stops local audio playback immediately
     this.audioInterface.interrupt();
-    logger.info('[ElevenLabs] Response cancelled/interrupted');
+    
+    // The conversation will naturally handle the interruption through its turn-taking model
+    // No need to send explicit cancel messages - ElevenLabs manages this automatically
+    logger.info('[ElevenLabs] Agent interrupted - turn-taking will handle cleanup');
   }
 
   /**

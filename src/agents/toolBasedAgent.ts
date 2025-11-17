@@ -876,8 +876,14 @@ TASK: ${task.command}
     prompt += `
 
 🔑 AUTHENTICATION STATUS:
-✅ GitHub: Authenticated via gh CLI (user is logged in)
-✅ Google Cloud: Authenticated via gcloud CLI (user is logged in)`;
+✅ GitHub: FULLY AUTHENTICATED - gh CLI + GITHUB_TOKEN environment variable
+   - You can run ANY gh command (gh repo list, gh issue create, gh pr create, etc.)
+   - The user has already logged in with: gh auth login
+   - Token is available in environment as GITHUB_TOKEN
+   
+✅ Google Cloud: FULLY AUTHENTICATED - gcloud CLI + credentials
+   - You can run ANY gcloud command
+   - The user has already logged in with: gcloud auth login`;
 
     if (this.trelloService) {
       prompt += `
@@ -915,10 +921,13 @@ Example 3 - Multi-step:
   Step 2: For each repo, call trello_create_card(...)
   Step 3: Provide summary of created cards
 
-💡 REMEMBER:
+💡 CRITICAL - READ THIS:
 - You have FULL credentials for GitHub, GCloud, and Trello
-- The user is ALREADY authenticated to these services
+- The user is ALREADY authenticated to these services via CLI login
+- GITHUB_TOKEN environment variable IS SET and available
 - You can execute ANY command that the user could run in their terminal
+- Do NOT claim you don't have access - YOU DO!
+- Just run the commands - they WILL work!
 - Be confident and take action!
 
 NOW: Execute the task using the available tools.`;

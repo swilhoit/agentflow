@@ -198,12 +198,15 @@ export class DiscordBotRealtime {
 \`!stop\` / \`!interrupt\` - Interrupt bot's speech
 
 **Agent Management:**
-\`!agents\` / \`!tasks\` - List all running tasks (all channels or current channel)
+\`!agents\` / \`!tasks\` - List all tasks across all channels (default)
+\`!agents --current\` - List tasks in current channel only
 \`!task-status <taskId>\` - Get detailed status of a specific task
 \`!cancel-task <taskId>\` - Cancel a running task
 
 **System:**
 \`!status\` - Show bot connection status
+\`!resources\` - Show system resource usage
+\`!cleanup\` - Run cleanup (Admin only)
 \`!notify-test\` - Test notification system
 \`!help\` - Show this help message
 
@@ -224,10 +227,10 @@ You can have multiple agents working on different tasks across different channel
     }
 
     try {
-      // Check if user wants all tasks or just current channel
-      const showAll = message.content.includes('--all') || message.content.includes('-a');
+      // Show all tasks by default, use --current to filter to current channel only
+      const showCurrentOnly = message.content.includes('--current') || message.content.includes('-c');
 
-      const response = await fetch(`${this.orchestratorUrl}/tasks?${showAll ? '' : `channelId=${message.channel.id}`}`, {
+      const response = await fetch(`${this.orchestratorUrl}/tasks?${showCurrentOnly ? `channelId=${message.channel.id}` : ''}`, {
         method: 'GET',
         headers: {
           'X-API-Key': this.orchestratorApiKey
@@ -237,7 +240,7 @@ You can have multiple agents working on different tasks across different channel
       const data = await response.json() as any;
 
       if (!data.tasks || data.tasks.length === 0) {
-        await message.reply(showAll ? 'No tasks found across all channels.' : 'No tasks found in this channel.');
+        await message.reply(showCurrentOnly ? 'No tasks found in this channel.' : 'No tasks found across all channels.');
         return;
       }
 
@@ -247,14 +250,15 @@ You can have multiple agents working on different tasks across different channel
       const failed = data.tasks.filter((t: any) => t.status === 'failed');
       const pending = data.tasks.filter((t: any) => t.status === 'pending');
 
-      let taskList = `**${showAll ? 'All Tasks' : 'Tasks in This Channel'}**\n\n`;
+      let taskList = `**${showCurrentOnly ? 'Tasks in This Channel' : 'All Tasks (All Channels)'}**\n\n`;
       taskList += `**Stats:** ${data.stats.running} running, ${data.stats.completed} completed, ${data.stats.failed} failed\n\n`;
 
       if (running.length > 0) {
         taskList += `**🏃 Running (${running.length}):**\n`;
         running.slice(0, 5).forEach((t: any) => {
           const duration = Math.floor((Date.now() - new Date(t.startedAt).getTime()) / 1000);
-          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}... (${duration}s)\n`;
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 40)}...${channel} (${duration}s)\n`;
         });
         if (running.length > 5) {
           taskList += `_...and ${running.length - 5} more_\n`;
@@ -265,7 +269,8 @@ You can have multiple agents working on different tasks across different channel
       if (pending.length > 0) {
         taskList += `**⏳ Pending (${pending.length}):**\n`;
         pending.slice(0, 3).forEach((t: any) => {
-          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}...\n`;
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 40)}...${channel}\n`;
         });
         taskList += '\n';
       }
@@ -274,7 +279,8 @@ You can have multiple agents working on different tasks across different channel
         taskList += `**✅ Recently Completed (${completed.length}):**\n`;
         completed.slice(0, 3).forEach((t: any) => {
           const duration = t.duration ? `${(t.duration / 1000).toFixed(1)}s` : 'N/A';
-          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}... (${duration})\n`;
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 40)}...${channel} (${duration})\n`;
         });
         taskList += '\n';
       }
@@ -282,13 +288,14 @@ You can have multiple agents working on different tasks across different channel
       if (failed.length > 0) {
         taskList += `**❌ Failed (${failed.length}):**\n`;
         failed.slice(0, 3).forEach((t: any) => {
-          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}...\n`;
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 40)}...${channel}\n`;
         });
         taskList += '\n';
       }
 
       taskList += `\n_Use \`!task-status <taskId>\` for details_`;
-      taskList += `\n_Use \`!agents --all\` to see tasks from all channels_`;
+      taskList += `\n_Use \`!agents --current\` to see only this channel's tasks_`;
 
       await message.reply(taskList);
     } catch (error) {
@@ -567,6 +574,58 @@ ${statusEmoji} **Task Status**
     status += `- Mode: ElevenLabs Conversational AI (Natural Conversations)\n`;
 
     await message.reply(status);
+  }
+
+  private async handleResourcesCommand(message: Message): Promise<void> {
+    const { getCleanupManager } = require('../utils/cleanupManager');
+    const cleanupManager = getCleanupManager();
+
+    try {
+      await message.reply('🔍 Checking resource status...');
+      
+      const status = await cleanupManager.getResourceStatus();
+      
+      const response = `📊 **AgentFlow Resource Status**\n\n` +
+        `🔹 Running Processes: ${status.runningProcesses}\n` +
+        `🔹 Active Agents: ${status.activeAgents}\n` +
+        `🔹 Running Tasks (DB): ${status.runningTasks}\n` +
+        `🔹 Temp File Size: ${(status.tempFileSize / 1024).toFixed(2)} MB\n\n` +
+        `_Last checked: ${new Date().toLocaleTimeString()}_`;
+      
+      await message.reply(response);
+    } catch (error) {
+      logger.error('Failed to get resource status', error);
+      await message.reply(`❌ Failed to get resource status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleCleanupCommand(message: Message): Promise<void> {
+    // Only allow admin users to run cleanup
+    if (!message.member?.permissions.has('Administrator')) {
+      await message.reply('❌ This command requires Administrator permission.');
+      return;
+    }
+
+    const { getCleanupManager } = require('../utils/cleanupManager');
+    const cleanupManager = getCleanupManager();
+
+    try {
+      await message.reply('🧹 Starting cleanup...');
+      
+      const report = await cleanupManager.performCleanup();
+      
+      const response = `✅ **Cleanup Complete**\n\n` +
+        `🔹 Orphaned Processes: ${report.orphanedProcesses}\n` +
+        `🔹 Orphaned Agents: ${report.orphanedAgents}\n` +
+        `🔹 Stale DB Tasks: ${report.staleTasksInDB}\n` +
+        `🔹 Temp Files Deleted: ${report.tempFilesDeleted}\n\n` +
+        `**Total Cleaned:** ${report.totalCleaned} items`;
+      
+      await message.reply(response);
+    } catch (error) {
+      logger.error('Failed to run cleanup', error);
+      await message.reply(`❌ Cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   private async handleNotifyTestCommand(message: Message): Promise<void> {
