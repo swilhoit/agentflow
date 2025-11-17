@@ -11,6 +11,7 @@ export interface RealtimeVoiceConfig {
   temperature?: number;
   maxResponseOutputTokens?: number;
   tools?: any[];
+  speed?: number; // Speech speed (0.25 to 4.0, 1.0 is normal)
 }
 
 interface FunctionCallHandler {
@@ -40,6 +41,7 @@ export class RealtimeVoiceService extends EventEmitter {
       modalities: ['text', 'audio'],
       temperature: 0.8,
       maxResponseOutputTokens: 4096,
+      speed: 1.25, // Default to 1.25x speed (25% faster than normal)
       ...config
     };
   }
@@ -102,7 +104,7 @@ export class RealtimeVoiceService extends EventEmitter {
   private sendSessionUpdate(): void {
     if (!this.ws) return;
 
-    const sessionConfig = {
+    const sessionConfig: any = {
       type: 'session.update',
       session: {
         modalities: this.config.modalities,
@@ -113,20 +115,20 @@ export class RealtimeVoiceService extends EventEmitter {
         input_audio_transcription: {
           model: 'whisper-1'
         },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,         // Balanced sensitivity
-          prefix_padding_ms: 300, // Capture context before speech
-          silence_duration_ms: 200 // Fast response - only 200ms silence needed
-        },
+        turn_detection: null, // Disable server VAD - we'll manually trigger responses
         tools: this.config.tools || [],
         temperature: this.config.temperature,
         max_response_output_tokens: this.config.maxResponseOutputTokens
       }
     };
 
+    // Add speed parameter if configured (may not be supported by all API versions)
+    if (this.config.speed !== undefined) {
+      sessionConfig.session.speed = this.config.speed;
+    }
+
     this.send(sessionConfig);
-    logger.info('Sent session configuration');
+    logger.info(`Sent session configuration with speed: ${this.config.speed}x`);
   }
 
   /**
@@ -183,13 +185,21 @@ Keep your responses conversational and concise since this is voice chat. When yo
    * Cancel the current response
    */
   cancelResponse(): void {
-    if (!this.ws || !this.responseInProgress) return;
+    if (!this.ws || !this.responseInProgress) {
+      // Silently skip if no response is in progress
+      return;
+    }
 
-    this.send({
-      type: 'response.cancel'
-    });
+    try {
+      this.send({
+        type: 'response.cancel'
+      });
 
-    logger.info('Cancelled response');
+      logger.info('Cancelled response');
+    } catch (error) {
+      // Ignore cancellation errors - response might have just finished
+      logger.debug('Cancel response failed (likely already completed)', error);
+    }
   }
 
   /**
@@ -299,8 +309,13 @@ Keep your responses conversational and concise since this is voice chat. When yo
         break;
 
       case 'error':
-        logger.error('Realtime API error', event.error);
-        this.emit('error', event.error);
+        // Ignore benign cancellation errors
+        if (event.error?.code === 'response_cancel_not_active') {
+          logger.debug('Attempted to cancel already-completed response (benign)');
+        } else {
+          logger.error('Realtime API error', event.error);
+          this.emit('error', event.error);
+        }
         break;
 
       case 'rate_limits.updated':
@@ -332,13 +347,19 @@ Keep your responses conversational and concise since this is voice chat. When yo
       // Execute the function
       const result = await this.functionCallHandler(name, args);
 
+      // For voice responses, use voiceMessage if available (shorter, spoken-friendly)
+      // Keep full result for internal use
+      const voiceResult = result.voiceMessage
+        ? { success: result.success, message: result.voiceMessage }
+        : result;
+
       // Send the result back to the API
       this.send({
         type: 'conversation.item.create',
         item: {
           type: 'function_call_output',
           call_id: callId,
-          output: JSON.stringify(result)
+          output: JSON.stringify(voiceResult)
         }
       });
 

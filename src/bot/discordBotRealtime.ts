@@ -17,7 +17,7 @@ import { CloudDeploymentService } from '../services/cloudDeployment';
 import { SubAgentManager } from '../agents/subAgentManager';
 import { getDatabase, DatabaseService } from '../services/database';
 import { ChannelNotifier } from '../services/channelNotifier';
-import { HybridOrchestrator } from '../orchestrator/hybridOrchestrator';
+import { DirectCommandExecutor } from '../services/directCommandExecutor';
 
 /**
  * Discord Bot with OpenAI Realtime API Integration
@@ -33,7 +33,6 @@ export class DiscordBotRealtime {
   private subAgentManager: SubAgentManager;
   private db: DatabaseService;
   private channelNotifier: ChannelNotifier;
-  private hybridOrchestrator: HybridOrchestrator;
 
   // Rate limiting for text messages (user -> last message timestamp)
   private messageRateLimits: Map<string, number> = new Map();
@@ -72,21 +71,40 @@ export class DiscordBotRealtime {
       ]
     });
 
-    // Initialize channel notifier (needs client)
-    this.channelNotifier = new ChannelNotifier(this.client);
-
-    // Initialize hybrid orchestrator (Groq + Claude)
-    this.hybridOrchestrator = new HybridOrchestrator(
-      config.anthropicApiKey,
-      config.groqApiKey
+    // Initialize channel notifier (needs client) with system notification channel
+    this.channelNotifier = new ChannelNotifier(
+      this.client,
+      config.systemNotificationChannelId
     );
 
     this.setupEventHandlers();
   }
 
+  private setupSubAgentNotifications(): void {
+    // Wire up SubAgentManager to send Discord notifications
+    if (this.config.systemNotificationChannelId) {
+      this.subAgentManager.setDiscordMessageHandler(async (channelId: string, message: string) => {
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel && channel.isTextBased() && 'send' in channel) {
+            await channel.send(message);
+            logger.info(`Sent agent notification to channel ${channelId}`);
+          }
+        } catch (error) {
+          logger.error(`Failed to send agent notification to channel ${channelId}`, error);
+        }
+      });
+      logger.info(`SubAgentManager notifications enabled for channel: ${this.config.systemNotificationChannelId}`);
+    } else {
+      logger.warn('No systemNotificationChannelId configured - SubAgentManager notifications disabled');
+    }
+  }
+
   private setupEventHandlers(): void {
     this.client.on('ready', () => {
       logger.info(`Bot logged in as ${this.client.user?.tag} (Realtime API Mode)`);
+      // Setup notifications after client is ready
+      this.setupSubAgentNotifications();
     });
 
     this.client.on('messageCreate', async (message: Message) => {
@@ -125,6 +143,10 @@ export class DiscordBotRealtime {
         await this.handleLeaveCommand(message);
       } else if (message.content.startsWith('!status')) {
         await this.handleStatusCommand(message);
+      } else if (message.content.startsWith('!notify-test')) {
+        await this.handleNotifyTestCommand(message);
+      } else if (message.content.startsWith('!stop') || message.content.startsWith('!interrupt')) {
+        await this.handleStopCommand(message);
       } else if (!message.content.startsWith('!')) {
         // Handle general text messages (not commands)
         await this.handleTextMessage(message);
@@ -165,8 +187,13 @@ export class DiscordBotRealtime {
 
     logger.info(`Member voice channel: ${member.voice.channel.name}`);
 
+    // Send initial status message
+    const statusMsg = await message.reply('🔄 **Starting voice agent...**');
+
     try {
       logger.info('Attempting to join voice channel...');
+      await statusMsg.edit('🔄 **Step 1/4:** Joining voice channel...');
+
       const connection = joinVoiceChannel({
         channelId: member.voice.channel.id,
         guildId: message.guild!.id,
@@ -175,12 +202,35 @@ export class DiscordBotRealtime {
         selfMute: false
       });
 
-      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-      logger.info(`Joined voice channel ${member.voice.channel.name}`);
+      // Add connection status logging
+      connection.on('stateChange', (oldState, newState) => {
+        logger.info(`Voice connection state changed: ${oldState.status} -> ${newState.status}`);
+      });
 
-      // Create Realtime Voice Receiver
-      const receiver = new RealtimeVoiceReceiver(this.config.openaiApiKey);
+      connection.on('error', (error) => {
+        logger.error('Voice connection error:', error);
+      });
+
+      logger.info(`Current connection status: ${connection.state.status}`);
+
+      try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+        logger.info(`Joined voice channel ${member.voice.channel.name}`);
+        await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n🔄 **Step 2/4:** Initializing audio receiver...');
+      } catch (stateError) {
+        // Failed to reach Ready state within timeout
+        logger.error('Failed to reach Ready state', stateError);
+        connection.destroy();
+        await statusMsg.edit('❌ **Step 1/4 Failed:** Voice connection timed out\n\nPlease check bot permissions and try again.');
+        throw new Error('Voice connection timed out or was rejected. Please ensure the bot has proper permissions and try again.');
+      }
+
+      // Create Realtime Voice Receiver with configurable speech speed
+      const speechSpeed = this.config.ttsSpeed || 1.25; // Default to 1.25x speed (25% faster)
+      const receiver = new RealtimeVoiceReceiver(this.config.openaiApiKey, speechSpeed);
       this.realtimeReceivers.set(message.guild!.id, receiver);
+
+      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n🔄 **Step 3/4:** Connecting to OpenAI Realtime API...');
 
       // Capture channel ID and guild ID in closure-safe variables
       const channelId = member.voice.channel.id;
@@ -202,18 +252,77 @@ export class DiscordBotRealtime {
         });
       });
 
+      // Set up Discord message handler for transcription/response notifications
+      receiver.setDiscordMessageHandler(async (targetChannelId: string, msg: string) => {
+        try {
+          logger.info(`[VOICE MSG] Attempting to send to channel ${targetChannelId}: ${msg.substring(0, 50)}...`);
+          const channel = await this.client.channels.fetch(targetChannelId);
+
+          if (!channel) {
+            logger.error(`[VOICE MSG] Channel ${targetChannelId} not found!`);
+            return;
+          }
+
+          if (!channel.isTextBased()) {
+            logger.error(`[VOICE MSG] Channel ${targetChannelId} is not text-based (type: ${channel.type})`);
+            return;
+          }
+
+          if (!('send' in channel)) {
+            logger.error(`[VOICE MSG] Channel ${targetChannelId} does not have send method`);
+            return;
+          }
+
+          const sentMessage = await channel.send(msg);
+          const channelName = 'name' in channel ? channel.name : 'DM';
+          logger.info(`[VOICE MSG] ✅ Message sent successfully to #${channelName} (${targetChannelId}) - Message ID: ${sentMessage.id}`);
+        } catch (error) {
+          logger.error(`[VOICE MSG] ❌ Failed to send voice notification to channel ${targetChannelId}`, error);
+        }
+      });
+
       // Set up function calling to integrate with Claude orchestrator
       receiver.onFunctionCall(async (name: string, args: any) => {
         return await this.handleFunctionCall(name, args, message.author.id, guildId, channelId);
       });
 
       // Start listening (pass bot user ID to filter out bot's own audio)
+      await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n✅ **Step 3/4:** Connected to OpenAI API\n🔄 **Step 4/4:** Starting audio streams...');
+
       await receiver.startListening(connection, message.author.id, this.client.user!.id, message.author.tag);
 
-      await message.reply('Joined voice channel and started listening! (Realtime API Mode - Natural Conversations)');
+      await statusMsg.edit('✅ **All systems ready!**\n\n🎤 Voice agent is now listening in **' + member.voice.channel.name + '**\n\n_Mode: OpenAI Realtime API with natural interruptions_');
     } catch (error) {
       logger.error('Failed to join voice channel', error);
-      await message.reply('Failed to join voice channel: ' + (error instanceof Error ? error.message : 'Unknown error'));
+
+      // Update status message with error
+      try {
+        if (error instanceof Error) {
+          if (error.message.includes('timeout') || error.message.includes('aborted')) {
+            await statusMsg.edit('❌ **Connection Failed**\n\nConnection timed out. Possible causes:\n• Missing bot permissions (Connect, Speak, Use Voice Activity)\n• Network connectivity issues\n• Discord voice server issues\n\nPlease verify permissions and try again.');
+          } else if (error.message.includes('OpenAI') || error.message.includes('API')) {
+            await statusMsg.edit('❌ **Step 3/4 Failed:** Could not connect to OpenAI Realtime API\n\n' + error.message);
+          } else {
+            await statusMsg.edit('❌ **Startup Failed**\n\n' + error.message);
+          }
+        }
+      } catch (editError) {
+        // If we can't edit the status message, send a new reply
+        let errorMessage = 'Failed to join voice channel';
+        if (error instanceof Error) {
+          if (error.message.includes('timeout') || error.message.includes('aborted')) {
+            errorMessage += ': Connection timed out. This may be due to:\n' +
+                           '• Missing bot permissions (Connect, Speak, Use Voice Activity)\n' +
+                           '• Network connectivity issues\n' +
+                           '• Discord voice server issues\n\n' +
+                           'Please verify bot permissions and try again.';
+          } else {
+            errorMessage += ': ' + error.message;
+          }
+        }
+
+        await message.reply(errorMessage);
+      }
     }
   }
 
@@ -249,10 +358,58 @@ export class DiscordBotRealtime {
     await message.reply(status);
   }
 
+  private async handleNotifyTestCommand(message: Message): Promise<void> {
+    const notificationChannelId = this.config.systemNotificationChannelId;
+    
+    if (!notificationChannelId) {
+      await message.reply('❌ No notification channel configured. Set SYSTEM_NOTIFICATION_CHANNEL_ID in your .env file.');
+      return;
+    }
+
+    try {
+      const channel = await this.client.channels.fetch(notificationChannelId);
+      if (channel && channel.isTextBased() && 'send' in channel) {
+        await channel.send('🧪 **Notification Test**\n```\nThis is a test notification from the agent system.\nIf you see this, notifications are working!\n```');
+        await message.reply(`✅ Test notification sent to channel <#${notificationChannelId}>`);
+        logger.info(`Test notification sent to channel ${notificationChannelId}`);
+      } else {
+        await message.reply(`❌ Channel ${notificationChannelId} is not a text channel or bot doesn't have access.`);
+      }
+    } catch (error) {
+      logger.error('Failed to send test notification', error);
+      await message.reply(`❌ Failed to send test notification: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleStopCommand(message: Message): Promise<void> {
+    if (!message.guild) {
+      await message.reply('This command only works in a guild!');
+      return;
+    }
+
+    const receiver = this.realtimeReceivers.get(message.guild.id);
+    if (!receiver) {
+      await message.reply('❌ Bot is not currently in a voice channel or not actively speaking.');
+      return;
+    }
+
+    try {
+      // Interrupt the bot's current speech
+      receiver.interrupt();
+      await message.reply('🛑 Bot speech interrupted.');
+      logger.info(`User ${message.author.tag} interrupted bot in guild ${message.guild.id}`);
+    } catch (error) {
+      logger.error('Failed to interrupt bot', error);
+      await message.reply(`❌ Failed to interrupt bot: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   /**
    * Handle general text messages (for AI responses)
    */
   private async handleTextMessage(message: Message): Promise<void> {
+    let thinkingMessage: Message | undefined;
+    
     try {
       if (!message.guild) return;
 
@@ -271,32 +428,66 @@ export class DiscordBotRealtime {
       // Update last message time
       this.messageRateLimits.set(userId, now);
 
-      // Show typing indicator
+      // FAST PATH: Check if this is a simple command that can be executed directly
+      const directResult = await DirectCommandExecutor.handleMessage(message.content);
+      if (directResult.handled) {
+        logger.info(`✅ Handled via direct execution: ${message.content}`);
+        await message.reply(directResult.response!);
+
+        // Save to database
+        this.db.saveMessage({
+          guildId: message.guild.id,
+          channelId: message.channel.id,
+          userId: this.client.user!.id,
+          username: this.client.user!.tag,
+          message: directResult.response!,
+          messageType: 'agent_response',
+          timestamp: new Date()
+        });
+        return;
+      }
+
+      // Send immediate acknowledgment
+      thinkingMessage = await message.reply('⚙️ Working on it...');
+
+      // Show typing indicator for orchestrator path
       if ('sendTyping' in message.channel) {
         await message.channel.sendTyping();
       }
 
-      // Use Hybrid Orchestrator (Groq for speed, Claude for quality)
-      const result = await this.hybridOrchestrator.processCommand({
-        command: message.content,
-        context: {
-          userId: message.author.id,
-          guildId: message.guild.id,
-          channelId: message.channel.id,
-          timestamp: new Date()
+      // Use SAME orchestrator as voice commands for consistency
+      const response = await fetch(`${this.orchestratorUrl}/command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': this.orchestratorApiKey
         },
-        priority: 'normal',
-        requiresSubAgents: false
+        body: JSON.stringify({
+          command: message.content,
+          context: {
+            userId: message.author.id,
+            guildId: message.guild.id,
+            channelId: message.channel.id,
+            timestamp: new Date()
+          },
+          priority: 'normal',
+          requiresSubAgents: true // Enable command execution
+        })
       });
 
+      const result = await response.json() as any;
+
+      // Delete thinking message
+      try {
+        await thinkingMessage.delete();
+      } catch (e) {
+        // Ignore if we can't delete (might be too old)
+      }
+
       if (result.success && result.message) {
-        // Add model indicator emoji
-        const modelEmoji = result.model === 'groq' ? '⚡' : '🧠';
-        const responseTime = result.responseTime ? ` (${result.responseTime}ms)` : '';
+        await message.reply(result.message);
 
-        await message.reply(`${modelEmoji} ${result.message}`);
-
-        logger.info(`Response generated using ${result.model}${responseTime}`);
+        logger.info(`Response from orchestrator for text message`);
 
         // Save bot response to database
         this.db.saveMessage({
@@ -308,10 +499,28 @@ export class DiscordBotRealtime {
           messageType: 'agent_response',
           timestamp: new Date()
         });
+      } else if (!result.success) {
+        const errorMsg = result.error 
+          ? `❌ Error: ${result.error}\n\nPlease try again or rephrase your request.`
+          : '❌ Sorry, I encountered an error processing your request.';
+        await message.reply(errorMsg);
+        logger.error('Orchestrator returned error:', result.error);
       }
     } catch (error) {
       logger.error('Failed to handle text message', error);
-      // Don't reply on error to avoid spamming
+      
+      // Delete thinking message if it exists
+      if (thinkingMessage) {
+        try {
+          await thinkingMessage.delete();
+        } catch (e) {
+          // Ignore
+        }
+      }
+      
+      // Send error message to user
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await message.reply(`❌ Error: ${errorMessage}\n\nPlease try again later.`);
     }
   }
 
@@ -327,6 +536,46 @@ export class DiscordBotRealtime {
     channelId: string
   ): Promise<any> {
     logger.info(`Handling function call: ${name}`, args);
+
+    // Handle progress checking
+    if (name === 'check_task_progress') {
+      try {
+        const response = await fetch(`${this.orchestratorUrl}/agents`, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': this.orchestratorApiKey
+          }
+        });
+
+        const agents = await response.json() as any;
+        
+        if (agents.agents && agents.agents.length > 0) {
+          const agentSummaries = agents.agents.map((agent: any) => 
+            `- Task ${agent.taskId}: ${agent.status}`
+          ).join('\n');
+          
+          return {
+            success: true,
+            message: `I'm currently working on ${agents.agents.length} task(s):\n${agentSummaries}`,
+            agentCount: agents.agents.length,
+            agents: agents.agents
+          };
+        } else {
+          return {
+            success: true,
+            message: "I'm not currently working on any tasks. Everything is idle!",
+            agentCount: 0
+          };
+        }
+      } catch (error) {
+        logger.error('Failed to check task progress', error);
+        return {
+          success: false,
+          error: 'Failed to retrieve task status',
+          message: "Sorry, I couldn't check my task progress right now."
+        };
+      }
+    }
 
     // Handle cloud deployment functions
     if (name === 'deploy_to_cloud_run') {
@@ -451,7 +700,8 @@ export class DiscordBotRealtime {
             contextFiles: args.context_files,
             requirements: args.requirements,
             maxIterations: args.max_iterations || 20,
-            workingDirectory: args.working_directory || process.cwd()
+            workingDirectory: args.working_directory || process.cwd(),
+            channelId: channelId // Pass the channel ID so notifications go to the right place
           }
         );
 
@@ -645,46 +895,110 @@ export class DiscordBotRealtime {
 
     if (name === 'execute_task') {
       try {
-        // Send to Claude orchestrator
-        const response = await fetch(`${this.orchestratorUrl}/command`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': this.orchestratorApiKey
-          },
-          body: JSON.stringify({
-            command: args.task_description,
-            context: {
-              userId,
-              guildId,
-              channelId,
-              timestamp: new Date(),
-              taskType: args.task_type,
-              parameters: args.parameters || {}
-            },
-            priority: 'high',
-            requiresSubAgents: true
-          })
-        });
+        // Log that we're starting the task
+        logger.info(`🚀 Starting task: ${args.task_description}`);
 
-        const result = await response.json() as any;
-        logger.info('Orchestrator response:', result);
-
-        if (result.success) {
-          return {
-            success: true,
-            message: result.message || 'Task executed successfully',
-            taskId: result.taskId,
-            details: result.executionPlan
-          };
-        } else {
-          return {
-            success: false,
-            error: result.error || 'Task execution failed'
-          };
+        // Send initial notification to Discord channel
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel && channel.isTextBased() && 'send' in channel) {
+            await channel.send(`🤖 **Task Started**\n\`\`\`\n${args.task_description}\n\`\`\``);
+          }
+        } catch (err) {
+          logger.error('Failed to send task start notification', err);
         }
+
+        // IMPORTANT: Return immediate acknowledgment to voice so user doesn't wait in silence
+        // This allows OpenAI to speak "I'm working on that" while the task executes
+        const immediateVoiceResponse = {
+          success: true,
+          voiceMessage: `I'm working on that now. I'll send updates to the Discord channel.`,
+          isProcessing: true // Flag to indicate task is still running
+        };
+
+        // Execute task asynchronously and send results to Discord
+        (async () => {
+          try {
+            // Send to Claude orchestrator
+            const response = await fetch(`${this.orchestratorUrl}/command`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': this.orchestratorApiKey
+              },
+              body: JSON.stringify({
+                command: args.task_description,
+                context: {
+                  userId,
+                  guildId,
+                  channelId,
+                  timestamp: new Date(),
+                  taskType: args.task_type,
+                  parameters: args.parameters || {}
+                },
+                priority: 'high',
+                requiresSubAgents: true
+              })
+            });
+
+            const result = await response.json() as any;
+            logger.info('Orchestrator response:', result);
+
+            if (result.success) {
+              logger.info(`✅ Task completed: ${args.task_description}`);
+
+              // Send completion notification to Discord channel
+              try {
+                const channel = await this.client.channels.fetch(channelId);
+                if (channel && channel.isTextBased() && 'send' in channel) {
+                  await channel.send(`✅ **Task Completed**\n${result.message || 'Task executed successfully'}`);
+                }
+              } catch (err) {
+                logger.error('Failed to send task completion notification', err);
+              }
+            } else {
+              logger.error(`❌ Task failed: ${args.task_description}`);
+
+              // Send failure notification to Discord channel
+              try {
+                const channel = await this.client.channels.fetch(channelId);
+                if (channel && channel.isTextBased() && 'send' in channel) {
+                  await channel.send(`❌ **Task Failed**\n${result.error || 'Task execution failed'}`);
+                }
+              } catch (err) {
+                logger.error('Failed to send task failure notification', err);
+              }
+            }
+          } catch (error) {
+            logger.error('Failed to execute task via orchestrator', error);
+
+            // Send error notification to Discord channel
+            try {
+              const channel = await this.client.channels.fetch(channelId);
+              if (channel && channel.isTextBased() && 'send' in channel) {
+                await channel.send(`❌ **Error**\n${error instanceof Error ? error.message : 'Unknown error'}`);
+              }
+            } catch (err) {
+              logger.error('Failed to send task error notification', err);
+            }
+          }
+        })();
+
+        // Return immediate voice response
+        return immediateVoiceResponse;
       } catch (error) {
         logger.error('Failed to execute task via orchestrator', error);
+
+        // Send error notification to Discord channel
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel && channel.isTextBased() && 'send' in channel) {
+            await channel.send(`❌ **Error**\n${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        } catch (err) {
+          logger.error('Failed to send task error notification', err);
+        }
+
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
