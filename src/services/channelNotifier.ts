@@ -257,6 +257,141 @@ export class ChannelNotifier {
   }
 
   /**
+   * Post cloud deployment event
+   */
+  async notifyDeployment(
+    guildId: string,
+    channelId: string,
+    event: {
+      type: 'started' | 'progress' | 'completed' | 'failed';
+      serviceName: string;
+      message: string;
+      details?: string;
+      url?: string;
+    }
+  ): Promise<void> {
+    try {
+      const channel = await this.getTextChannel(guildId, channelId);
+      if (!channel) return;
+
+      const colors = {
+        started: Colors.Blue,
+        progress: Colors.Yellow,
+        completed: Colors.Green,
+        failed: Colors.Red
+      };
+
+      const emojis = {
+        started: '🚀',
+        progress: '⚙️',
+        completed: '✅',
+        failed: '❌'
+      };
+
+      const embed = new EmbedBuilder()
+        .setColor(colors[event.type])
+        .setTitle(`${emojis[event.type]} Cloud Deployment - ${event.serviceName}`)
+        .setDescription(event.message)
+        .setTimestamp()
+        .setFooter({ text: 'AgentFlow Cloud Deployment' });
+
+      if (event.details) {
+        embed.addFields({ name: 'Details', value: event.details });
+      }
+
+      if (event.url) {
+        embed.addFields({ name: 'Service URL', value: event.url });
+      }
+
+      await channel.send({ embeds: [embed] });
+
+      // Log to database
+      this.db.logAgentActivity({
+        agentId: 'system',
+        taskId: `deployment_${Date.now()}`,
+        guildId,
+        channelId,
+        logType: event.type === 'failed' ? 'error' : 'info',
+        message: `[Deployment] ${event.serviceName}: ${event.message}`,
+        details: event.details,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      logger.error('Failed to notify deployment', error);
+    }
+  }
+
+  /**
+   * Post system health/monitoring event
+   */
+  async notifySystemEvent(
+    guildId: string,
+    channelId: string,
+    event: {
+      type: 'startup' | 'shutdown' | 'error' | 'warning' | 'info';
+      component: string;
+      message: string;
+      details?: string;
+      metrics?: Record<string, string | number>;
+    }
+  ): Promise<void> {
+    try {
+      const channel = await this.getTextChannel(guildId, channelId);
+      if (!channel) return;
+
+      const colors = {
+        startup: Colors.Green,
+        shutdown: Colors.Yellow,
+        error: Colors.Red,
+        warning: Colors.Yellow,
+        info: Colors.Blue
+      };
+
+      const emojis = {
+        startup: '🟢',
+        shutdown: '🔴',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+      };
+
+      const embed = new EmbedBuilder()
+        .setColor(colors[event.type])
+        .setTitle(`${emojis[event.type]} System Event - ${event.component}`)
+        .setDescription(event.message)
+        .setTimestamp()
+        .setFooter({ text: 'AgentFlow System Monitor' });
+
+      if (event.details) {
+        embed.addFields({ name: 'Details', value: `\`\`\`\n${event.details.slice(0, 1000)}\n\`\`\`` });
+      }
+
+      if (event.metrics) {
+        const metricsText = Object.entries(event.metrics)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join('\n');
+        embed.addFields({ name: 'Metrics', value: metricsText, inline: false });
+      }
+
+      await channel.send({ embeds: [embed] });
+
+      // Log to database
+      this.db.logAgentActivity({
+        agentId: 'system',
+        taskId: `system_${Date.now()}`,
+        guildId,
+        channelId,
+        logType: event.type === 'error' ? 'error' : event.type === 'warning' ? 'warning' : 'info',
+        message: `[${event.component}] ${event.message}`,
+        details: event.details,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      logger.error('Failed to notify system event', error);
+    }
+  }
+
+  /**
    * Post a simple message to a channel
    */
   async sendMessage(

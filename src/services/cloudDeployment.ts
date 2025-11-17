@@ -31,10 +31,32 @@ export interface DeploymentResult {
 export class CloudDeploymentService {
   private projectId: string;
   private region: string;
+  private notificationCallback?: (event: {
+    type: 'started' | 'progress' | 'completed' | 'failed';
+    serviceName: string;
+    message: string;
+    details?: string;
+    url?: string;
+  }) => Promise<void>;
 
   constructor(projectId: string, region: string = 'us-central1') {
     this.projectId = projectId;
     this.region = region;
+  }
+
+  /**
+   * Set callback for deployment notifications
+   */
+  setNotificationCallback(
+    callback: (event: {
+      type: 'started' | 'progress' | 'completed' | 'failed';
+      serviceName: string;
+      message: string;
+      details?: string;
+      url?: string;
+    }) => Promise<void>
+  ): void {
+    this.notificationCallback = callback;
   }
 
   /**
@@ -57,10 +79,24 @@ export class CloudDeploymentService {
     const logs: string[] = [];
 
     try {
+      // Notify deployment started
+      await this.notificationCallback?.({
+        type: 'started',
+        serviceName: config.serviceName,
+        message: `Starting deployment to Google Cloud Run`,
+        details: `Project: ${config.projectId}\nRegion: ${this.region}`
+      });
+
       // 1. Check authentication
       logs.push('Checking gcloud authentication...');
       const isAuthed = await this.checkGcloudAuth();
       if (!isAuthed) {
+        await this.notificationCallback?.({
+          type: 'failed',
+          serviceName: config.serviceName,
+          message: 'Deployment failed: gcloud CLI not authenticated',
+          details: 'Run: gcloud auth login'
+        });
         return {
           success: false,
           error: 'gcloud CLI not authenticated. Run: gcloud auth login',
@@ -76,6 +112,13 @@ export class CloudDeploymentService {
       const imageTag = `gcr.io/${config.projectId}/${config.imageName}:latest`;
       logs.push(`Building Docker image: ${imageTag}...`);
 
+      await this.notificationCallback?.({
+        type: 'progress',
+        serviceName: config.serviceName,
+        message: 'Building Docker image with Cloud Build...',
+        details: `Image: ${imageTag}`
+      });
+
       const buildContext = config.buildContext || '.';
       const dockerfilePath = config.dockerfile || 'Dockerfile';
 
@@ -86,6 +129,13 @@ export class CloudDeploymentService {
         logs.push(`Build warnings: ${buildErr}`);
       }
       logs.push('Docker image built successfully');
+
+      await this.notificationCallback?.({
+        type: 'progress',
+        serviceName: config.serviceName,
+        message: 'Docker image built successfully',
+        details: 'Deploying to Cloud Run...'
+      });
 
       // 4. Deploy to Cloud Run
       logs.push(`Deploying to Cloud Run service: ${config.serviceName}...`);
@@ -129,6 +179,15 @@ export class CloudDeploymentService {
         logs.push(`Service URL: ${serviceUrl}`);
       }
 
+      // Notify deployment completed
+      await this.notificationCallback?.({
+        type: 'completed',
+        serviceName: config.serviceName,
+        message: `Deployment completed successfully! Service is now live.`,
+        details: `Region: ${this.region}\nMemory: 2Gi\nCPU: 2`,
+        url: serviceUrl
+      });
+
       return {
         success: true,
         serviceUrl,
@@ -138,6 +197,14 @@ export class CloudDeploymentService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Deployment failed', error);
+
+      // Notify deployment failed
+      await this.notificationCallback?.({
+        type: 'failed',
+        serviceName: config.serviceName,
+        message: 'Deployment failed',
+        details: errorMessage
+      });
 
       return {
         success: false,

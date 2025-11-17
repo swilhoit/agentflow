@@ -28,7 +28,9 @@ export function loadConfig(): BotConfig {
     orchestratorApiKey: process.env.ORCHESTRATOR_API_KEY!,
     allowedUserIds: process.env.ALLOWED_USER_IDS?.split(',').filter(id => id.trim().length > 0) || [],
     maxConcurrentAgents: parseInt(process.env.MAX_CONCURRENT_AGENTS || '5', 10),
-    useRealtimeApi: process.env.USE_REALTIME_API === 'true'
+    useRealtimeApi: process.env.USE_REALTIME_API === 'true',
+    systemNotificationGuildId: process.env.SYSTEM_NOTIFICATION_GUILD_ID,
+    systemNotificationChannelId: process.env.SYSTEM_NOTIFICATION_CHANNEL_ID
   };
 }
 

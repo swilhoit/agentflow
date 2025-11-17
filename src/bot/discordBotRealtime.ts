@@ -329,6 +329,11 @@ export class DiscordBotRealtime {
     // Handle cloud deployment functions
     if (name === 'deploy_to_cloud_run') {
       try {
+        // Set up deployment notification callback
+        this.cloudDeployment.setNotificationCallback(async (event) => {
+          await this.channelNotifier.notifyDeployment(guildId, channelId, event);
+        });
+
         const result = await this.cloudDeployment.deployToCloudRun({
           projectId: process.env.GCP_PROJECT_ID || 'agentflow-discord-bot',
           region: process.env.GCP_REGION || 'us-central1',
@@ -694,6 +699,44 @@ export class DiscordBotRealtime {
   async start(): Promise<void> {
     await this.client.login(this.config.discordToken);
     logger.info('Discord bot started (Realtime API Mode)');
+
+    // Send system startup notification if configured
+    if (this.config.systemNotificationGuildId && this.config.systemNotificationChannelId) {
+      await this.sendSystemNotification({
+        type: 'startup',
+        component: 'AgentFlow Bot',
+        message: 'AgentFlow system started successfully',
+        details: `Mode: Realtime API\nMax Concurrent Agents: ${this.config.maxConcurrentAgents}`,
+        metrics: {
+          'Node Version': process.version,
+          'Platform': process.platform,
+          'Memory': `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+        }
+      });
+    }
+  }
+
+  /**
+   * Send system notification to configured channel
+   */
+  private async sendSystemNotification(event: {
+    type: 'startup' | 'shutdown' | 'error' | 'warning' | 'info';
+    component: string;
+    message: string;
+    details?: string;
+    metrics?: Record<string, string | number>;
+  }): Promise<void> {
+    try {
+      if (this.config.systemNotificationGuildId && this.config.systemNotificationChannelId) {
+        await this.channelNotifier.notifySystemEvent(
+          this.config.systemNotificationGuildId,
+          this.config.systemNotificationChannelId,
+          event
+        );
+      }
+    } catch (error) {
+      logger.error('Failed to send system notification', error);
+    }
   }
 
   /**
@@ -712,6 +755,16 @@ export class DiscordBotRealtime {
   }
 
   async stop(): Promise<void> {
+    // Send shutdown notification if configured
+    if (this.config.systemNotificationGuildId && this.config.systemNotificationChannelId) {
+      await this.sendSystemNotification({
+        type: 'shutdown',
+        component: 'AgentFlow Bot',
+        message: 'AgentFlow system shutting down',
+        details: 'Graceful shutdown initiated'
+      });
+    }
+
     // Clean up all receivers
     for (const [guildId, receiver] of this.realtimeReceivers.entries()) {
       receiver.stopListening();

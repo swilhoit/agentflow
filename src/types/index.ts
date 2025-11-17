@@ -56,4 +56,6 @@ export interface BotConfig {
   allowedUserIds: string[];
   maxConcurrentAgents: number;
   useRealtimeApi?: boolean;
+  systemNotificationGuildId?: string;
+  systemNotificationChannelId?: string;
 }
