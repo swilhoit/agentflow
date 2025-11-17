@@ -11,10 +11,27 @@ export class SubAgentManager {
   private processes: Map<string, ChildProcess> = new Map();
   private anthropicClient: Anthropic;
   private agents: Map<string, ClaudeCodeAgent> = new Map();
+  private sendDiscordMessage?: (channelId: string, message: string) => Promise<void>;
+  private notificationChannelId?: string;
 
   constructor(config: BotConfig) {
     this.config = config;
     this.anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
+    this.notificationChannelId = config.systemNotificationChannelId;
+  }
+
+  setDiscordMessageHandler(handler: (channelId: string, message: string) => Promise<void>): void {
+    this.sendDiscordMessage = handler;
+  }
+
+  private async sendNotification(message: string): Promise<void> {
+    if (this.sendDiscordMessage && this.notificationChannelId) {
+      try {
+        await this.sendDiscordMessage(this.notificationChannelId, message);
+      } catch (error) {
+        logger.error('Failed to send Discord notification', error);
+      }
+    }
   }
 
   async spawnAgents(
@@ -80,6 +97,7 @@ export class SubAgentManager {
       this.tasks.get(parentTaskId)!.push(task);
 
       logger.info(`Spawned sub-agent ${sessionId} for task: ${taskDescription}`);
+      await this.sendNotification(`🤖 **Sub-Agent Spawned**\n\`\`\`\nID: ${sessionId}\nType: ${task.type}\nTask: ${taskDescription}\n\`\`\``);
 
       // Execute the task
       if (bashCommand) {
@@ -104,6 +122,7 @@ export class SubAgentManager {
 
     try {
       logger.info(`Executing command: ${command}`);
+      await this.sendNotification(`⚙️ **Executing Command**\n\`\`\`bash\n${command.substring(0, 200)}\n\`\`\``);
 
       const result = await this.runBashCommand(command);
 
@@ -113,6 +132,7 @@ export class SubAgentManager {
       session.status = 'idle';
 
       logger.info(`Task ${task.id} completed successfully`);
+      await this.sendNotification(`✅ **Command Completed**\n\`\`\`\nTask: ${task.id}\n\`\`\``);
     } catch (error) {
       task.status = 'failed';
       task.error = error instanceof Error ? error.message : 'Unknown error';
@@ -120,6 +140,7 @@ export class SubAgentManager {
       session.status = 'idle';
 
       logger.error(`Task ${task.id} failed`, error);
+      await this.sendNotification(`❌ **Command Failed**\n\`\`\`\nTask: ${task.id}\nError: ${task.error}\n\`\`\``);
     }
   }
 
@@ -132,6 +153,7 @@ export class SubAgentManager {
 
     try {
       logger.info(`Executing analysis task: ${description}`);
+      await this.sendNotification(`🔍 **Analysis Task Started**\n\`\`\`\n${description.substring(0, 200)}\n\`\`\``);
 
       const response = await this.anthropicClient.messages.create({
         model: 'claude-3-5-sonnet-20241022',
@@ -154,6 +176,7 @@ export class SubAgentManager {
       session.status = 'idle';
 
       logger.info(`Analysis task ${task.id} completed successfully`);
+      await this.sendNotification(`✅ **Analysis Complete**\n\`\`\`\nTask: ${task.id}\n\`\`\``);
     } catch (error) {
       task.status = 'failed';
       task.error = error instanceof Error ? error.message : 'Unknown error';
@@ -161,6 +184,7 @@ export class SubAgentManager {
       session.status = 'idle';
 
       logger.error(`Analysis task ${task.id} failed`, error);
+      await this.sendNotification(`❌ **Analysis Failed**\n\`\`\`\nTask: ${task.id}\nError: ${task.error}\n\`\`\``);
     }
   }
 
@@ -256,20 +280,41 @@ export class SubAgentManager {
     const agent = new ClaudeCodeAgent(sessionId, workingDirectory);
 
     // Listen to agent events
+    agent.on('task:started', async (data) => {
+      const msg = `🚀 **Agent Started**\n\`\`\`\nTask: ${data.description}\nAgent ID: ${sessionId}\n\`\`\``;
+      logger.info(`[${sessionId}] Task started: ${data.description}`);
+      await this.sendNotification(msg);
+    });
+
+    agent.on('step:started', async (step) => {
+      const msg = `📋 **Step ${step.step}**: ${step.action}\n\`Agent: ${sessionId}\``;
+      logger.info(`[${sessionId}] Step ${step.step}: ${step.action}`);
+      await this.sendNotification(msg);
+    });
+
     agent.on('output', (data) => {
       logger.info(`[${sessionId}] ${data}`);
+      // Don't send every output line to avoid spam
     });
 
-    agent.on('step:started', (step) => {
-      logger.info(`[${sessionId}] Step ${step.step}: ${step.action}`);
-    });
-
-    agent.on('warning', (warning) => {
+    agent.on('warning', async (warning) => {
+      const msg = `⚠️ **Warning**\n\`\`\`\nType: ${warning.type}\nAgent: ${sessionId}\n\`\`\``;
       logger.warn(`[${sessionId}] Warning: ${warning.type}`);
+      await this.sendNotification(msg);
     });
 
-    agent.on('task:completed', (result: AgentResult) => {
+    agent.on('task:completed', async (result: AgentResult) => {
+      const status = result.success ? '✅ SUCCESS' : '❌ FAILED';
+      const duration = (result.duration / 1000).toFixed(2);
+      const msg = `🏁 **Task Completed**\n\`\`\`\nStatus: ${status}\nAgent: ${sessionId}\nDuration: ${duration}s\nSteps: ${result.steps.length}\n\`\`\``;
       logger.info(`[${sessionId}] Task completed: ${result.success ? '✅' : '❌'}`);
+      await this.sendNotification(msg);
+    });
+
+    agent.on('task:failed', async (result: AgentResult) => {
+      const msg = `❌ **Task Failed**\n\`\`\`\nAgent: ${sessionId}\nError: ${result.error || 'Unknown error'}\nDuration: ${(result.duration / 1000).toFixed(2)}s\n\`\`\``;
+      logger.error(`[${sessionId}] Task failed: ${result.error}`);
+      await this.sendNotification(msg);
     });
 
     // Store agent

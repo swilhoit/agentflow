@@ -24,6 +24,7 @@ export function loadConfig(): BotConfig {
     discordClientId: process.env.DISCORD_CLIENT_ID!,
     openaiApiKey: process.env.OPENAI_API_KEY!,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
+    groqApiKey: process.env.GROQ_API_KEY,
     orchestratorUrl: process.env.ORCHESTRATOR_URL!,
     orchestratorApiKey: process.env.ORCHESTRATOR_API_KEY!,
     allowedUserIds: process.env.ALLOWED_USER_IDS?.split(',').filter(id => id.trim().length > 0) || [],

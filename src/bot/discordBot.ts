@@ -176,6 +176,24 @@ export class DiscordBot {
     }
   }
 
+  async sendTextMessage(channelId: string, message: string): Promise<void> {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (channel && channel.isTextBased() && 'send' in channel) {
+        await channel.send(message);
+        logger.info(`Sent text message to channel ${channelId}`);
+      } else {
+        logger.warn(`Channel ${channelId} is not text-based`);
+      }
+    } catch (error) {
+      logger.error(`Failed to send text message to channel ${channelId}`, error);
+    }
+  }
+
+  getClient(): Client {
+    return this.client;
+  }
+
   async start(): Promise<void> {
     try {
       await this.client.login(this.config.discordToken);

@@ -26,12 +26,15 @@ async function main() {
 
     logger.info('Orchestrator server started');
 
+    // Initialize bot first to get message handler
+    let bot: DiscordBot | DiscordBotRealtime;
+
     // Choose bot mode based on configuration
     if (config.useRealtimeApi) {
       logger.info('Using OpenAI Realtime API mode (natural conversations)');
 
       // Start Realtime API bot (no voice command handler needed - integrated)
-      const bot = new DiscordBotRealtime(config);
+      bot = new DiscordBotRealtime(config);
       await bot.start();
 
       logger.info('AgentFlow started successfully (Realtime API Mode)');
@@ -56,7 +59,17 @@ async function main() {
 
     // Legacy mode: Use original bot with Whisper + Claude + TTS
     logger.info('Using legacy mode (Whisper + Claude + TTS)');
-    const bot = new DiscordBot(config);
+    bot = new DiscordBot(config);
+
+    // Wire up the Discord message handler to the orchestrator
+    if (config.systemNotificationChannelId) {
+      orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
+        await (bot as DiscordBot).sendTextMessage(channelId, message);
+      });
+      logger.info(`Agent notifications will be sent to channel: ${config.systemNotificationChannelId}`);
+    } else {
+      logger.warn('No systemNotificationChannelId configured - agent notifications disabled');
+    }
 
     // Set up voice command handler
     bot.onVoiceCommand(async (command: VoiceCommand) => {

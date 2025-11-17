@@ -23,6 +23,14 @@ export class OrchestratorServer {
     this.setupRoutes();
   }
 
+  setDiscordMessageHandler(handler: (channelId: string, message: string) => Promise<void>): void {
+    this.subAgentManager.setDiscordMessageHandler(handler);
+  }
+
+  getSubAgentManager(): SubAgentManager {
+    return this.subAgentManager;
+  }
+
   private setupMiddleware(): void {
     this.app.use(express.json());
 

@@ -51,6 +51,7 @@ export interface BotConfig {
   discordClientId: string;
   openaiApiKey: string;
   anthropicApiKey: string;
+  groqApiKey?: string;
   orchestratorUrl: string;
   orchestratorApiKey: string;
   allowedUserIds: string[];

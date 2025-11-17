@@ -17,6 +17,7 @@ import { CloudDeploymentService } from '../services/cloudDeployment';
 import { SubAgentManager } from '../agents/subAgentManager';
 import { getDatabase, DatabaseService } from '../services/database';
 import { ChannelNotifier } from '../services/channelNotifier';
+import { HybridOrchestrator } from '../orchestrator/hybridOrchestrator';
 
 /**
  * Discord Bot with OpenAI Realtime API Integration
@@ -32,6 +33,7 @@ export class DiscordBotRealtime {
   private subAgentManager: SubAgentManager;
   private db: DatabaseService;
   private channelNotifier: ChannelNotifier;
+  private hybridOrchestrator: HybridOrchestrator;
 
   // Rate limiting for text messages (user -> last message timestamp)
   private messageRateLimits: Map<string, number> = new Map();
@@ -72,6 +74,12 @@ export class DiscordBotRealtime {
 
     // Initialize channel notifier (needs client)
     this.channelNotifier = new ChannelNotifier(this.client);
+
+    // Initialize hybrid orchestrator (Groq + Claude)
+    this.hybridOrchestrator = new HybridOrchestrator(
+      config.anthropicApiKey,
+      config.groqApiKey
+    );
 
     this.setupEventHandlers();
   }
@@ -263,38 +271,32 @@ export class DiscordBotRealtime {
       // Update last message time
       this.messageRateLimits.set(userId, now);
 
-      // Get conversation context from database
-      const context = this.db.getConversationContext(
-        message.guild.id,
-        message.channel.id,
-        20
-      );
+      // Show typing indicator
+      if ('sendTyping' in message.channel) {
+        await message.channel.sendTyping();
+      }
 
-      // Send to orchestrator or OpenAI for response
-      const response = await fetch(`${this.orchestratorUrl}/command`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': this.orchestratorApiKey
+      // Use Hybrid Orchestrator (Groq for speed, Claude for quality)
+      const result = await this.hybridOrchestrator.processCommand({
+        command: message.content,
+        context: {
+          userId: message.author.id,
+          guildId: message.guild.id,
+          channelId: message.channel.id,
+          timestamp: new Date()
         },
-        body: JSON.stringify({
-          command: message.content,
-          context: {
-            conversationHistory: context,
-            userId: message.author.id,
-            guildId: message.guild.id,
-            channelId: message.channel.id,
-            timestamp: new Date()
-          },
-          priority: 'normal',
-          requiresSubAgents: false
-        })
+        priority: 'normal',
+        requiresSubAgents: false
       });
 
-      const result = await response.json() as any;
-
       if (result.success && result.message) {
-        await message.reply(result.message);
+        // Add model indicator emoji
+        const modelEmoji = result.model === 'groq' ? '⚡' : '🧠';
+        const responseTime = result.responseTime ? ` (${result.responseTime}ms)` : '';
+
+        await message.reply(`${modelEmoji} ${result.message}`);
+
+        logger.info(`Response generated using ${result.model}${responseTime}`);
 
         // Save bot response to database
         this.db.saveMessage({
