@@ -57,10 +57,17 @@ export class ToolBasedAgent {
   private async notify(message: string): Promise<void> {
     if (this.notificationHandler) {
       try {
+        logger.info(`📢 Sending notification: ${message.substring(0, 100)}...`);
         await this.notificationHandler(message);
+        logger.info('✅ Notification sent successfully');
       } catch (error) {
-        logger.error('Failed to send notification', error);
+        logger.error('❌ Failed to send notification', error);
+        logger.error('Notification content:', message);
       }
+    } else {
+      logger.error('⚠️⚠️⚠️ NO NOTIFICATION HANDLER SET - USER WILL NOT SEE THIS! ⚠️⚠️⚠️');
+      logger.error('Message that should have been sent to user:', message);
+      logger.error('This indicates a serious configuration error - notifications are critical for UX!');
     }
   }
 
@@ -168,6 +175,141 @@ export class ToolBasedAgent {
             },
             required: ['boardName']
           }
+        },
+        {
+          name: 'trello_update_card',
+          description: 'Update an existing Trello card (name, description, due date, list, position, labels, members)',
+          input_schema: {
+            type: 'object',
+            properties: {
+              boardName: {
+                type: 'string',
+                description: 'Name of the board containing the card'
+              },
+              cardName: {
+                type: 'string',
+                description: 'Current name of the card to update'
+              },
+              newName: {
+                type: 'string',
+                description: 'New name for the card (optional)'
+              },
+              newDescription: {
+                type: 'string',
+                description: 'New description for the card (optional)'
+              },
+              newListName: {
+                type: 'string',
+                description: 'Name of list to move card to (optional)'
+              },
+              dueDate: {
+                type: 'string',
+                description: 'Due date in ISO format (optional)'
+              }
+            },
+            required: ['boardName', 'cardName']
+          }
+        },
+        {
+          name: 'trello_get_lists',
+          description: 'Get all lists on a Trello board',
+          input_schema: {
+            type: 'object',
+            properties: {
+              boardName: {
+                type: 'string',
+                description: 'Name of the board'
+              }
+            },
+            required: ['boardName']
+          }
+        },
+        {
+          name: 'trello_search_cards',
+          description: 'Search for cards across boards by text query',
+          input_schema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query text'
+              },
+              boardName: {
+                type: 'string',
+                description: 'Optional board name to limit search to'
+              }
+            },
+            required: ['query']
+          }
+        },
+        {
+          name: 'trello_add_comment',
+          description: 'Add a comment to a Trello card',
+          input_schema: {
+            type: 'object',
+            properties: {
+              boardName: {
+                type: 'string',
+                description: 'Name of the board'
+              },
+              cardName: {
+                type: 'string',
+                description: 'Name of the card to comment on'
+              },
+              comment: {
+                type: 'string',
+                description: 'Comment text to add'
+              }
+            },
+            required: ['boardName', 'cardName', 'comment']
+          }
+        },
+        {
+          name: 'trello_archive_card',
+          description: 'Archive (close) a Trello card',
+          input_schema: {
+            type: 'object',
+            properties: {
+              boardName: {
+                type: 'string',
+                description: 'Name of the board'
+              },
+              cardName: {
+                type: 'string',
+                description: 'Name of the card to archive'
+              }
+            },
+            required: ['boardName', 'cardName']
+          }
+        },
+        {
+          name: 'trello_add_checklist',
+          description: 'Add a checklist to a Trello card',
+          input_schema: {
+            type: 'object',
+            properties: {
+              boardName: {
+                type: 'string',
+                description: 'Name of the board'
+              },
+              cardName: {
+                type: 'string',
+                description: 'Name of the card'
+              },
+              checklistName: {
+                type: 'string',
+                description: 'Name for the checklist'
+              },
+              items: {
+                type: 'array',
+                description: 'Array of checklist item names (optional)',
+                items: {
+                  type: 'string'
+                }
+              }
+            },
+            required: ['boardName', 'cardName', 'checklistName']
+          }
         }
       );
     }
@@ -206,6 +348,19 @@ export class ToolBasedAgent {
         case 'trello_list_cards':
           return await this.trelloListCards(toolInput.boardName);
 
+        // Extended Trello operations - for now, suggest using execute_bash with curl
+        case 'trello_update_card':
+        case 'trello_get_lists':
+        case 'trello_search_cards':
+        case 'trello_add_comment':
+        case 'trello_archive_card':
+        case 'trello_add_checklist':
+          return {
+            success: false,
+            error: `Tool '${toolName}' not yet implemented. Use execute_bash with curl or Trello API for advanced operations.`,
+            suggestion: `Example: execute_bash("curl -X GET 'https://api.trello.com/1/boards/...')"}`
+          };
+
         default:
           throw new Error(`Unknown tool: ${toolName}`);
       }
@@ -217,15 +372,57 @@ export class ToolBasedAgent {
   }
 
   /**
-   * Execute bash command
+   * Execute bash command with full credential access
    */
   private async executeBash(command: string): Promise<any> {
     try {
       logger.info(`Running: ${command}`);
+      
+      // Build environment with all necessary credentials
+      const execEnv: Record<string, string> = {
+        ...process.env as Record<string, string>,
+        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+        HOME: process.env.HOME || require('os').homedir(),
+      };
+
+      // GitHub credentials
+      if (process.env.GITHUB_TOKEN) {
+        execEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+        execEnv.GH_TOKEN = process.env.GITHUB_TOKEN;
+      } else if (process.env.GH_TOKEN) {
+        execEnv.GH_TOKEN = process.env.GH_TOKEN;
+        execEnv.GITHUB_TOKEN = process.env.GH_TOKEN;
+      }
+
+      // Google Cloud credentials
+      if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        execEnv.GOOGLE_APPLICATION_CREDENTIALS = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      }
+      if (process.env.CLOUDSDK_CONFIG) {
+        execEnv.CLOUDSDK_CONFIG = process.env.CLOUDSDK_CONFIG;
+      } else {
+        execEnv.CLOUDSDK_CONFIG = `${require('os').homedir()}/.config/gcloud`;
+      }
+      if (process.env.GCP_PROJECT_ID) {
+        execEnv.GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
+        execEnv.GOOGLE_CLOUD_PROJECT = process.env.GCP_PROJECT_ID;
+      }
+
+      // Trello credentials (for CLI tools if needed)
+      if (process.env.TRELLO_API_KEY) {
+        execEnv.TRELLO_API_KEY = process.env.TRELLO_API_KEY;
+      }
+      if (process.env.TRELLO_API_TOKEN) {
+        execEnv.TRELLO_API_TOKEN = process.env.TRELLO_API_TOKEN;
+      }
+
+      logger.info(`Environment prepared with credentials for: ${Object.keys(execEnv).filter(k => k.includes('TOKEN') || k.includes('KEY') || k.includes('CREDENTIALS')).join(', ')}`);
+
       const { stdout, stderr } = await execAsync(command, {
         cwd: process.cwd(),
         timeout: 30000, // 30 second timeout
-        maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+        env: execEnv
       });
 
       return {
@@ -288,7 +485,8 @@ export class ToolBasedAgent {
       return { error: `Board not found: ${boardName}`, success: false };
     }
 
-    const list = await this.trelloService.createList(board.id, listName);
+    // createList signature is (name, boardId) - NOT (boardId, name)!
+    const list = await this.trelloService.createList(listName, board.id);
     return { success: true, list: { id: list.id, name: list.name } };
   }
 
@@ -498,32 +696,93 @@ export class ToolBasedAgent {
    * Build initial system prompt
    */
   private buildInitialPrompt(task: AgentTask): string {
-    let prompt = `You are an autonomous AI agent. Execute this task:
+    let prompt = `You are an autonomous AI agent with FULL ACCESS to the user's authenticated tools and APIs.
 
-${task.command}
+TASK: ${task.command}
 
-Available tools:
-- execute_bash: Run bash commands (git, npm, file operations, etc.)`;
+🔧 AVAILABLE TOOLS:
+
+1. **execute_bash**: Run ANY bash command
+   - Git operations (clone, commit, push, pull, etc.)
+   - File operations (read, write, move, delete, etc.)
+   - Package managers (npm, pip, etc.)
+   - Process management
+   - System commands
+
+2. **GitHub CLI (gh)**: Fully authenticated
+   - gh repo list, gh repo view, gh repo clone
+   - gh issue list, gh issue create
+   - gh pr list, gh pr create
+   - gh api (REST API access)
+   - User is ALREADY logged in via: gh auth login
+
+3. **Google Cloud CLI (gcloud)**: Fully authenticated  
+   - gcloud projects list
+   - gcloud compute instances list
+   - gcloud run services list
+   - gcloud builds submit
+   - User is ALREADY logged in via: gcloud auth login`;
 
     if (this.trelloService) {
       prompt += `
-- trello_list_boards: List all Trello boards
-- trello_get_board: Get a specific board
-- trello_create_list: Create a list on a board
-- trello_create_card: Create a card on a list
-- trello_list_cards: List all cards on a board`;
+
+4. **Trello REST API**: Fully authenticated
+   - trello_list_boards: List all Trello boards
+   - trello_get_board: Get a specific board by name
+   - trello_create_list: Create a list on a board
+   - trello_create_card: Create a card on a list
+   - trello_list_cards: List all cards on a board`;
     }
 
     prompt += `
 
-Important:
-1. Use tools iteratively - call tools, check results, then decide next steps
-2. If a tool fails, analyze the error and try a different approach
-3. Break complex tasks into smaller steps
-4. When you've completed the task, provide a summary of what was done
-5. The user gets Discord notifications for each tool call, so they can see your progress
+🔑 AUTHENTICATION STATUS:
+✅ GitHub: Authenticated via gh CLI (user is logged in)
+✅ Google Cloud: Authenticated via gcloud CLI (user is logged in)`;
 
-Execute the task now using the available tools.`;
+    if (this.trelloService) {
+      prompt += `
+✅ Trello: Authenticated via REST API (API keys configured)`;
+    }
+
+    prompt += `
+
+📋 EXECUTION GUIDELINES:
+
+1. **Work Iteratively**: Call tools, check results, decide next steps
+2. **Handle Errors Gracefully**: If a tool fails, analyze the error and try alternative approaches
+3. **Break Down Complex Tasks**: Split large tasks into smaller, manageable steps
+4. **Use the Right Tool**: Choose between CLI commands (via execute_bash) and native tools (like trello_*)
+5. **Provide Context**: The user receives Discord notifications for EVERY tool call showing:
+   - What command/tool you're using
+   - What the results are
+   - Progress updates
+
+🚀 EXAMPLES:
+
+Example 1 - GitHub:
+  Task: "List my 5 most recent repos"
+  Tool: execute_bash
+  Command: "gh repo list --limit 5 --json name,url,updatedAt"
+
+Example 2 - Trello:
+  Task: "Create a card on my TODO list"
+  Tool: trello_create_card
+  Params: { boardName: "Personal", listName: "TODO", cardName: "New Task" }
+
+Example 3 - Multi-step:
+  Task: "Fetch my repos and create Trello cards for each"
+  Step 1: execute_bash("gh repo list --limit 5 --json name")
+  Step 2: For each repo, call trello_create_card(...)
+  Step 3: Provide summary of created cards
+
+💡 REMEMBER:
+- You have FULL credentials for GitHub, GCloud, and Trello
+- The user is ALREADY authenticated to these services
+- You can execute ANY command that the user could run in their terminal
+- Be confident and take action!
+
+NOW: Execute the task using the available tools.`;
 
     return prompt;
   }

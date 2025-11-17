@@ -29,7 +29,7 @@ RUN npm ci --only=production
 COPY --from=builder /app/dist ./dist
 
 # Create necessary directories
-RUN mkdir -p audio temp
+RUN mkdir -p audio temp data
 
 # Set environment variables
 ENV NODE_ENV=production
