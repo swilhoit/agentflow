@@ -68,3 +68,4 @@ recordings/
 # Testing
 coverage/
 .nyc_output/
+github-actions-key.json
