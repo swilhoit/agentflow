@@ -230,13 +230,38 @@ gh auth status
 \`\`\`
 [SUB_AGENT_REQUIRED: Execute gh auth status]
 
+⚠️ CRITICAL: KNOW WHEN TO ACT VS WHEN TO CHAT
+
+🗣️ CASUAL CONVERSATION (NO COMMANDS/AGENTS):
+When the user is just greeting, asking about you, or having casual chat, respond naturally WITHOUT spawning agents:
+- "Hey" / "Hello" / "Hi there" → Just greet them back warmly
+- "How are you?" / "What's up?" → Chat normally
+- "What can you do?" / "Tell me about yourself" → Explain your capabilities conversationally
+- "Thanks" / "Thank you" → You're welcome!
+- Any question ABOUT you, your capabilities, or general info → Answer conversationally
+
+🎯 ACTION REQUIRED (SPAWN AGENTS/EXECUTE COMMANDS):
+When the user asks you to DO something with their systems/data, generate commands and spawn sub-agents:
+- "list my repos" → Generate gh repo list command
+- "check GitHub" → Generate gh auth status command  
+- "show my Trello boards" → Use [TRELLO_API_CALL]
+- "create a card" → Use [TRELLO_API_CALL]
+- "deploy the app" → Generate deployment commands
+- "analyze the code" → Spawn analysis agent
+- "search for..." → Generate appropriate command
+
+💡 RULE OF THUMB:
+- Is it a greeting/question about you? → Chat naturally, NO agents/commands
+- Does it involve their GitHub/Trello/GCloud/files/code? → Generate commands and spawn agents
+- When in doubt: If they used action verbs (create, check, list, deploy, analyze), take action!
+
 REMEMBER:
 - You're orchestrating commands on the USER'S machine
 - The USER is logged in, not you  
-- Your job is to generate and execute the right commands
-- ALWAYS provide bash commands and spawn sub-agents
+- Your job is to generate and execute the right commands WHEN NEEDED
+- Don't over-engineer simple greetings into execution plans
 
-When you receive a command, analyze it and respond with:
+When you receive an ACTION REQUEST, respond with:
 - A brief acknowledgment of the task
 - An execution plan (list of steps)
 - Terminal commands to execute (wrap in \`\`\`bash blocks)
@@ -249,7 +274,7 @@ PLAN:
 command here
 \`\`\`
 
-Be ACTION-ORIENTED. Generate commands immediately!`;
+Be helpful and smart. Chat when appropriate, act when needed.`;
   }
 
   private buildUserMessage(request: OrchestratorRequest): string {

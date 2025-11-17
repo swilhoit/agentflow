@@ -62,7 +62,8 @@ export class RealtimeVoiceReceiver {
     this.voiceService.setMaxListeners(20);
 
     this.setupEventHandlers();
-    
+    this.registerAllTools();
+
     logger.info(`ElevenLabs Voice Receiver initialized for agent: ${agentId}`);
   }
 
@@ -215,17 +216,31 @@ REMEMBER:
 - For COMPLEX workflows: task_type: "coding"
 - ALWAYS remind user that they'll see updates/results in Discord channel
 
-⚠️ CRITICAL RULE: When the user asks you to DO something (create, rename, update, check, list, etc.), you MUST call the execute_task function. DO NOT just talk about it - ACT ON IT.
+⚠️ CRITICAL: KNOW WHEN TO ACT VS WHEN TO CHAT
 
-Examples of when you MUST use execute_task:
+🗣️ CASUAL CONVERSATION (NO FUNCTION CALLS):
+When the user is just greeting, asking about you, or having casual chat, respond naturally WITHOUT calling functions:
+- "Hey" / "Hello" / "Hi there" → Just say hi back
+- "How are you?" / "What's up?" → Chat normally
+- "What can you do?" / "Tell me about yourself" → Explain your capabilities
+- "Thanks" / "Thank you" → You're welcome
+- Any question ABOUT you or your capabilities → Answer conversationally
+
+🎯 ACTION REQUIRED (CALL FUNCTIONS):
+When the user asks you to DO something with their systems/data, call execute_task:
 - "rename this card" → CALL execute_task immediately
 - "create a card" → CALL execute_task immediately
 - "check my GitHub" → CALL execute_task immediately
 - "list my boards" → CALL execute_task immediately
+- "deploy the app" → CALL execute_task immediately
+- "search for..." → CALL execute_task immediately
 
-Only have casual conversation when the user is NOT requesting action.
+💡 RULE OF THUMB:
+- Is it a greeting/question about you? → Chat naturally
+- Does it involve their GitHub/Trello/GCloud/files? → Call execute_task
+- When in doubt: If they used action verbs (create, check, list, deploy, search, update), call the function!
 
-Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
+Be friendly and helpful. Chat when appropriate, act when needed.`;
   }
 
   /**
@@ -256,8 +271,8 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
             },
             task_type: {
               type: 'string',
-              enum: ['terminal', 'deployment', 'api_call', 'analysis', 'general'],
-              description: 'The type of task to execute'
+              enum: ['terminal', 'deployment', 'api_call', 'analysis', 'general', 'trello', 'coding', 'auto'],
+              description: 'The type of task to execute (terminal: simple shell commands, trello: Trello operations, coding: multi-step workflows, auto: auto-detect)'
             },
             parameters: {
               type: 'object',
@@ -399,6 +414,36 @@ Be friendly and ACTION-ORIENTED! ALWAYS prefer calling functions over talking.`;
         }
       }
     ];
+  }
+
+  /**
+   * Register all tools with ElevenLabs ClientTools API
+   */
+  private registerAllTools(): void {
+    const functions = this.getFunctionDefinitions();
+
+    logger.info(`[Tools] Registering ${functions.length} client-side tools with ElevenLabs...`);
+
+    for (const func of functions) {
+      try {
+        this.voiceService.registerTool(func.name, async (parameters: any) => {
+          logger.info(`[Tool Call] ${func.name}`, parameters);
+
+          // Call the registered function handler
+          if (this.onFunctionCallCallback) {
+            return await this.onFunctionCallCallback(func.name, parameters);
+          }
+
+          return { error: 'No function handler registered' };
+        });
+
+        logger.info(`[Tools] ✅ Registered: ${func.name}`);
+      } catch (error) {
+        logger.error(`[Tools] ❌ Failed to register ${func.name}:`, error);
+      }
+    }
+
+    logger.info(`[Tools] All tools registered successfully`);
   }
 
   /**

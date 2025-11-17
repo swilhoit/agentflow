@@ -1,216 +1,572 @@
-# AgentFlow - Voice-Driven Discord Bot with Claude AI
+# AgentFlow
 
-A sophisticated Discord voice bot that transcribes conversations using Whisper and integrates with Claude AI to execute complex tasks through an orchestrator that can spawn sub-agents on the cloud.
+> **Voice-Driven Autonomous AI Coding Platform**
+> Control AI coding agents through natural conversation, orchestrate complex tasks across multiple agents, and automate your entire development workflow.
 
-## Architecture
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blue)](.github/workflows/deploy-cloud-run.yml)
+[![Platform](https://img.shields.io/badge/Platform-Discord-5865F2)](https://discord.com)
+[![AI](https://img.shields.io/badge/AI-Claude%20Sonnet%203.5-orange)](https://anthropic.com)
+[![Voice](https://img.shields.io/badge/Voice-ElevenLabs-purple)](https://elevenlabs.io)
 
-```
-┌─────────────────┐
-│  Discord Voice  │
-│    Channel      │
-└────────┬────────┘
-         │ Audio Stream
-         ▼
-┌─────────────────┐
-│  Discord Bot    │
-│  + Whisper AI   │
-└────────┬────────┘
-         │ Voice Command
-         ▼
-┌─────────────────┐
-│  Orchestrator   │
-│  + Claude AI    │
-└────────┬────────┘
-         │ Task Delegation
-         ▼
-┌─────────────────┐
-│  Sub-Agents     │
-│  (Terminal,     │
-│   Analysis,     │
-│   Deployment)   │
-└─────────────────┘
-```
+---
 
-## Features
+## 🎯 Mission
 
-- **Voice Transcription**: Real-time audio capture from Discord voice channels with Whisper AI transcription
-- **Claude AI Integration**: Intelligent command interpretation and task planning
-- **Sub-Agent Spawning**: Dynamically creates specialized agents for complex tasks
-- **Terminal Execution**: Runs bash commands based on voice input
-- **Natural Interruptions**: Interrupt the bot at any time by speaking or using `!stop` command
-- **Trello Integration**: Full project management capabilities - create, read, update cards via voice or text commands
-- **Daily Goals Tracker**: Automated daily reminders to set goals, with database storage and history tracking
-- **Cloud-Ready**: Docker support with deployment scripts for AWS, GCP, and Digital Ocean
-- **API-First Design**: RESTful orchestrator API for monitoring and control
-- **Security**: API key authentication and user whitelist
+AgentFlow transforms how developers interact with AI coding assistants. Instead of copy-pasting between tools, **talk to your AI agents** and watch them:
+- Write and refactor code autonomously
+- Deploy to production via voice command
+- Manage projects in Trello
+- Run terminal commands and analyze output
+- Work on multiple tasks concurrently across different Discord channels
 
-## Quick Start
+**It's like having a team of AI engineers in your Discord server, each running Claude Sonnet 3.5 with full autonomy.**
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js 20+
-- Discord Bot Token ([Create one here](https://discord.com/developers/applications))
-- OpenAI API Key (for Whisper)
-- Anthropic API Key (for Claude)
-- FFmpeg (optional, for better audio processing)
+- **Node.js 20+**
+- **Discord Bot** ([Create one](https://discord.com/developers/applications))
+- **Anthropic API Key** ([Get it](https://console.anthropic.com))
+- **ElevenLabs API Key** ([Get it](https://elevenlabs.io))
 
-### Installation
+### 5-Minute Setup
 
-1. Clone the repository:
 ```bash
-git clone <your-repo-url>
+# 1. Clone and install
+git clone https://github.com/yourusername/agentflow.git
 cd agentflow
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
 
-3. Create `.env` file:
-```bash
+# 2. Configure environment
 cp .env.example .env
-```
+nano .env  # Add your API keys
 
-4. Edit `.env` with your credentials:
-```env
-DISCORD_TOKEN=your_discord_bot_token
-DISCORD_CLIENT_ID=your_discord_client_id
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-ORCHESTRATOR_URL=http://localhost:3001
-ORCHESTRATOR_API_KEY=your_secure_random_key
-ALLOWED_USER_IDS=discord_user_id1,discord_user_id2
-
-# Optional: Trello Integration
-TRELLO_API_KEY=your_trello_api_key
-TRELLO_API_TOKEN=your_trello_api_token
-```
-
-5. Build the project:
-```bash
+# 3. Build and run
 npm run build
-```
-
-6. Start the bot:
-```bash
 npm start
 ```
 
-Or run in development mode:
-```bash
-npm run dev
-```
-
-## Discord Bot Setup
+### Invite Bot to Discord
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a new application
-3. Go to "Bot" section and create a bot
-4. Enable these **Privileged Gateway Intents**:
-   - Server Members Intent
-   - Message Content Intent
-5. Go to "OAuth2" → "URL Generator"
-6. Select scopes: `bot`, `applications.commands`
-7. Select bot permissions:
-   - Read Messages/View Channels
-   - Send Messages
-   - Connect
-   - Speak
-   - Use Voice Activity
-8. Copy the generated URL and invite the bot to your server
+2. Select your application → OAuth2 → URL Generator
+3. Scopes: `bot`, `applications.commands`
+4. Permissions: `Send Messages`, `Connect`, `Speak`, `Use Voice Activity`
+5. Copy URL and invite bot to your server
 
-## Usage
+### First Voice Command
 
-### Discord Commands
+```
+1. Join a voice channel in Discord
+2. Type: !join
+3. Say: "Hey, list my GitHub repositories"
+4. Watch the magic happen ✨
+```
 
-Once the bot is in your server and running:
+---
 
-**Voice & Status:**
-- `!join` - Bot joins your current voice channel and starts listening
-- `!leave` - Bot leaves the voice channel
-- `!status` - Check bot connection status
-- `!stop` / `!interrupt` - Interrupt the bot's current speech (also happens automatically when you start speaking)
+## 🏗️ Architecture
 
-**Trello Integration:**
-- `!trello-help` - Show all Trello commands and usage examples
-- `!trello-boards` - List all your Trello boards
-- `!trello-lists <board-id-or-name>` - List all lists on a board
-- `!trello-cards <list-id>` - List all cards on a list
-- `!trello-create` - Create a new card (multi-line format)
-- `!trello-update` - Update an existing card (multi-line format)
-- `!trello-search <query>` - Search for cards across all boards
+### High-Level Overview
 
-See [TRELLO_INTEGRATION.md](./TRELLO_INTEGRATION.md) for detailed Trello documentation.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Discord                                │
+│  👤 Users → 🎙️ Voice Chat + 💬 Text Commands               │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Discord Bot (Node.js)                       │
+│  • ElevenLabs Conversational AI (voice)                     │
+│  • Text command processor                                   │
+│  • Multi-channel awareness                                  │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│           OrchestratorServer (Express REST API)             │
+│  • Port 3001                                                │
+│  • API key authentication                                   │
+│  • Task routing & coordination                              │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   TaskManager                               │
+│  • Creates isolated ToolBasedAgent per task                 │
+│  • Manages up to 10 concurrent agents                       │
+│  • Channel-specific notifications                           │
+│  • Task lifecycle management                                │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+          ┌────────────┼───────────┬──────────────┐
+          ▼            ▼           ▼              ▼
+     ┌────────┐   ┌────────┐  ┌────────┐    ┌────────┐
+     │Agent 1 │   │Agent 2 │  │Agent 3 │    │Agent N │
+     │Claude  │   │Claude  │  │Claude  │ .. │Claude  │
+     │Sonnet  │   │Sonnet  │  │Sonnet  │    │Sonnet  │
+     └────┬───┘   └────┬───┘  └────┬───┘    └────┬───┘
+          │            │           │              │
+          └────────────┴───────────┴──────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────┐
+        │      Tool Execution              │
+        ├──────────────────────────────────┤
+        │ • Bash commands (terminal)       │
+        │ • Trello API (project mgmt)      │
+        │ • GitHub CLI (repos, PRs, etc.)  │
+        │ • GCloud CLI (deployments)       │
+        │ • File operations                │
+        └──────────────────────────────────┘
+```
 
-**Daily Goals Tracker:**
-- `!goals-setup <channel> <user> [time] [timezone]` - Schedule daily goals reminder (e.g., `!goals-setup this @me`)
-- `!goals-test [@user]` - Trigger a test reminder immediately
-- `!goals-history [@user] [limit]` - View goals history (default: last 7 days)
-- `!goals-cancel <user>` - Cancel scheduled reminder for a user
-- `!goals-help` - Show all goals commands and usage examples
+### Key Design Principles
 
-See [DAILY_GOALS_GUIDE.md](./DAILY_GOALS_GUIDE.md) for detailed goals tracker documentation.
+1. **Full Task Isolation**: Each task gets its own dedicated Claude Sonnet 3.5 agent
+2. **Native Tool Use**: Direct Anthropic Tool Use API (same as Claude Code/Cursor)
+3. **Channel-Aware**: Notifications always go to the correct Discord channel
+4. **Concurrent Execution**: Run up to 10 agents simultaneously
+5. **Autonomous Operation**: Agents iterate, test, and debug independently
+
+---
+
+## ✨ Features
+
+### 🎙️ Voice Control (ElevenLabs Conversational AI)
+
+- **Natural Conversations**: Talk naturally, no wake words needed
+- **Automatic Turn-Taking**: AI knows when you're speaking
+- **Instant Interruption**: Just start talking to interrupt
+- **Client-Side Tools**: Functions registered directly with ElevenLabs
+
+**Example Commands:**
+- *"Create a Next.js app with TypeScript"*
+- *"Deploy the latest changes to Cloud Run"*
+- *"Show me my Trello boards"*
+- *"Analyze the authentication module and suggest improvements"*
+
+### 🤖 Multi-Agent Orchestration
+
+- **Concurrent Tasks**: Run multiple agents in different channels
+- **Task Isolation**: Agents never interfere with each other
+- **Smart Routing**: Each channel sees only its own tasks
+- **Status Tracking**: Check any task from any channel
+
+**Discord Commands:**
+```bash
+!agents              # List tasks in current channel
+!agents --all        # List all tasks across channels
+!task-status <id>    # Get detailed task status
+!cancel-task <id>    # Cancel a running task
+```
+
+### 🛠️ Tool-Based Agents (Claude Sonnet 3.5)
+
+Agents have access to:
+
+- **Terminal Execution**: Run any bash command
+- **Trello Integration**: Create cards, lists, search, update
+- **GitHub Integration**: Manage repos, PRs, issues
+- **Google Cloud**: Deploy to Cloud Run, manage services
+- **File Operations**: Read, write, edit files
+- **Task Decomposition**: Break complex tasks into steps
+
+### 🚀 CI/CD Automation
+
+- **GitHub Actions**: Auto-deploy on every push to `master`
+- **Docker**: Multi-stage builds for production
+- **Google Cloud Run**: Serverless deployment, scales to zero
+- **Zero-Downtime**: Rolling deployments, health checks
+- **Secrets Management**: All credentials encrypted in GitHub Secrets
+
+**Setup:**
+```bash
+./scripts/setup-github-actions.sh  # One-time setup
+git push origin master             # Deploys automatically!
+```
+
+See: [`GITHUB_ACTIONS_SETUP.md`](GITHUB_ACTIONS_SETUP.md)
+
+### 📊 Trello Project Management
+
+Full Trello integration via REST API:
+
+```typescript
+// Voice: "Create a card on my backlog called 'Fix bug in auth'"
+// Bot executes:
+trello_create_card({
+  boardName: "AgentFlow",
+  listName: "Backlog",
+  cardName: "Fix bug in auth"
+})
+```
+
+**Capabilities:**
+- List all boards
+- Get board details
+- Create lists and cards
+- Search across all cards
+- Update card details
+- Move cards between lists
+
+See: [`TRELLO_INTEGRATION.md`](TRELLO_INTEGRATION.md)
+
+### ⚡ Groq Fast Inference (Optional)
+
+Ultra-fast inference for simple tasks (10-20x faster than Claude):
+
+```env
+GROQ_API_KEY=your_groq_key_here
+```
+
+AgentFlow automatically uses Groq for:
+- Simple terminal commands
+- Quick analysis tasks
+- Preliminary task planning
+
+Claude Sonnet is used for:
+- Complex coding tasks
+- Multi-step operations
+- High-quality outputs
+
+---
+
+## 📋 Environment Configuration
+
+### Required Variables
+
+```env
+# Discord Bot
+DISCORD_TOKEN=your_discord_bot_token
+DISCORD_CLIENT_ID=your_discord_client_id
+
+# AI Services
+ANTHROPIC_API_KEY=sk-ant-...                 # Claude Sonnet 3.5
+ELEVENLABS_API_KEY=sk_...                    # Voice AI
+ELEVENLABS_AGENT_ID=agent_...                # Conversational AI agent
+
+# Orchestrator
+ORCHESTRATOR_URL=http://localhost:3001
+ORCHESTRATOR_API_KEY=your_secure_random_key  # Generate: openssl rand -hex 32
+
+# Security
+ALLOWED_USER_IDS=user1,user2                 # Optional: whitelist users
+MAX_CONCURRENT_AGENTS=10                     # Max parallel tasks
+```
+
+### Optional Integrations
+
+```env
+# Trello
+TRELLO_API_KEY=your_trello_key
+TRELLO_API_TOKEN=your_trello_token
+
+# GitHub (auto-detected from gh CLI or set manually)
+GITHUB_TOKEN=ghp_...
+
+# Google Cloud
+GCP_PROJECT_ID=your-project-id
+GCP_REGION=us-central1
+
+# Fast Inference (10-20x speedup for simple tasks)
+GROQ_API_KEY=gsk_...
+
+# Notifications
+SYSTEM_NOTIFICATION_CHANNEL_ID=channel_id    # Dedicated notifications channel
+
+# Logging
+LOG_LEVEL=INFO                               # DEBUG, INFO, WARN, ERROR
+```
+
+### Getting API Keys
+
+| Service | Get Key Here | Purpose |
+|---------|-------------|---------|
+| **Discord** | [Developer Portal](https://discord.com/developers/applications) | Bot token + client ID |
+| **Anthropic** | [Console](https://console.anthropic.com) | Claude Sonnet 3.5 |
+| **ElevenLabs** | [Dashboard](https://elevenlabs.io) | Voice AI |
+| **Trello** | [Power-Ups](https://trello.com/power-ups/admin) | Project management |
+| **Groq** | [Console](https://console.groq.com) | Fast inference |
+
+---
+
+## 🎮 Usage Examples
+
+### Text Commands
+
+```bash
+# Agent Management
+!join                          # Join voice channel
+!leave                         # Leave voice channel
+!agents                        # List current channel's tasks
+!agents --all                  # List all tasks
+!task-status task_123         # Get task details
+!cancel-task task_123         # Stop a task
+!help                          # Show all commands
+
+# Trello Integration
+!trello-boards                 # List all boards
+!trello-lists AgentFlow       # Show lists on board
+!trello-cards Backlog         # Show cards in list
+!trello-search "bug"          # Search for cards
+!trello-create                # Create new card (interactive)
+
+# System
+!health                        # Check bot status
+!cleanup                       # Clean old tasks (admin)
+```
 
 ### Voice Commands
 
-Simply speak in the voice channel where the bot is connected. The bot will:
+Just talk naturally after joining voice:
 
-1. Capture your voice
-2. Transcribe it using Whisper
-3. Send the transcript to Claude AI orchestrator
-4. Execute the requested task
-5. Spawn sub-agents if needed for complex operations
+**Simple Tasks:**
+- *"List all files in the project"*
+- *"Check the system uptime"*
+- *"What's my current Git branch?"*
 
-### Example Voice Commands
+**Coding Tasks:**
+- *"Create a TypeScript function that validates email addresses"*
+- *"Refactor the authentication module to use async/await"*
+- *"Add error handling to the API endpoints"*
 
-**System Commands:**
-- "List all files in the current directory"
-- "Check the system uptime and memory usage"
-- "Create a new Python script that prints hello world"
-- "Deploy the latest changes to production"
+**Deployment:**
+- *"Deploy the bot to Cloud Run"*
+- *"Check the status of the production service"*
+- *"Roll back to the previous deployment"*
 
-**Trello Commands:**
-- "Show me my Trello boards"
-- "Create a card on my backlog list called 'Fix navigation bug'"
-- "Search Trello for authentication issues"
-- "What cards are in the In Progress list?"
+**Project Management:**
+- *"Show my Trello boards"*
+- *"Create a card on my backlog called 'Implement dark mode'"*
+- *"Move the 'Fix navigation' card to In Progress"*
 
-## API Documentation
+**Complex Multi-Step:**
+- *"Go through my GitHub repos and create Trello cards for the 5 most recent projects with next steps"*
+- *"Analyze all TypeScript files for potential bugs and create a summary report"*
+- *"Set up a new Next.js project with authentication and deploy it to Vercel"*
 
-The orchestrator exposes a REST API on port 3001:
+---
 
-### Endpoints
+## 🔧 Development
+
+### Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Run in development mode (auto-reload)
+npm run dev
+
+# Build TypeScript
+npm run build
+
+# Start production build
+npm start
+
+# Clean build artifacts
+npm run clean
+```
+
+### Project Structure
+
+```
+agentflow/
+├── src/
+│   ├── bot/                      # Discord bot implementation
+│   │   ├── discordBotRealtime.ts # Main bot (ElevenLabs voice)
+│   │   ├── realtimeVoiceReceiver.ts # Voice chat handler
+│   │   └── ...
+│   ├── orchestrator/             # Task orchestration
+│   │   ├── orchestratorServer.ts # Express API server
+│   │   ├── taskManager.ts        # Multi-agent coordinator
+│   │   └── claudeClient.ts       # Anthropic API client
+│   ├── agents/                   # AI agent implementations
+│   │   ├── toolBasedAgent.ts     # Main agent (Tool Use API)
+│   │   └── subAgentManager.ts    # Legacy agent manager
+│   ├── services/                 # External integrations
+│   │   ├── trello.ts             # Trello REST API
+│   │   ├── cloudDeployment.ts    # GCloud deployment
+│   │   ├── database.ts           # SQLite storage
+│   │   └── ...
+│   ├── utils/                    # Utilities
+│   │   ├── logger.ts             # Structured logging
+│   │   ├── config.ts             # Environment config
+│   │   ├── elevenLabsVoice.ts    # ElevenLabs SDK wrapper
+│   │   └── ...
+│   └── index.ts                  # Main entry point
+├── .github/
+│   └── workflows/
+│       └── deploy-cloud-run.yml  # CI/CD pipeline
+├── scripts/                      # Setup & deployment scripts
+│   └── setup-github-actions.sh
+├── Dockerfile                    # Production container
+├── docker-compose.yml            # Local Docker setup
+└── package.json
+```
+
+### Adding New Tools
+
+Agents can call any tool you define. Here's how to add one:
+
+**1. Define the tool in `toolBasedAgent.ts`:**
+
+```typescript
+{
+  name: 'search_documentation',
+  description: 'Search project documentation for a keyword',
+  input_schema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query'
+      }
+    },
+    required: ['query']
+  }
+}
+```
+
+**2. Implement the handler:**
+
+```typescript
+if (toolName === 'search_documentation') {
+  const { query } = toolInput;
+  const results = await searchDocs(query);
+  return { results };
+}
+```
+
+**3. Agents can now call it:**
+
+```
+Agent: Let me search the documentation for authentication...
+[CALLS search_documentation with query: "authentication"]
+```
+
+---
+
+## 🌐 Deployment
+
+### Docker (Local)
+
+```bash
+# Build image
+docker build -t agentflow .
+
+# Run container
+docker run -p 3001:3001 --env-file .env agentflow
+
+# Or use Docker Compose
+docker-compose up -d
+```
+
+### Google Cloud Run (Production)
+
+**Automated Deployment (Recommended):**
+
+```bash
+# One-time setup
+./scripts/setup-github-actions.sh
+
+# Configure GitHub Secrets (see GITHUB_ACTIONS_SETUP.md)
+# Then just push to master:
+git push origin master
+
+# Bot deploys automatically! ✨
+```
+
+**Manual Deployment:**
+
+```bash
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
+
+# Build and deploy
+gcloud builds submit --tag gcr.io/$GCP_PROJECT_ID/agentflow
+gcloud run deploy agentflow \
+  --image gcr.io/$GCP_PROJECT_ID/agentflow \
+  --platform managed \
+  --region $GCP_REGION \
+  --allow-unauthenticated \
+  --set-env-vars DISCORD_TOKEN=$DISCORD_TOKEN,...
+```
+
+See: [`GITHUB_ACTIONS_SETUP.md`](GITHUB_ACTIONS_SETUP.md) for full details.
+
+---
+
+## 🔒 Security
+
+### Best Practices Implemented
+
+- ✅ **API Key Authentication**: All orchestrator endpoints require `X-API-Key` header
+- ✅ **User Whitelist**: Optional `ALLOWED_USER_IDS` to restrict bot access
+- ✅ **Environment Isolation**: All secrets in `.env` (never committed)
+- ✅ **GitHub Secrets**: Encrypted secret storage for CI/CD
+- ✅ **Least-Privilege IAM**: GCP service account with minimal required roles
+- ✅ **No Hardcoded Credentials**: All keys loaded from environment
+- ✅ **Process Locking**: Prevents multiple bot instances from conflicting
+
+### Security Checklist
+
+- [ ] Generate strong `ORCHESTRATOR_API_KEY`: `openssl rand -hex 32`
+- [ ] Set `ALLOWED_USER_IDS` to trusted Discord users only
+- [ ] Never commit `.env` file to Git
+- [ ] Rotate API keys every 90 days
+- [ ] Use GitHub Secrets for all credentials
+- [ ] Enable 2FA on all integrated services
+- [ ] Review GCP IAM roles periodically
+
+---
+
+## 📊 API Reference
+
+### Orchestrator REST API
+
+**Base URL**: `http://localhost:3001`
+**Authentication**: `X-API-Key` header required
 
 #### `GET /health`
-Health check endpoint
+
+Health check endpoint.
 
 **Response:**
 ```json
 {
   "status": "healthy",
   "uptime": 12345,
-  "activeAgents": 2
+  "activeAgents": 2,
+  "taskManager": {
+    "totalTasks": 10,
+    "runningTasks": 2,
+    "completedTasks": 7,
+    "failedTasks": 1
+  }
 }
 ```
 
 #### `POST /command`
-Process a voice command
 
-**Headers:**
-- `X-API-Key`: Your orchestrator API key
+Start a new task (creates isolated agent).
 
 **Request:**
 ```json
 {
-  "command": "list all files",
+  "command": "list all GitHub repositories",
   "context": {
     "userId": "123456789",
     "guildId": "987654321",
     "channelId": "555555555",
-    "timestamp": "2025-11-15T12:00:00Z"
+    "timestamp": "2025-11-16T12:00:00Z"
   },
-  "priority": "normal"
+  "priority": "high"
 }
 ```
 
@@ -218,202 +574,210 @@ Process a voice command
 ```json
 {
   "success": true,
-  "message": "Task analysis...",
-  "taskId": "task_1234567890_abc123",
-  "executionPlan": [
-    "Step 1...",
-    "Step 2..."
+  "message": "Agent started for task: list all GitHub repositories",
+  "taskId": "task_1234567890",
+  "agentIds": ["task_1234567890"]
+}
+```
+
+#### `GET /tasks?channelId=X&status=running`
+
+List all tasks (with optional filters).
+
+**Query Params:**
+- `channelId` - Filter by Discord channel
+- `guildId` - Filter by Discord server
+- `userId` - Filter by user
+- `status` - Filter by status (pending, running, completed, failed, cancelled)
+
+**Response:**
+```json
+{
+  "tasks": [
+    {
+      "taskId": "task_123",
+      "status": "running",
+      "description": "list all GitHub repositories",
+      "channelId": "555555555",
+      "startedAt": "2025-11-16T12:00:00Z",
+      "duration": 5000
+    }
   ],
-  "agentIds": ["agent_1234567890_xyz789"]
+  "stats": {
+    "total": 10,
+    "running": 2,
+    "completed": 7,
+    "failed": 1
+  },
+  "total": 1
 }
 ```
 
 #### `GET /task/:taskId`
-Get task status
+
+Get detailed task status.
 
 **Response:**
 ```json
-[
-  {
-    "id": "agent_1234567890_xyz789",
-    "type": "terminal",
-    "status": "completed",
-    "result": "file1.txt\nfile2.txt"
+{
+  "taskId": "task_123",
+  "status": "completed",
+  "description": "list all GitHub repositories",
+  "channelId": "555555555",
+  "startedAt": "2025-11-16T12:00:00Z",
+  "completedAt": "2025-11-16T12:00:15Z",
+  "duration": 15000,
+  "result": {
+    "success": true,
+    "message": "Found 23 repositories",
+    "iterations": 3,
+    "toolCalls": 5
   }
-]
+}
 ```
 
-#### `GET /agents`
-List all active agents
+#### `POST /task/:taskId/cancel`
 
-#### `DELETE /agent/:agentId`
-Terminate a specific agent
+Cancel a running task.
 
-#### `DELETE /history/:guildId/:userId`
-Clear conversation history for a user
-
-## Cloud Deployment
-
-### Docker
-
-Build and run with Docker:
-
-```bash
-docker build -t agentflow .
-docker run -p 3001:3001 --env-file .env agentflow
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Task task_123 cancelled successfully"
+}
 ```
 
-Or use Docker Compose:
+---
 
-```bash
-docker-compose up -d
-```
+## 🐛 Troubleshooting
 
-### AWS ECS
+### Bot Won't Start
 
-```bash
-cd deploy
-./aws-ecs.sh
-```
+**Symptom**: Bot crashes on startup
 
-### Google Cloud Run
+**Solutions:**
+1. Check `.env` file exists and has all required variables
+2. Verify API keys are valid (test at provider dashboards)
+3. Ensure port 3001 is not already in use: `lsof -i :3001`
+4. Check logs: `tail -f logs/combined.log`
 
-```bash
-export GCP_PROJECT_ID=your-project-id
-cd deploy
-./gcp-cloud-run.sh
-```
+### Voice Chat Not Responding
 
-### Digital Ocean
+**Symptom**: Bot joins voice but doesn't respond to commands
 
-```bash
-cd deploy
-./digital-ocean.sh
-```
+**Solutions:**
+1. Verify `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set
+2. Check ElevenLabs dashboard for agent status
+3. Ensure Discord bot has "Use Voice Activity" permission
+4. Look for tool registration logs: `grep "Tools" logs/combined.log`
 
-## Project Structure
+### Agents Go Silent
 
-```
-agentflow/
-├── src/
-│   ├── bot/              # Discord bot implementation
-│   │   ├── discordBot.ts
-│   │   └── voiceReceiver.ts
-│   ├── orchestrator/     # Claude AI orchestrator
-│   │   ├── claudeClient.ts
-│   │   └── orchestratorServer.ts
-│   ├── agents/           # Sub-agent management
-│   │   └── subAgentManager.ts
-│   ├── utils/            # Utilities
-│   │   ├── config.ts
-│   │   ├── logger.ts
-│   │   └── whisper.ts
-│   ├── types/            # TypeScript types
-│   │   └── index.ts
-│   └── index.ts          # Main entry point
-├── deploy/               # Cloud deployment scripts
-│   ├── aws-ecs.sh
-│   ├── gcp-cloud-run.sh
-│   └── digital-ocean.sh
-├── Dockerfile
-├── docker-compose.yml
-├── tsconfig.json
-└── package.json
-```
+**Symptom**: Task starts but no progress updates
 
-## Configuration
+**Solutions:**
+1. Set `SYSTEM_NOTIFICATION_CHANNEL_ID` in `.env`
+2. Check notification handler is set: Look for "sendTextMessage" in logs
+3. Verify channel permissions (bot can send messages)
+4. **Fallback**: Notifications will go to command channel if notification channel not set
 
-### Environment Variables
+### Deployment Fails
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DISCORD_TOKEN` | Discord bot token | Yes |
-| `DISCORD_CLIENT_ID` | Discord application client ID | Yes |
-| `OPENAI_API_KEY` | OpenAI API key for Whisper | Yes |
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude | Yes |
-| `ORCHESTRATOR_URL` | Orchestrator server URL | Yes |
-| `ORCHESTRATOR_API_KEY` | API key for orchestrator auth | Yes |
-| `ALLOWED_USER_IDS` | Comma-separated Discord user IDs | No |
-| `MAX_CONCURRENT_AGENTS` | Max number of concurrent sub-agents (1-20) | No (default: 5) |
-| `TTS_SPEED` | Speech speed for text-to-speech (0.25-4.0) | No (default: 1.0) |
-| `LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | No (default: INFO) |
-| `TRELLO_API_KEY` | Trello API key for project management | No |
-| `TRELLO_API_TOKEN` | Trello API token for authentication | No |
+**Symptom**: GitHub Actions workflow fails
 
-## Security
+**Solutions:**
+1. Check all GitHub Secrets are set correctly
+2. Verify GCP service account has required IAM roles
+3. Ensure `GCP_PROJECT_ID` matches actual project
+4. Review workflow logs in GitHub Actions tab
+5. Test locally: `docker build -t test .`
 
-- **API Key Authentication**: All orchestrator API calls require authentication
-- **User Whitelist**: Optionally restrict bot usage to specific Discord users
-- **Rate Limiting**: Configure max concurrent agents to prevent resource exhaustion
-- **Environment Isolation**: Sensitive credentials stored in environment variables
+### Can't Access Tools (Trello, GitHub, etc.)
 
-## Troubleshooting
+**Symptom**: Agent says "I don't have access to..."
 
-### Bot doesn't join voice channel
+**Solutions:**
+1. Verify credentials in `.env`: `TRELLO_API_KEY`, `GITHUB_TOKEN`
+2. Check agent tools are registered: Look for "[Tools] Registered" in logs
+3. For GitHub: Try `gh auth status` to verify gh CLI is authenticated
+4. For Trello: Test API key at https://trello.com/app-key
 
-- Ensure bot has proper permissions (Connect, Speak)
-- Check that you're in a voice channel when using `!join`
-- Verify Discord token is correct
+### Multiple Bot Instances
 
-### Audio transcription fails
+**Symptom**: "Another instance is already running"
 
-- Verify OpenAI API key is valid
-- Check that audio files are being created in `./audio` directory
-- Install FFmpeg for better audio processing
+**Solutions:**
+1. Check for running processes: `ps aux | grep "node dist/index.js"`
+2. Kill stale processes: `pkill -f "node dist/index.js"`
+3. Remove lock file if stale: `rm data/.agentflow.lock`
+4. Restart: `npm start`
 
-### Commands not executing
+---
 
-- Check orchestrator is running on port 3001
-- Verify ORCHESTRATOR_API_KEY matches between bot and server
-- Check logs for detailed error messages
+## 🤝 Contributing
 
-### Docker container fails to start
+Contributions are welcome! To contribute:
 
-- Ensure all environment variables are set
-- Check Docker logs: `docker logs <container-id>`
-- Verify port 3001 is not already in use
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
+3. **Make your changes**
+4. **Test locally**: `npm run dev`
+5. **Commit**: `git commit -m "Add amazing feature"`
+6. **Push**: `git push origin feature/amazing-feature`
+7. **Open a Pull Request**
 
-## Development
+### Development Guidelines
 
-### Running Tests
+- Use TypeScript for all new code
+- Follow existing code style
+- Add logging for important operations
+- Update documentation for new features
+- Test with both voice and text commands
 
-```bash
-npm test
-```
+---
 
-### Building
+## 📚 Documentation
 
-```bash
-npm run build
-```
+- **[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md)** - Comprehensive architecture analysis
+- **[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)** - Multi-agent design details
+- **[GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md)** - CI/CD setup guide
+- **[TRELLO_INTEGRATION.md](TRELLO_INTEGRATION.md)** - Trello API documentation
+- **[VOICE_CHAT_TRELLO_FIX.md](VOICE_CHAT_TRELLO_FIX.md)** - Voice integration deep dive
 
-### Cleaning
+---
 
-```bash
-npm run clean
-```
+## 📝 License
 
-## Contributing
+ISC License - See [LICENSE](LICENSE) file for details.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+---
 
-## License
+## 🙏 Acknowledgments
 
-ISC
+Built with:
+- [Anthropic Claude](https://anthropic.com) - World-class AI reasoning
+- [ElevenLabs](https://elevenlabs.io) - Best-in-class conversational AI
+- [Discord.js](https://discord.js.org) - Powerful Discord library
+- [Google Cloud Run](https://cloud.google.com/run) - Serverless deployment
+- [Groq](https://groq.com) - Ultra-fast AI inference
 
-## Support
+---
 
-For issues and questions, please open an issue on GitHub.
+## 🌟 Star History
 
-## Roadmap
+If you find AgentFlow useful, please consider starring the repository!
 
-- [ ] Multi-language support for voice transcription
-- [ ] Web dashboard for monitoring agents
-- [ ] Persistent conversation history with database
-- [ ] Support for more AI models
-- [ ] Advanced task scheduling
-- [ ] Integration with CI/CD pipelines
-- [ ] Voice response synthesis
+---
+
+## 📧 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/agentflow/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/agentflow/discussions)
+- **Discord**: [Join our server](#) (optional: add if you create one)
+
+---
+
+**Built with ❤️ by developers, for developers**
+
+*AgentFlow - Because talking to your AI should be as natural as talking to your team.*
