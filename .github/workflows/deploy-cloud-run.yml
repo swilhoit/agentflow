@@ -59,6 +59,7 @@ jobs:
             --set-env-vars ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
             --set-env-vars ELEVENLABS_API_KEY=${{ secrets.ELEVENLABS_API_KEY }} \
             --set-env-vars ELEVENLABS_AGENT_ID=${{ secrets.ELEVENLABS_AGENT_ID }} \
+            --set-env-vars ORCHESTRATOR_URL=${{ secrets.ORCHESTRATOR_URL }} \
             --set-env-vars ORCHESTRATOR_API_KEY=${{ secrets.ORCHESTRATOR_API_KEY }} \
             --set-env-vars ALLOWED_USER_IDS=${{ secrets.ALLOWED_USER_IDS }} \
             --set-env-vars SYSTEM_NOTIFICATION_CHANNEL_ID=${{ secrets.SYSTEM_NOTIFICATION_CHANNEL_ID }} \
