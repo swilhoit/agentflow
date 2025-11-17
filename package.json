@@ -8,7 +8,10 @@
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "cleanup": "ts-node cleanup.ts cleanup",
+    "cleanup:status": "ts-node cleanup.ts status",
+    "cleanup:emergency": "ts-node cleanup.ts emergency"
   },
   "keywords": [],
   "author": "",

@@ -6,6 +6,7 @@ import { OrchestratorServer } from './orchestrator/orchestratorServer';
 import { VoiceCommand, OrchestratorRequest } from './types';
 import { getDatabase } from './services/database';
 import { TrelloService } from './services/trello';
+import { getCleanupManager } from './utils/cleanupManager';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -108,6 +109,22 @@ async function main() {
 
       // Start Realtime API bot (no voice command handler needed - integrated)
       bot = new DiscordBotRealtime(config);
+
+      // Wire up the Discord message handler BEFORE starting the bot
+      orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
+        await (bot as DiscordBotRealtime).sendTextMessage(channelId, message);
+      });
+
+      if (config.systemNotificationChannelId) {
+        logger.info(`Agent notifications will be sent to channel: ${config.systemNotificationChannelId}`);
+      } else {
+        logger.warn('⚠️⚠️⚠️ WARNING ⚠️⚠️⚠️');
+        logger.warn('SYSTEM_NOTIFICATION_CHANNEL_ID is not configured in .env!');
+        logger.warn('Agent progress updates will be sent to the channel where commands are issued (fallback mode)');
+        logger.warn('For better organization, set SYSTEM_NOTIFICATION_CHANNEL_ID to a dedicated notifications channel');
+        logger.warn('Get it by: Discord Settings → Advanced → Enable Developer Mode → Right-click channel → Copy Channel ID');
+      }
+
       await bot.start();
 
       logger.info('AgentFlow started successfully (Realtime API Mode)');
@@ -139,13 +156,18 @@ async function main() {
     bot = new DiscordBot(config);
 
     // Wire up the Discord message handler to the orchestrator
+    orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
+      await (bot as DiscordBot).sendTextMessage(channelId, message);
+    });
+
     if (config.systemNotificationChannelId) {
-      orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
-        await (bot as DiscordBot).sendTextMessage(channelId, message);
-      });
       logger.info(`Agent notifications will be sent to channel: ${config.systemNotificationChannelId}`);
     } else {
-      logger.warn('No systemNotificationChannelId configured - agent notifications disabled');
+      logger.warn('⚠️⚠️⚠️ WARNING ⚠️⚠️⚠️');
+      logger.warn('SYSTEM_NOTIFICATION_CHANNEL_ID is not configured in .env!');
+      logger.warn('Agent progress updates will be sent to the channel where commands are issued (fallback mode)');
+      logger.warn('For better organization, set SYSTEM_NOTIFICATION_CHANNEL_ID to a dedicated notifications channel');
+      logger.warn('Get it by: Discord Settings → Advanced → Enable Developer Mode → Right-click channel → Copy Channel ID');
     }
 
     // Set up voice command handler
@@ -199,24 +221,38 @@ async function main() {
 
     logger.info('AgentFlow started successfully');
 
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      logger.info('Shutting down gracefully...');
-      await bot.stop();
-      await orchestratorServer.stop();
-      getDatabase().close();
-      removeLock();
-      process.exit(0);
-    });
+    // Start automatic cleanup (every 30 minutes)
+    const cleanupManager = getCleanupManager();
+    cleanupManager.startAutoCleanup(30);
+    logger.info('🧹 Auto-cleanup enabled (runs every 30 minutes)');
 
-    process.on('SIGTERM', async () => {
+    // Graceful shutdown
+    const shutdown = async () => {
       logger.info('Shutting down gracefully...');
+      
+      // Stop auto-cleanup
+      cleanupManager.stopAutoCleanup();
+      
+      // Cleanup agents
+      const subAgentManager = orchestratorServer.getSubAgentManager();
+      await subAgentManager.cleanup();
+      
+      // Stop services
       await bot.stop();
       await orchestratorServer.stop();
+      
+      // Close database
       getDatabase().close();
+      
+      // Remove lock file
       removeLock();
+      
+      logger.info('✅ Shutdown complete');
       process.exit(0);
-    });
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
   } catch (error) {
     logger.error('Failed to start AgentFlow', error);

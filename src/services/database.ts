@@ -579,6 +579,13 @@ export class DatabaseService {
   /**
    * Close database connection
    */
+  /**
+   * Get raw database instance (for advanced queries)
+   */
+  getDb(): Database.Database {
+    return this.db;
+  }
+
   close(): void {
     this.db.close();
     logger.info('Database connection closed');

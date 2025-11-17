@@ -2,15 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../utils/logger';
 import { OrchestratorRequest, OrchestratorResponse } from '../types';
 import { TrelloService } from '../services/trello';
+import { TaskDecomposer, TaskAnalysis } from '../utils/taskDecomposer';
 
 export class ClaudeClient {
   private client: Anthropic;
   private conversationHistory: Map<string, Anthropic.MessageParam[]> = new Map();
   private trelloService?: TrelloService;
+  private taskDecomposer: TaskDecomposer;
+  private taskAnalysisCache: Map<string, TaskAnalysis> = new Map();
 
   constructor(apiKey: string, trelloService?: TrelloService) {
     this.client = new Anthropic({ apiKey });
     this.trelloService = trelloService;
+    this.taskDecomposer = new TaskDecomposer(apiKey);
   }
 
   async processCommand(request: OrchestratorRequest): Promise<OrchestratorResponse> {
@@ -537,5 +541,47 @@ Please analyze this command and provide your execution plan.`;
 
   getTrelloService(): TrelloService | undefined {
     return this.trelloService;
+  }
+
+  /**
+   * Analyze task complexity and get decomposition if needed
+   */
+  async analyzeTaskComplexity(taskDescription: string): Promise<TaskAnalysis> {
+    // Check cache first
+    const cacheKey = taskDescription.toLowerCase().trim();
+    if (this.taskAnalysisCache.has(cacheKey)) {
+      logger.info('📋 Using cached task analysis');
+      return this.taskAnalysisCache.get(cacheKey)!;
+    }
+
+    logger.info('🔍 Analyzing task complexity...');
+    const analysis = await this.taskDecomposer.analyzeTask(taskDescription);
+    
+    // Cache the result
+    this.taskAnalysisCache.set(cacheKey, analysis);
+
+    logger.info(`📊 Task Analysis: ${analysis.complexity} complexity, ${analysis.estimatedIterations} iterations`);
+    if (analysis.requiresDecomposition) {
+      logger.info(`🔧 Task will be decomposed into ${analysis.subtasks.length} subtasks`);
+      analysis.subtasks.forEach((st, i) => {
+        logger.info(`   ${i + 1}. ${st.description} (${st.estimatedIterations} iterations)`);
+      });
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Get optimal iteration limit for a task
+   */
+  getIterationLimit(analysis: TaskAnalysis): number {
+    return this.taskDecomposer.calculateIterationLimit(analysis);
+  }
+
+  /**
+   * Get execution batches for subtasks
+   */
+  getSubtaskExecutionOrder(analysis: TaskAnalysis): typeof analysis.subtasks[] {
+    return this.taskDecomposer.getExecutionOrder(analysis.subtasks);
   }
 }

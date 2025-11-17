@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { ToolBasedAgent } from '../agents/toolBasedAgent';
+import { TaskManager } from './taskManager';
 import { SubAgentManager } from '../agents/subAgentManager';
 import { OrchestratorRequest, OrchestratorResponse } from '../types';
 import { logger } from '../utils/logger';
@@ -7,16 +7,17 @@ import { BotConfig } from '../types';
 import { TrelloService } from '../services/trello';
 
 /**
- * OrchestratorServer with Native Tool Use API
+ * OrchestratorServer with Multi-Agent Task Management
  *
- * Uses Anthropic's native tool calling - no external dependencies!
- * Claude directly calls tools (bash, Trello, etc.), sees results, and iterates.
- *
- * This is the same approach Claude Code/Cursor uses.
+ * Uses TaskManager for full multi-agent support:
+ * - Each task gets its own isolated ToolBasedAgent
+ * - Tasks can run concurrently across different channels
+ * - Channel-specific notifications (no cross-contamination)
+ * - Task status tracking and management
  */
 export class OrchestratorServer {
   private app: express.Application;
-  private toolBasedAgent: ToolBasedAgent;
+  private taskManager: TaskManager;
   private subAgentManager: SubAgentManager;
   private config: BotConfig;
   private port: number;
@@ -27,10 +28,14 @@ export class OrchestratorServer {
     this.port = port;
     this.app = express();
 
-    // Initialize ToolBasedAgent with native Anthropic tool calling
-    this.toolBasedAgent = new ToolBasedAgent(config.anthropicApiKey, trelloService);
+    // Initialize TaskManager for multi-agent support
+    this.taskManager = new TaskManager(
+      config.anthropicApiKey,
+      config.maxConcurrentAgents,
+      trelloService
+    );
 
-    logger.info('🚀 OrchestratorServer: Native Tool Use API (Docker-ready, no CLI needed)');
+    logger.info('🚀 OrchestratorServer: Multi-Agent Task Management (isolated agents per task)');
 
     this.subAgentManager = new SubAgentManager(config);
 
@@ -40,6 +45,8 @@ export class OrchestratorServer {
 
   setDiscordMessageHandler(handler: (channelId: string, message: string) => Promise<void>): void {
     this.subAgentManager.setDiscordMessageHandler(handler);
+    // Register handler with TaskManager for multi-agent notifications
+    this.taskManager.setNotificationHandler('discord', handler);
   }
 
   getSubAgentManager(): SubAgentManager {
@@ -71,14 +78,21 @@ export class OrchestratorServer {
   private setupRoutes(): void {
     // Health check
     this.app.get('/health', (req: Request, res: Response) => {
+      const taskStats = this.taskManager.getStats();
       res.json({
         status: 'healthy',
         uptime: process.uptime(),
-        activeAgents: this.subAgentManager.getActiveAgentCount()
+        activeAgents: this.subAgentManager.getActiveAgentCount(),
+        taskManager: {
+          totalTasks: taskStats.total,
+          runningTasks: taskStats.running,
+          completedTasks: taskStats.completed,
+          failedTasks: taskStats.failed
+        }
       });
     });
 
-    // Process command - Native Tool Use API with iterative execution
+    // Process command - Multi-Agent with TaskManager
     this.app.post('/command', async (req: Request, res: Response) => {
       try {
         const request: OrchestratorRequest = req.body;
@@ -87,20 +101,21 @@ export class OrchestratorServer {
           return res.status(400).json({ error: 'Invalid request format' });
         }
 
-        logger.info(`📥 Command received: ${request.command}`);
+        logger.info(`📥 Command received: ${request.command} (channel: ${request.context.channelId})`);
 
-        // Set up notification handler for the agent
-        this.toolBasedAgent.setNotificationHandler(async (message: string) => {
-          try {
-            await this.subAgentManager.sendNotification(message);
-          } catch (error) {
-            logger.error('Failed to send notification', error);
-          }
-        });
+        // Start task with TaskManager (creates isolated agent)
+        const taskId = await this.taskManager.startTask(
+          {
+            command: request.command,
+            context: request.context
+          },
+          request.command,
+          'discord' // Use the Discord notification handler
+        );
 
-        // Return immediately - agent runs in background
-        const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        logger.info(`✅ Task ${taskId} started successfully`);
 
+        // Return immediately - task runs in background with isolated agent
         res.json({
           success: true,
           message: `Agent started for task: ${request.command}`,
@@ -108,60 +123,22 @@ export class OrchestratorServer {
           agentIds: [taskId]
         });
 
-        // Execute task asynchronously with native tool calling
-        logger.info(`🚀 Starting ToolBasedAgent for task: ${taskId}`);
-
-        this.toolBasedAgent.executeTask({
-          command: request.command,
-          context: request.context
-        })
-          .then(async (result) => {
-            logger.info(`✅ Task ${taskId} completed: ${result.success ? 'SUCCESS' : 'FAILED'}`);
-
-            // Send final summary
-            try {
-              const summary = `
-🏁 **Task Complete**
-
-**Task ID:** \`${taskId}\`
-**Status:** ${result.success ? '✅ Success' : '❌ Failed'}
-**Iterations:** ${result.iterations}
-**Tool Calls:** ${result.toolCalls}
-
-**Summary:**
-${result.message}
-
-${result.error ? `**Error:** \`${result.error}\`` : ''}
-              `.trim();
-
-              await this.subAgentManager.sendNotification(summary);
-            } catch (notifError) {
-              logger.warn('Failed to send completion notification', notifError);
-            }
-          })
-          .catch(async (error) => {
-            logger.error(`❌ Task ${taskId} failed:`, error);
-
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            try {
-              await this.subAgentManager.sendNotification(
-                `❌ **Task Failed**\n\`\`\`\n${errorMessage}\n\`\`\`\n**Task ID:** \`${taskId}\``
-              );
-            } catch (notifError) {
-              logger.warn('Failed to send failure notification', notifError);
-            }
-          });
+        // Monitor task completion in background to send final summary
+        this.monitorTaskCompletion(taskId, request.context.channelId);
 
       } catch (error) {
         logger.error('Error processing command', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        // Send error notification to channel
         try {
-          await this.subAgentManager.sendNotification(
-            `❌ **Critical Error**\n\`\`\`\n${errorMessage}\n\`\`\``
+          await this.subAgentManager.sendToChannel(
+            req.body.context?.channelId,
+            `❌ **Failed to Start Task**\n\`\`\`\n${errorMessage}\n\`\`\``
           );
         } catch (notifError) {
-          logger.warn('Failed to send critical error notification', notifError);
+          logger.warn('Failed to send error notification', notifError);
         }
 
         res.status(500).json({
@@ -173,16 +150,61 @@ ${result.error ? `**Error:** \`${result.error}\`` : ''}
       }
     });
 
-    // Get task status
+    // Get task status (supports both TaskManager and SubAgentManager tasks)
     this.app.get('/task/:taskId', async (req: Request, res: Response) => {
       const taskId = req.params.taskId;
-      const status = await this.subAgentManager.getTaskStatus(taskId);
 
-      if (!status) {
-        return res.status(404).json({ error: 'Task not found' });
+      // Try TaskManager first (new multi-agent tasks)
+      const taskStatus = this.taskManager.getTaskStatus(taskId);
+      if (taskStatus) {
+        return res.json(taskStatus);
       }
 
-      res.json(status);
+      // Fallback to SubAgentManager (legacy tasks)
+      const subAgentStatus = await this.subAgentManager.getTaskStatus(taskId);
+      if (subAgentStatus) {
+        return res.json(subAgentStatus);
+      }
+
+      return res.status(404).json({ error: 'Task not found' });
+    });
+
+    // Get all tasks (with optional filters)
+    this.app.get('/tasks', async (req: Request, res: Response) => {
+      const { channelId, guildId, userId, status } = req.query;
+
+      const tasks = this.taskManager.getAllTasks({
+        channelId: channelId as string | undefined,
+        guildId: guildId as string | undefined,
+        userId: userId as string | undefined,
+        status: status as any
+      });
+
+      const stats = this.taskManager.getStats();
+
+      res.json({
+        tasks,
+        stats,
+        total: tasks.length
+      });
+    });
+
+    // Cancel a task
+    this.app.post('/task/:taskId/cancel', async (req: Request, res: Response) => {
+      const taskId = req.params.taskId;
+      const success = await this.taskManager.cancelTask(taskId);
+
+      if (!success) {
+        return res.status(404).json({
+          success: false,
+          error: 'Task not found or cannot be cancelled'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: `Task ${taskId} cancelled successfully`
+      });
     });
 
     // List active agents
@@ -208,6 +230,62 @@ ${result.error ? `**Error:** \`${result.error}\`` : ''}
       logger.info('History clearing not needed with ToolBasedAgent (stateless tasks)');
       res.json({ success: true, message: 'ToolBasedAgent is stateless - no history to clear' });
     });
+  }
+
+  /**
+   * Monitor task completion and send summary notification
+   */
+  private async monitorTaskCompletion(taskId: string, channelId: string): Promise<void> {
+    // Poll task status until completion
+    const checkInterval = setInterval(async () => {
+      const status = this.taskManager.getTaskStatus(taskId);
+
+      if (!status) {
+        clearInterval(checkInterval);
+        return;
+      }
+
+      if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
+        clearInterval(checkInterval);
+
+        // Send completion summary to channel
+        try {
+          const durationSeconds = status.duration ? (status.duration / 1000).toFixed(2) : 'N/A';
+          const emoji = status.status === 'completed' ? '✅' : status.status === 'cancelled' ? '🛑' : '❌';
+
+          let summary = `
+${emoji} **Task ${status.status.toUpperCase()}**
+
+**Task ID:** \`${taskId}\`
+**Duration:** ${durationSeconds}s
+**Description:** ${status.description}
+`;
+
+          if (status.result) {
+            summary += `
+**Iterations:** ${status.result.iterations}
+**Tool Calls:** ${status.result.toolCalls}
+
+**Summary:**
+${status.result.message}
+`;
+          }
+
+          if (status.error) {
+            summary += `\n**Error:** \`${status.error}\``;
+          }
+
+          await this.subAgentManager.sendToChannel(channelId, summary.trim());
+        } catch (error) {
+          logger.error(`Failed to send completion notification for task ${taskId}`, error);
+        }
+      }
+    }, 2000); // Check every 2 seconds
+
+    // Timeout after 30 minutes
+    setTimeout(() => {
+      clearInterval(checkInterval);
+    }, 30 * 60 * 1000);
   }
 
   async start(): Promise<void> {

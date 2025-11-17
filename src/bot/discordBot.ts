@@ -91,6 +91,10 @@ export class DiscordBot {
         await this.handleLeaveCommand(message);
       } else if (message.content.startsWith('!status')) {
         await this.handleStatusCommand(message);
+      } else if (message.content.startsWith('!resources')) {
+        await this.handleResourcesCommand(message);
+      } else if (message.content.startsWith('!cleanup')) {
+        await this.handleCleanupCommand(message);
       } else if (message.content.startsWith('!notify-test')) {
         await this.handleNotifyTestCommand(message);
       } else if (message.content.startsWith('!trello-boards')) {
@@ -228,6 +232,58 @@ export class DiscordBot {
       : 'Not connected to any voice channel';
 
     await message.reply(status);
+  }
+
+  private async handleResourcesCommand(message: Message): Promise<void> {
+    const { getCleanupManager } = require('../utils/cleanupManager');
+    const cleanupManager = getCleanupManager();
+
+    try {
+      await message.reply('🔍 Checking resource status...');
+      
+      const status = await cleanupManager.getResourceStatus();
+      
+      const response = `📊 **AgentFlow Resource Status**\n\n` +
+        `🔹 Running Processes: ${status.runningProcesses}\n` +
+        `🔹 Active Agents: ${status.activeAgents}\n` +
+        `🔹 Running Tasks (DB): ${status.runningTasks}\n` +
+        `🔹 Temp File Size: ${(status.tempFileSize / 1024).toFixed(2)} MB\n\n` +
+        `_Last checked: ${new Date().toLocaleTimeString()}_`;
+      
+      await message.reply(response);
+    } catch (error) {
+      logger.error('Failed to get resource status', error);
+      await message.reply(`❌ Failed to get resource status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleCleanupCommand(message: Message): Promise<void> {
+    // Only allow admin users to run cleanup
+    if (!message.member?.permissions.has('Administrator')) {
+      await message.reply('❌ This command requires Administrator permission.');
+      return;
+    }
+
+    const { getCleanupManager } = require('../utils/cleanupManager');
+    const cleanupManager = getCleanupManager();
+
+    try {
+      await message.reply('🧹 Starting cleanup...');
+      
+      const report = await cleanupManager.performCleanup();
+      
+      const response = `✅ **Cleanup Complete**\n\n` +
+        `🔹 Orphaned Processes: ${report.orphanedProcesses}\n` +
+        `🔹 Orphaned Agents: ${report.orphanedAgents}\n` +
+        `🔹 Stale DB Tasks: ${report.staleTasksInDB}\n` +
+        `🔹 Temp Files Deleted: ${report.tempFilesDeleted}\n\n` +
+        `**Total Cleaned:** ${report.totalCleaned} items`;
+      
+      await message.reply(response);
+    } catch (error) {
+      logger.error('Failed to run cleanup', error);
+      await message.reply(`❌ Cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   private async handleNotifyTestCommand(message: Message): Promise<void> {

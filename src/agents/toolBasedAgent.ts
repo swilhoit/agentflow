@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { TrelloService } from '../services/trello';
+import { TaskDecomposer, TaskAnalysis, SubTask } from '../utils/taskDecomposer';
 
 const execAsync = promisify(exec);
 
@@ -44,10 +45,12 @@ export class ToolBasedAgent {
   private trelloService?: TrelloService;
   private notificationHandler?: (message: string) => Promise<void>;
   private maxIterations = 15;
+  private taskDecomposer: TaskDecomposer;
 
   constructor(apiKey: string, trelloService?: TrelloService) {
     this.client = new Anthropic({ apiKey });
     this.trelloService = trelloService;
+    this.taskDecomposer = new TaskDecomposer(apiKey);
   }
 
   setNotificationHandler(handler: (message: string) => Promise<void>): void {
@@ -546,7 +549,130 @@ export class ToolBasedAgent {
   /**
    * Execute task with iterative tool calling
    */
+  /**
+   * Enhanced executeTask with automatic task decomposition
+   */
   async executeTask(task: AgentTask): Promise<AgentResult> {
+    // Step 1: Analyze task complexity
+    logger.info(`🔍 Analyzing task: "${task.command}"`);
+    await this.notify(`🔍 **Analyzing Task Complexity**\nDetermining optimal execution strategy...`);
+    
+    const analysis = await this.taskDecomposer.analyzeTask(task.command);
+    
+    logger.info(`📊 Task Analysis: ${analysis.complexity} complexity`);
+    logger.info(`📊 Estimated iterations: ${analysis.estimatedIterations}`);
+    logger.info(`📊 Requires decomposition: ${analysis.requiresDecomposition}`);
+    
+    // Notify user of the plan
+    await this.notify(
+      `📊 **Task Analysis Complete**\n\n` +
+      `**Complexity:** ${analysis.complexity}\n` +
+      `**Estimated Iterations:** ${analysis.estimatedIterations}\n` +
+      `**Strategy:** ${analysis.requiresDecomposition ? `Breaking into ${analysis.subtasks.length} subtasks` : 'Direct execution'}\n\n` +
+      `**Reasoning:** ${analysis.reasoning}`
+    );
+
+    // Step 2: Execute based on complexity
+    if (analysis.requiresDecomposition && analysis.subtasks.length > 0) {
+      logger.info(`🔧 Decomposing task into ${analysis.subtasks.length} subtasks`);
+      return await this.executeDecomposedTask(task, analysis);
+    } else {
+      // Direct execution with adjusted iteration limit
+      const iterationLimit = this.taskDecomposer.calculateIterationLimit(analysis);
+      logger.info(`⚡ Executing task directly with ${iterationLimit} iteration limit`);
+      return await this.executeSimpleTask(task, iterationLimit);
+    }
+  }
+
+  /**
+   * Execute decomposed task as multiple subtasks
+   */
+  private async executeDecomposedTask(task: AgentTask, analysis: TaskAnalysis): Promise<AgentResult> {
+    await this.notify(`🚀 **Starting Decomposed Execution**\n${analysis.subtasks.length} subtasks identified`);
+    
+    const executionBatches = this.taskDecomposer.getExecutionOrder(analysis.subtasks);
+    let totalIterations = 0;
+    let totalToolCalls = 0;
+    const results: string[] = [];
+
+    logger.info(`📋 Execution plan: ${executionBatches.length} batches`);
+    
+    for (let batchIndex = 0; batchIndex < executionBatches.length; batchIndex++) {
+      const batch = executionBatches[batchIndex];
+      const batchType = batch[0]?.type || 'sequential';
+      
+      await this.notify(
+        `📦 **Batch ${batchIndex + 1}/${executionBatches.length}**\n` +
+        `${batch.length} task(s) - ${batchType} execution`
+      );
+
+      if (batchType === 'parallel' && batch.length > 1) {
+        // Execute in parallel
+        logger.info(`⚡ Executing ${batch.length} tasks in parallel`);
+        const batchResults = await Promise.all(
+          batch.map(subtask => this.executeSubtask(task, subtask))
+        );
+        
+        batchResults.forEach(result => {
+          totalIterations += result.iterations;
+          totalToolCalls += result.toolCalls;
+          if (result.message) results.push(result.message);
+        });
+      } else {
+        // Execute sequentially
+        logger.info(`🔄 Executing ${batch.length} tasks sequentially`);
+        for (const subtask of batch) {
+          const result = await this.executeSubtask(task, subtask);
+          totalIterations += result.iterations;
+          totalToolCalls += result.toolCalls;
+          if (result.message) results.push(result.message);
+          
+          if (!result.success) {
+            logger.warn(`⚠️ Subtask failed: ${subtask.description}`);
+            await this.notify(`⚠️ **Subtask Failed**\n${subtask.description}\n\nContinuing with remaining tasks...`);
+          }
+        }
+      }
+    }
+
+    const success = results.length > 0;
+    const summary = results.join('\n\n');
+
+    return {
+      success,
+      message: summary || 'All subtasks completed',
+      iterations: totalIterations,
+      toolCalls: totalToolCalls
+    };
+  }
+
+  /**
+   * Execute a single subtask
+   */
+  private async executeSubtask(parentTask: AgentTask, subtask: SubTask): Promise<AgentResult> {
+    logger.info(`📝 Executing subtask: ${subtask.description}`);
+    await this.notify(`📝 **Subtask ${subtask.id}**\n${subtask.description}\n_(Est. ${subtask.estimatedIterations} iterations)_`);
+    
+    const subtaskCommand: AgentTask = {
+      ...parentTask,
+      command: subtask.description
+    };
+    
+    // Execute with estimated iteration limit
+    const result = await this.executeSimpleTask(subtaskCommand, subtask.estimatedIterations + 5);
+    
+    if (result.success) {
+      await this.notify(`✅ **Subtask Complete:** ${subtask.id}\n${result.iterations} iterations, ${result.toolCalls} tool calls`);
+    }
+    
+    return result;
+  }
+
+  /**
+   * Execute a simple task without decomposition
+   */
+  private async executeSimpleTask(task: AgentTask, iterationLimit?: number): Promise<AgentResult> {
+    const maxIter = iterationLimit || this.maxIterations;
     const conversationHistory: Anthropic.MessageParam[] = [];
     let iterations = 0;
     let toolCalls = 0;
@@ -561,10 +687,10 @@ export class ToolBasedAgent {
     await this.notify(`🤖 **Agent Started**\n\`\`\`\n${task.command}\n\`\`\``);
 
     try {
-      while (continueLoop && iterations < this.maxIterations) {
+      while (continueLoop && iterations < maxIter) {
         iterations++;
-        logger.info(`🔄 Iteration ${iterations}/${this.maxIterations}`);
-        await this.notify(`🔄 **Iteration ${iterations}/${this.maxIterations}**\nProcessing...`);
+        logger.info(`🔄 Iteration ${iterations}/${maxIter}`);
+        await this.notify(`🔄 **Iteration ${iterations}/${maxIter}**\nProcessing...`);
 
         // Call Claude with tools
         const response = await this.client.messages.create({
@@ -654,13 +780,13 @@ export class ToolBasedAgent {
       }
 
       // Hit max iterations
-      if (iterations >= this.maxIterations) {
-        logger.warn(`⚠️ Hit max iterations (${this.maxIterations})`);
+      if (iterations >= maxIter) {
+        logger.warn(`⚠️ Hit max iterations (${maxIter})`);
         await this.notify(`⚠️ **Max Iterations Reached**\nCompleted ${iterations} iterations with ${toolCalls} tool calls.`);
 
         return {
           success: false,
-          message: `Task incomplete - reached max iterations (${this.maxIterations})`,
+          message: `Task incomplete - reached max iterations (${maxIter})`,
           iterations,
           toolCalls,
           error: 'max_iterations'

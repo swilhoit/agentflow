@@ -31,9 +31,35 @@ export class SubAgentManager {
     if (this.sendDiscordMessage && this.notificationChannelId) {
       try {
         await this.sendDiscordMessage(this.notificationChannelId, message);
+        logger.info(`✅ Notification sent to channel: ${this.notificationChannelId}`);
       } catch (error) {
         logger.error('Failed to send Discord notification', error);
       }
+    } else {
+      logger.error('⚠️⚠️⚠️ CANNOT SEND NOTIFICATION - USER WILL NOT SEE THIS! ⚠️⚠️⚠️');
+      if (!this.sendDiscordMessage) {
+        logger.error('Reason: sendDiscordMessage handler not set');
+      }
+      if (!this.notificationChannelId) {
+        logger.error('Reason: SYSTEM_NOTIFICATION_CHANNEL_ID not configured in .env');
+      }
+      logger.error('Message that user should have seen:', message.substring(0, 200));
+    }
+  }
+
+  /**
+   * Send message to a specific channel (fallback method)
+   */
+  async sendToChannel(channelId: string, message: string): Promise<void> {
+    if (this.sendDiscordMessage) {
+      try {
+        await this.sendDiscordMessage(channelId, message);
+        logger.info(`✅ Sent message to channel: ${channelId}`);
+      } catch (error) {
+        logger.error(`❌ Failed to send message to channel ${channelId}`, error);
+      }
+    } else {
+      logger.error('⚠️ No Discord message handler configured!');
     }
   }
 

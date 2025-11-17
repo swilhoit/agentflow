@@ -147,6 +147,14 @@ export class DiscordBotRealtime {
         await this.handleNotifyTestCommand(message);
       } else if (message.content.startsWith('!stop') || message.content.startsWith('!interrupt')) {
         await this.handleStopCommand(message);
+      } else if (message.content.startsWith('!agents') || message.content.startsWith('!tasks')) {
+        await this.handleAgentsCommand(message);
+      } else if (message.content.startsWith('!task-status')) {
+        await this.handleTaskStatusCommand(message);
+      } else if (message.content.startsWith('!cancel-task')) {
+        await this.handleCancelTaskCommand(message);
+      } else if (message.content.startsWith('!help')) {
+        await this.handleHelpCommand(message);
       } else if (!message.content.startsWith('!')) {
         // Handle general text messages (not commands)
         await this.handleTextMessage(message);
@@ -174,6 +182,201 @@ export class DiscordBotRealtime {
         }
       }
     });
+  }
+
+  private async handleHelpCommand(message: Message): Promise<void> {
+    const helpText = `
+**AgentFlow Bot Commands**
+
+**Voice Commands:**
+\`!join\` - Join your voice channel and start voice AI
+\`!leave\` - Leave voice channel
+\`!stop\` / \`!interrupt\` - Interrupt bot's speech
+
+**Agent Management:**
+\`!agents\` / \`!tasks\` - List all running tasks (all channels or current channel)
+\`!task-status <taskId>\` - Get detailed status of a specific task
+\`!cancel-task <taskId>\` - Cancel a running task
+
+**System:**
+\`!status\` - Show bot connection status
+\`!notify-test\` - Test notification system
+\`!help\` - Show this help message
+
+**Natural Language:**
+Just type your request without \`!\` and the AI will help you!
+
+**Multi-Agent Support:**
+You can have multiple agents working on different tasks across different channels simultaneously. Each task is fully isolated with its own agent.
+    `.trim();
+
+    await message.reply(helpText);
+  }
+
+  private async handleAgentsCommand(message: Message): Promise<void> {
+    if (!message.guild) {
+      await message.reply('This command only works in a guild!');
+      return;
+    }
+
+    try {
+      // Check if user wants all tasks or just current channel
+      const showAll = message.content.includes('--all') || message.content.includes('-a');
+
+      const response = await fetch(`${this.orchestratorUrl}/tasks?${showAll ? '' : `channelId=${message.channel.id}`}`, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': this.orchestratorApiKey
+        }
+      });
+
+      const data = await response.json() as any;
+
+      if (!data.tasks || data.tasks.length === 0) {
+        await message.reply(showAll ? 'No tasks found across all channels.' : 'No tasks found in this channel.');
+        return;
+      }
+
+      // Group by status
+      const running = data.tasks.filter((t: any) => t.status === 'running');
+      const completed = data.tasks.filter((t: any) => t.status === 'completed');
+      const failed = data.tasks.filter((t: any) => t.status === 'failed');
+      const pending = data.tasks.filter((t: any) => t.status === 'pending');
+
+      let taskList = `**${showAll ? 'All Tasks' : 'Tasks in This Channel'}**\n\n`;
+      taskList += `**Stats:** ${data.stats.running} running, ${data.stats.completed} completed, ${data.stats.failed} failed\n\n`;
+
+      if (running.length > 0) {
+        taskList += `**🏃 Running (${running.length}):**\n`;
+        running.slice(0, 5).forEach((t: any) => {
+          const duration = Math.floor((Date.now() - new Date(t.startedAt).getTime()) / 1000);
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}... (${duration}s)\n`;
+        });
+        if (running.length > 5) {
+          taskList += `_...and ${running.length - 5} more_\n`;
+        }
+        taskList += '\n';
+      }
+
+      if (pending.length > 0) {
+        taskList += `**⏳ Pending (${pending.length}):**\n`;
+        pending.slice(0, 3).forEach((t: any) => {
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}...\n`;
+        });
+        taskList += '\n';
+      }
+
+      if (completed.length > 0) {
+        taskList += `**✅ Recently Completed (${completed.length}):**\n`;
+        completed.slice(0, 3).forEach((t: any) => {
+          const duration = t.duration ? `${(t.duration / 1000).toFixed(1)}s` : 'N/A';
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}... (${duration})\n`;
+        });
+        taskList += '\n';
+      }
+
+      if (failed.length > 0) {
+        taskList += `**❌ Failed (${failed.length}):**\n`;
+        failed.slice(0, 3).forEach((t: any) => {
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 50)}...\n`;
+        });
+        taskList += '\n';
+      }
+
+      taskList += `\n_Use \`!task-status <taskId>\` for details_`;
+      taskList += `\n_Use \`!agents --all\` to see tasks from all channels_`;
+
+      await message.reply(taskList);
+    } catch (error) {
+      logger.error('Failed to fetch agents', error);
+      await message.reply(`❌ Failed to fetch task list: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleTaskStatusCommand(message: Message): Promise<void> {
+    const parts = message.content.split(' ');
+    if (parts.length < 2) {
+      await message.reply('Usage: `!task-status <taskId>`');
+      return;
+    }
+
+    const taskId = parts[1];
+
+    try {
+      const response = await fetch(`${this.orchestratorUrl}/task/${taskId}`, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': this.orchestratorApiKey
+        }
+      });
+
+      if (!response.ok) {
+        await message.reply(`❌ Task \`${taskId}\` not found.`);
+        return;
+      }
+
+      const task = await response.json() as any;
+
+      const duration = task.duration ? `${(task.duration / 1000).toFixed(2)}s` : `${Math.floor((Date.now() - new Date(task.startedAt).getTime()) / 1000)}s (running)`;
+      const statusEmoji = task.status === 'completed' ? '✅' : task.status === 'running' ? '🏃' : task.status === 'failed' ? '❌' : '⏳';
+
+      let statusMsg = `
+${statusEmoji} **Task Status**
+
+**ID:** \`${task.taskId}\`
+**Status:** ${task.status}
+**Description:** ${task.description}
+**Duration:** ${duration}
+**Started:** ${new Date(task.startedAt).toLocaleString()}
+`;
+
+      if (task.result) {
+        statusMsg += `
+**Iterations:** ${task.result.iterations}
+**Tool Calls:** ${task.result.toolCalls}
+**Result:** ${task.result.message.substring(0, 200)}${task.result.message.length > 200 ? '...' : ''}
+`;
+      }
+
+      if (task.error) {
+        statusMsg += `\n**Error:** \`${task.error}\``;
+      }
+
+      await message.reply(statusMsg.trim());
+    } catch (error) {
+      logger.error('Failed to fetch task status', error);
+      await message.reply(`❌ Failed to get task status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleCancelTaskCommand(message: Message): Promise<void> {
+    const parts = message.content.split(' ');
+    if (parts.length < 2) {
+      await message.reply('Usage: `!cancel-task <taskId>`');
+      return;
+    }
+
+    const taskId = parts[1];
+
+    try {
+      const response = await fetch(`${this.orchestratorUrl}/task/${taskId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'X-API-Key': this.orchestratorApiKey
+        }
+      });
+
+      const result = await response.json() as any;
+
+      if (result.success) {
+        await message.reply(`🛑 Task \`${taskId}\` cancelled successfully.`);
+      } else {
+        await message.reply(`❌ ${result.error || 'Failed to cancel task'}`);
+      }
+    } catch (error) {
+      logger.error('Failed to cancel task', error);
+      await message.reply(`❌ Failed to cancel task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   private async handleJoinCommand(message: Message): Promise<void> {
@@ -1071,6 +1274,25 @@ export class DiscordBotRealtime {
       agent.off('error', listeners.error);
       this.agentEventListeners.delete(sessionId);
       logger.info(`Cleaned up event listeners for agent ${sessionId}`);
+    }
+  }
+
+  /**
+   * Public method to send text message to any channel
+   * Used by orchestrator for agent notifications
+   */
+  async sendTextMessage(channelId: string, message: string): Promise<void> {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (channel && channel.isTextBased() && 'send' in channel) {
+        await channel.send(message);
+        logger.info(`Sent message to channel ${channelId}`);
+      } else {
+        logger.error(`Channel ${channelId} is not a text-based channel`);
+      }
+    } catch (error) {
+      logger.error(`Failed to send message to channel ${channelId}`, error);
+      throw error;
     }
   }
 
