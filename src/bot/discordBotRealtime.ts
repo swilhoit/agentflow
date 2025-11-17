@@ -143,6 +143,10 @@ export class DiscordBotRealtime {
         await this.handleLeaveCommand(message);
       } else if (message.content.startsWith('!status')) {
         await this.handleStatusCommand(message);
+      } else if (message.content.startsWith('!resources')) {
+        await this.handleResourcesCommand(message);
+      } else if (message.content.startsWith('!cleanup')) {
+        await this.handleCleanupCommand(message);
       } else if (message.content.startsWith('!notify-test')) {
         await this.handleNotifyTestCommand(message);
       } else if (message.content.startsWith('!stop') || message.content.startsWith('!interrupt')) {
@@ -662,6 +666,13 @@ ${statusEmoji} **Task Status**
         await message.channel.sendTyping();
       }
 
+      // Get conversation context from database for continuity
+      const conversationContext = this.db.getConversationContext(
+        message.guild.id,
+        message.channel.id,
+        20 // Last 20 messages
+      );
+
       // Use SAME orchestrator as voice commands for consistency
       const response = await fetch(`${this.orchestratorUrl}/command`, {
         method: 'POST',
@@ -675,7 +686,8 @@ ${statusEmoji} **Task Status**
             userId: message.author.id,
             guildId: message.guild.id,
             channelId: message.channel.id,
-            timestamp: new Date()
+            timestamp: new Date(),
+            conversationHistory: conversationContext // Add conversation history!
           },
           priority: 'normal',
           requiresSubAgents: true // Enable command execution
@@ -1126,6 +1138,9 @@ ${statusEmoji} **Task Status**
         // Execute task asynchronously and send results to Discord
         (async () => {
           try {
+            // Get conversation context from database for continuity
+            const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+
             // Send to Claude orchestrator
             const response = await fetch(`${this.orchestratorUrl}/command`, {
               method: 'POST',
@@ -1141,7 +1156,8 @@ ${statusEmoji} **Task Status**
                   channelId,
                   timestamp: new Date(),
                   taskType: args.task_type,
-                  parameters: args.parameters || {}
+                  parameters: args.parameters || {},
+                  conversationHistory: conversationContext // Add conversation history!
                 },
                 priority: 'high',
                 requiresSubAgents: true

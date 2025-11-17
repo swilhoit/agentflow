@@ -23,6 +23,7 @@ export interface AgentTask {
     userId: string;
     guildId: string;
     channelId: string;
+    conversationHistory?: string; // Recent conversation context for continuity
   };
 }
 
@@ -822,7 +823,19 @@ export class ToolBasedAgent {
    * Build initial system prompt
    */
   private buildInitialPrompt(task: AgentTask): string {
-    let prompt = `You are an autonomous AI agent with FULL ACCESS to the user's authenticated tools and APIs.
+    let prompt = `You are an autonomous AI agent with FULL ACCESS to the user's authenticated tools and APIs.`;
+
+    // Add conversation history for context continuity
+    if (task.context.conversationHistory) {
+      prompt += `
+
+📜 RECENT CONVERSATION HISTORY:
+${task.context.conversationHistory}
+
+---`;
+    }
+
+    prompt += `
 
 TASK: ${task.command}
 

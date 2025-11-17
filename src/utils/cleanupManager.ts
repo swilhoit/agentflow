@@ -390,7 +390,7 @@ export class CleanupManager {
       // Count database tasks
       const dbService = getDatabase();
       const db = dbService.getDb();
-      const runningTasks = db.prepare('SELECT COUNT(*) as count FROM agent_tasks WHERE status = "running"')
+      const runningTasks = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
         .get() as { count: number };
 
       // Calculate temp file size
