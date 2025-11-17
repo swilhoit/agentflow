@@ -55,6 +55,7 @@ jobs:
             --allow-unauthenticated \
             --port 3001 \
             --set-env-vars DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }} \
+            --set-env-vars DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }} \
             --set-env-vars ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
             --set-env-vars ELEVENLABS_API_KEY=${{ secrets.ELEVENLABS_API_KEY }} \
             --set-env-vars ELEVENLABS_AGENT_ID=${{ secrets.ELEVENLABS_AGENT_ID }} \
