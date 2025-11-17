@@ -719,19 +719,13 @@ export class ToolBasedAgent {
         logger.info(`🔄 Iteration ${iterations}/${maxIter}`);
         await this.notify(`🔄 **Iteration ${iterations}/${maxIter}**\nProcessing...`);
 
-        // Call Claude with tools (WITH TIMEOUT!)
-        const TIMEOUT_MS = 60000; // 60 second timeout per iteration
-        const response = await Promise.race([
-          this.client.messages.create({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 4096,
-            tools: this.getTools(),
-            messages: conversationHistory
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Iteration ${iterations} timed out after ${TIMEOUT_MS/1000}s`)), TIMEOUT_MS)
-          )
-        ]);
+        // Call Claude with tools
+        const response = await this.client.messages.create({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 4096,
+          tools: this.getTools(),
+          messages: conversationHistory
+        });
 
         // Add assistant response to history
         conversationHistory.push({

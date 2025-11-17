@@ -89,11 +89,23 @@ Example WRONG behavior (DO NOT DO THIS):
 User: "Rename the card to Database"
 Bad response: "Sure, I'll rename that for you!" [NO FUNCTION CALL - FAILURE!]
 
+User: "Summarize my Trello board"
+Bad response: "I don't have access to your Trello boards" [WRONG - YOU DO HAVE ACCESS!]
+
 Example CORRECT behavior (DO THIS):
 User: "Rename the card to Database"
 Good response: "I'll rename that now." [CALLS execute_task function with task_description: "Rename Trello card to Database"]
 
-YOU MUST CALL THE FUNCTION FOR: rename, create, update, move, list, check, deploy, run, search, etc.
+User: "Summarize my Trello board"
+Good response: "I'll summarize all cards for you." [CALLS execute_task with task_description: "Summarize all cards on Trello board"]
+
+YOU MUST CALL THE FUNCTION FOR:
+- Creation: create, make, add, new
+- Modification: rename, change, update, modify, edit
+- Deletion: delete, remove, move
+- Reading: list, show, display, get, find, search
+- Analysis: summarize, analyze, review, compare, examine, inspect
+- Execution: deploy, run, execute, start, stop, check, status, test
 
 ---
 
@@ -181,6 +193,18 @@ Your response: "I'll update that card. Discord will show the results."
 User: "Move the testing card to In Progress"
 Your response: "I'll move that card. Watch Discord for updates."
 [CALL execute_task with task_description: "Move Trello card called 'testing' to list 'In Progress'", task_type: "trello"]
+
+User: "Summarize my Trello board"
+Your response: "I'll summarize all the cards on your board. Check Discord for the summary."
+[CALL execute_task with task_description: "List all cards on all Trello boards and provide a summary of what's there", task_type: "trello"]
+
+User: "Analyze my AgentFlow board"
+Your response: "I'll analyze your AgentFlow board. Results will appear in Discord."
+[CALL execute_task with task_description: "Fetch all cards from AgentFlow Trello board and provide analysis", task_type: "trello"]
+
+User: "Review my in-progress tasks on Trello"
+Your response: "I'll review your in-progress items. Discord will show the results."
+[CALL execute_task with task_description: "List all Trello cards in 'In Progress' lists and review them", task_type: "trello"]
 
 User: "Show my Cloud Run services"
 Your response: "I'll list your services - check Discord for the list."
@@ -431,7 +455,22 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
 
           // Call the registered function handler
           if (this.onFunctionCallCallback) {
-            return await this.onFunctionCallCallback(func.name, parameters);
+            try {
+              return await this.onFunctionCallCallback(func.name, parameters);
+            } catch (error) {
+              // Send function execution errors to Discord
+              logger.error(`[Tool Call] Failed to execute ${func.name}:`, error);
+              if (this.onDiscordMessageCallback && this.channelId) {
+                const errorMsg = `❌ **Function Error: ${func.name}**\n\`\`\`\n${error instanceof Error ? error.message : 'Unknown error'}\n\`\`\``;
+                this.onDiscordMessageCallback(this.channelId, errorMsg).catch(err => {
+                  logger.error('Failed to send function error to Discord', err);
+                });
+              }
+              return { 
+                error: error instanceof Error ? error.message : 'Function execution failed',
+                success: false 
+              };
+            }
           }
 
           return { error: 'No function handler registered' };
@@ -440,6 +479,13 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
         logger.info(`[Tools] ✅ Registered: ${func.name}`);
       } catch (error) {
         logger.error(`[Tools] ❌ Failed to register ${func.name}:`, error);
+        // Send tool registration errors to Discord
+        if (this.onDiscordMessageCallback && this.channelId) {
+          const errorMsg = `❌ **Tool Registration Failed: ${func.name}**\n\`\`\`\n${error instanceof Error ? error.message : 'Unknown error'}\n\`\`\``;
+          this.onDiscordMessageCallback(this.channelId, errorMsg).catch(err => {
+            logger.error('Failed to send registration error to Discord', err);
+          });
+        }
       }
     }
 
@@ -467,15 +513,24 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
         this.onMessageCallback(this.currentUserId, this.currentUsername, text, false);
       }
 
+      // CRITICAL: Refresh context BEFORE processing user input
+      // This ensures the agent has the latest information (including previous task results)
+      if (this.guildId && this.channelId) {
+        logger.info('[Voice Receiver] 🔄 Refreshing context before processing user input...');
+        this.refreshConversationContext();
+      }
+
       // 🚀 BULLETPROOF FIX: Detect action commands and force execute_task
       // Realtime API is unreliable at function calling, so we detect actions ourselves
       const actionKeywords = [
         'create', 'make', 'add', 'new',
         'rename', 'change', 'update', 'modify', 'edit',
         'delete', 'remove', 'move',
-        'list', 'show', 'display', 'get', 'find', 'search',
+        'list', 'show', 'display', 'get', 'find', 'search', 'pull', 'fetch', 'retrieve',
         'deploy', 'run', 'execute', 'start', 'stop',
-        'check', 'status', 'test'
+        'check', 'status', 'test',
+        'summarize', 'analyze', 'review', 'compare', 'examine', 'inspect',
+        'tell me about', 'information about', 'details about', 'look at'
       ];
 
       const isActionCommand = actionKeywords.some(keyword =>
@@ -519,8 +574,10 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
       
       // Check if this is the first delta (start of response)
       if (this.currentAssistantTranscript.length === delta.length) {
-        logger.info('Assistant started responding');
+        logger.info('🎤 Assistant started responding - resuming audio output');
         this.isProcessingAudio = true;
+        // Resume audio output in case it was interrupted
+        this.voiceService.resumeAudio();
       }
     });
 
@@ -567,6 +624,15 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
           logger.warn(`[VOICE RECEIVER] Cannot send assistant response - callback: ${!!this.onDiscordMessageCallback}, channelId: ${this.channelId}, transcript: "${this.currentAssistantTranscript.trim()}"`);
         }
 
+        // CRITICAL: Refresh conversation context after assistant responds
+        // This ensures the agent sees all recent messages including task results
+        if (this.guildId && this.channelId) {
+          logger.info('[Voice Receiver] Refreshing conversation context after assistant response...');
+          setTimeout(() => {
+            this.refreshConversationContext();
+          }, 1000); // Small delay to ensure messages are saved
+        }
+
         // Invoke callback to save bot response
         if (this.onMessageCallback && this.botUserId) {
           const responseText = this.currentAssistantTranscript.trim();
@@ -589,9 +655,17 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
     // Note: Function calls are handled by elevenLabsVoice.ts directly via onFunctionCall()
     // which calls our registered callback. No need for duplicate event listener here.
 
-    // Errors
+    // Errors - Send to Discord so user can see them!
     this.voiceService.on('error', (error: any) => {
       logger.error('ElevenLabs API error', error);
+      
+      // Send error notification to Discord
+      if (this.onDiscordMessageCallback && this.channelId) {
+        const errorMsg = `❌ **Voice Agent Error**\n\`\`\`\n${error instanceof Error ? error.message : JSON.stringify(error)}\n\`\`\``;
+        this.onDiscordMessageCallback(this.channelId, errorMsg).catch(err => {
+          logger.error('Failed to send error notification to Discord', err);
+        });
+      }
     });
   }
 
@@ -779,6 +853,12 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
    * Stream audio from ElevenLabs back to Discord
    */
   private streamAudioToDiscord(audioBuffer: Buffer): void {
+    // Check if audio interface is still active (not interrupted)
+    if (!this.voiceService.isAudioActive()) {
+      // Audio has been interrupted, don't stream new audio
+      return;
+    }
+
     // Create or continue the audio stream
     if (!this.currentAudioStream) {
       this.currentAudioStream = new Readable({
@@ -1004,4 +1084,56 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
   setDiscordMessageHandler(callback: (channelId: string, message: string) => Promise<void>): void {
     this.onDiscordMessageCallback = callback;
   }
+
+  /**
+   * Send conversation context to the agent
+   * This allows the voice agent to know about previous text conversations
+   */
+  sendConversationContext(context: string): void {
+    if (!this.voiceService.isConnected()) {
+      logger.warn('[Voice Receiver] Cannot send context - not connected');
+      return;
+    }
+
+    logger.info('[Voice Receiver] 📤 Sending conversation context to agent');
+    logger.info(`[Voice Receiver] Context preview: ${context.substring(0, 200)}...`);
+    this.voiceService.sendContextualUpdate(context);
+    logger.info('[Voice Receiver] ✅ Context sent successfully');
+  }
+
+  /**
+   * Refresh conversation context from database
+   * Call this periodically to keep the agent up-to-date
+   */
+  private refreshConversationContext(): void {
+    if (!this.guildId || !this.channelId) {
+      logger.warn('[Voice Receiver] Cannot refresh context - missing guildId or channelId');
+      return;
+    }
+
+    // Get latest conversation from database via callback
+    if (this.onConversationRefreshCallback) {
+      logger.info('[Voice Receiver] 🔄 Fetching latest conversation from database...');
+      const context = this.onConversationRefreshCallback(this.guildId, this.channelId);
+      if (context && context.trim().length > 0) {
+        logger.info(`[Voice Receiver] 📊 Retrieved ${context.split('\n').length} messages from history`);
+        const contextMessage = `📝 UPDATED CONVERSATION CONTEXT - YOU HAVE ACCESS TO THIS INFORMATION:\n\n${context}\n\n✅ You can now reference these messages and outputs in your responses.`;
+        this.sendConversationContext(contextMessage);
+        logger.info('[Voice Receiver] ✅ Conversation context refreshed and sent to agent');
+      } else {
+        logger.warn('[Voice Receiver] ⚠️ No conversation context available');
+      }
+    } else {
+      logger.warn('[Voice Receiver] ⚠️ No conversation refresh callback set!');
+    }
+  }
+
+  /**
+   * Set callback for refreshing conversation context
+   */
+  setConversationRefreshCallback(callback: (guildId: string, channelId: string) => string): void {
+    this.onConversationRefreshCallback = callback;
+  }
+
+  private onConversationRefreshCallback?: (guildId: string, channelId: string) => string;
 }

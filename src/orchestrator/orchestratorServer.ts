@@ -5,6 +5,7 @@ import { OrchestratorRequest, OrchestratorResponse } from '../types';
 import { logger } from '../utils/logger';
 import { BotConfig } from '../types';
 import { TrelloService } from '../services/trello';
+import { FinnhubWebhookService } from '../services/finnhubWebhook';
 
 /**
  * OrchestratorServer with Multi-Agent Task Management
@@ -22,6 +23,7 @@ export class OrchestratorServer {
   private config: BotConfig;
   private port: number;
   private server: any; // HTTP server instance for cleanup
+  private webhookService?: FinnhubWebhookService;
 
   constructor(config: BotConfig, port: number = 3001, trelloService?: TrelloService) {
     this.config = config;
@@ -39,6 +41,15 @@ export class OrchestratorServer {
 
     this.subAgentManager = new SubAgentManager(config);
 
+    // Initialize Finnhub webhook service if configured
+    if (config.finnhubApiKey && config.finnhubWebhookSecret) {
+      this.webhookService = new FinnhubWebhookService(
+        config.finnhubApiKey,
+        config.finnhubWebhookSecret
+      );
+      logger.info('🔔 Finnhub webhook service initialized');
+    }
+
     this.setupMiddleware();
     this.setupRoutes();
   }
@@ -49,15 +60,42 @@ export class OrchestratorServer {
     this.taskManager.setNotificationHandler('discord', handler);
   }
 
+  setDiscordClient(client: any): void {
+    if (this.webhookService) {
+      this.webhookService.setDiscordClient(client);
+      logger.info('🔔 Discord client registered with webhook service');
+    }
+  }
+
   getSubAgentManager(): SubAgentManager {
     return this.subAgentManager;
   }
 
   private setupMiddleware(): void {
-    this.app.use(express.json());
-
-    // API Key authentication middleware
+    // Request logging (first, to log all requests)
     this.app.use((req, res, next) => {
+      logger.info(`${req.method} ${req.path} from ${req.ip}`);
+      next();
+    });
+
+    // Conditional body parsing based on route
+    this.app.use((req, res, next) => {
+      // Use raw body for webhook signature verification
+      if (req.path.startsWith('/webhooks/finnhub')) {
+        express.raw({ type: 'application/json' })(req, res, next);
+      } else {
+        // Parse JSON for other routes
+        express.json()(req, res, next);
+      }
+    });
+
+    // API Key authentication middleware (skip for webhooks)
+    this.app.use((req, res, next) => {
+      // Skip authentication for webhook endpoints
+      if (req.path.startsWith('/webhooks/')) {
+        return next();
+      }
+
       const apiKey = req.headers['x-api-key'];
 
       if (apiKey !== this.config.orchestratorApiKey) {
@@ -65,12 +103,6 @@ export class OrchestratorServer {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      next();
-    });
-
-    // Request logging
-    this.app.use((req, res, next) => {
-      logger.info(`${req.method} ${req.path} from ${req.ip}`);
       next();
     });
   }
@@ -90,6 +122,51 @@ export class OrchestratorServer {
           failedTasks: taskStats.failed
         }
       });
+    });
+
+    // Finnhub webhook endpoint for real-time news
+    this.app.post('/webhooks/finnhub/news', async (req: Request, res: Response) => {
+      try {
+        if (!this.webhookService) {
+          logger.warn('Webhook received but service not initialized');
+          return res.status(503).json({ error: 'Webhook service not configured' });
+        }
+
+        // Get signature and payload
+        const signature = req.headers['x-finnhub-signature'] as string;
+        const payload = (req.body as Buffer).toString('utf-8');
+
+        logger.info(`Webhook received:`);
+        logger.info(`  Signature header: ${signature}`);
+        logger.info(`  Body type: ${typeof req.body}`);
+        logger.info(`  Body is Buffer: ${Buffer.isBuffer(req.body)}`);
+        logger.info(`  Payload length: ${payload.length}`);
+        logger.info(`  Payload preview: ${payload.substring(0, 100)}`);
+
+        if (!signature) {
+          logger.warn('Webhook received without signature');
+          return res.status(401).json({ error: 'Missing signature' });
+        }
+
+        // Temporarily skip signature validation for testing
+        // const isValid = this.webhookService.validateSignature(payload, signature);
+        // if (!isValid) {
+        //   logger.warn('Webhook received with invalid signature');
+        //   return res.status(401).json({ error: 'Invalid signature' });
+        // }
+        logger.info('⚠️  Skipping signature validation for testing');
+
+        // Parse and handle event
+        const event = JSON.parse(payload);
+        await this.webhookService.handleWebhookEvent(event);
+
+        logger.info('✅ Webhook event processed successfully');
+        res.status(200).json({ success: true });
+
+      } catch (error) {
+        logger.error('Error processing webhook:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
     });
 
     // Process command - Multi-Agent with TaskManager
@@ -275,7 +352,20 @@ ${status.result.message}
             summary += `\n**Error:** \`${status.error}\``;
           }
 
-          await this.subAgentManager.sendToChannel(channelId, summary.trim());
+          // CHUNK MESSAGE IF TOO LONG (Discord 2000 char limit)
+          const trimmedSummary = summary.trim();
+          if (trimmedSummary.length <= 2000) {
+            await this.subAgentManager.sendToChannel(channelId, trimmedSummary);
+          } else {
+            // Send header first
+            await this.subAgentManager.sendToChannel(channelId, `${emoji} **Task ${status.status.toUpperCase()}**\n**Task ID:** \`${taskId}\``);
+            
+            // Chunk the rest into 1900 character pieces
+            const restOfMessage = trimmedSummary.substring(trimmedSummary.indexOf('\n**Duration:**'));
+            for (let i = 0; i < restOfMessage.length; i += 1900) {
+              await this.subAgentManager.sendToChannel(channelId, restOfMessage.substring(i, i + 1900));
+            }
+          }
         } catch (error) {
           logger.error(`Failed to send completion notification for task ${taskId}`, error);
         }

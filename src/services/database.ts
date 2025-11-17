@@ -165,6 +165,80 @@ export class DatabaseService {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_daily_goals_guild_date
                    ON daily_goals(guild_id, date DESC)`);
 
+    // Create market_data table for ticker prices and performance
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS market_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        change_amount REAL NOT NULL,
+        change_percent REAL NOT NULL,
+        volume INTEGER,
+        market_cap INTEGER,
+        performance_30d REAL,
+        performance_90d REAL,
+        performance_365d REAL,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        date TEXT NOT NULL
+      )
+    `);
+
+    // Create indexes for market_data
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_market_data_symbol_date
+                   ON market_data(symbol, date DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_market_data_timestamp
+                   ON market_data(timestamp DESC)`);
+
+    // Create market_news table for news articles
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS market_news (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id INTEGER UNIQUE NOT NULL,
+        symbol TEXT NOT NULL,
+        headline TEXT NOT NULL,
+        summary TEXT,
+        source TEXT NOT NULL,
+        url TEXT NOT NULL,
+        published_at DATETIME NOT NULL,
+        category TEXT,
+        sentiment TEXT,
+        is_significant BOOLEAN DEFAULT 0,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create indexes for market_news
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_market_news_symbol_date
+                   ON market_news(symbol, published_at DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_market_news_published
+                   ON market_news(published_at DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_market_news_significant
+                   ON market_news(is_significant, published_at DESC)`);
+
+    // Create weekly_analysis table for thesis reports
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS weekly_analysis (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        week_start TEXT NOT NULL,
+        week_end TEXT NOT NULL,
+        analysis_type TEXT NOT NULL CHECK(analysis_type IN ('thesis', 'performance', 'news')),
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        detailed_analysis TEXT NOT NULL,
+        key_events TEXT,
+        recommendations TEXT,
+        metadata TEXT,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create indexes for weekly_analysis
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_analysis_date
+                   ON weekly_analysis(week_start DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_analysis_type
+                   ON weekly_analysis(analysis_type, week_start DESC)`);
+
     logger.info('Database schema initialized');
   }
 
@@ -584,6 +658,256 @@ export class DatabaseService {
    */
   getDb(): Database.Database {
     return this.db;
+  }
+
+  /**
+   * Save market data for a ticker
+   */
+  saveMarketData(data: {
+    symbol: string;
+    name: string;
+    price: number;
+    changeAmount: number;
+    changePercent: number;
+    volume?: number;
+    marketCap?: number;
+    performance30d?: number;
+    performance90d?: number;
+    performance365d?: number;
+    date: string;
+  }): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO market_data (
+        symbol, name, price, change_amount, change_percent, volume, market_cap,
+        performance_30d, performance_90d, performance_365d, date
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.symbol,
+      data.name,
+      data.price,
+      data.changeAmount,
+      data.changePercent,
+      data.volume || null,
+      data.marketCap || null,
+      data.performance30d || null,
+      data.performance90d || null,
+      data.performance365d || null,
+      data.date
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Save market news article
+   */
+  saveMarketNews(news: {
+    articleId: number;
+    symbol: string;
+    headline: string;
+    summary?: string;
+    source: string;
+    url: string;
+    publishedAt: Date;
+    category?: string;
+    sentiment?: string;
+    isSignificant: boolean;
+  }): number | null {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO market_news (
+          article_id, symbol, headline, summary, source, url, published_at,
+          category, sentiment, is_significant
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const result = stmt.run(
+        news.articleId,
+        news.symbol,
+        news.headline,
+        news.summary || null,
+        news.source,
+        news.url,
+        news.publishedAt.toISOString(),
+        news.category || null,
+        news.sentiment || null,
+        news.isSignificant ? 1 : 0
+      );
+
+      return result.lastInsertRowid as number;
+    } catch (error: any) {
+      // Ignore duplicate article IDs
+      if (error.code === 'SQLITE_CONSTRAINT') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Save weekly analysis
+   */
+  saveWeeklyAnalysis(analysis: {
+    weekStart: string;
+    weekEnd: string;
+    analysisType: 'thesis' | 'performance' | 'news';
+    title: string;
+    summary: string;
+    detailedAnalysis: string;
+    keyEvents?: string;
+    recommendations?: string;
+    metadata?: string;
+  }): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO weekly_analysis (
+        week_start, week_end, analysis_type, title, summary, detailed_analysis,
+        key_events, recommendations, metadata
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      analysis.weekStart,
+      analysis.weekEnd,
+      analysis.analysisType,
+      analysis.title,
+      analysis.summary,
+      analysis.detailedAnalysis,
+      analysis.keyEvents || null,
+      analysis.recommendations || null,
+      analysis.metadata || null
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Get market data for a symbol within date range
+   */
+  getMarketData(symbol: string, startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_data
+      WHERE symbol = ? AND date BETWEEN ? AND ?
+      ORDER BY date DESC
+    `);
+
+    return stmt.all(symbol, startDate, endDate);
+  }
+
+  /**
+   * Get all market data for a specific date
+   */
+  getMarketDataByDate(date: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_data
+      WHERE date = ?
+      ORDER BY symbol
+    `);
+
+    return stmt.all(date);
+  }
+
+  /**
+   * Get all market data within a date range (for all symbols)
+   */
+  getMarketDataByDateRange(startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_data
+      WHERE date BETWEEN ? AND ?
+      ORDER BY date ASC, symbol ASC
+    `);
+
+    return stmt.all(startDate, endDate);
+  }
+
+  /**
+   * Get news for a symbol within date range
+   */
+  getMarketNews(symbol: string, startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_news
+      WHERE symbol = ? AND DATE(published_at) BETWEEN ? AND ?
+      ORDER BY published_at DESC
+    `);
+
+    return stmt.all(symbol, startDate, endDate);
+  }
+
+  /**
+   * Get all news within a date range (for all symbols)
+   */
+  getMarketNewsByDateRange(startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_news
+      WHERE DATE(published_at) BETWEEN ? AND ?
+      ORDER BY published_at DESC
+    `);
+
+    return stmt.all(startDate, endDate);
+  }
+
+  /**
+   * Get significant news within date range
+   */
+  getSignificantNews(startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM market_news
+      WHERE is_significant = 1 AND DATE(published_at) BETWEEN ? AND ?
+      ORDER BY published_at DESC
+    `);
+
+    return stmt.all(startDate, endDate);
+  }
+
+  /**
+   * Get latest weekly analysis
+   */
+  getLatestWeeklyAnalysis(analysisType?: 'thesis' | 'performance' | 'news'): any | null {
+    const stmt = analysisType
+      ? this.db.prepare(`
+          SELECT * FROM weekly_analysis
+          WHERE analysis_type = ?
+          ORDER BY week_start DESC
+          LIMIT 1
+        `)
+      : this.db.prepare(`
+          SELECT * FROM weekly_analysis
+          ORDER BY week_start DESC
+          LIMIT 1
+        `);
+
+    return analysisType ? stmt.get(analysisType) : stmt.get();
+  }
+
+  /**
+   * Get weekly analyses within date range
+   */
+  getWeeklyAnalyses(startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM weekly_analysis
+      WHERE week_start BETWEEN ? AND ?
+      ORDER BY week_start DESC
+    `);
+
+    return stmt.all(startDate, endDate);
+  }
+
+  /**
+   * Execute a raw SQL statement (for setup operations like CREATE TABLE)
+   */
+  exec(sql: string): void {
+    this.db.exec(sql);
+  }
+
+  /**
+   * Prepare a SQL statement for execution
+   */
+  prepare(sql: string): Database.Statement {
+    return this.db.prepare(sql);
   }
 
   close(): void {

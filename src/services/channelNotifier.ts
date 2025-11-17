@@ -1,6 +1,6 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getDatabase } from './database';
+import { getSQLiteDatabase } from './databaseFactory';
 
 export interface ProgressUpdate {
   agentId: string;
@@ -32,7 +32,7 @@ export interface ActionUpdate {
 
 export class ChannelNotifier {
   private client: Client;
-  private db = getDatabase();
+  private db = getSQLiteDatabase();
   private systemNotificationChannelId?: string;
 
   constructor(client: Client, systemNotificationChannelId?: string) {

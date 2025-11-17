@@ -4,9 +4,10 @@ import { DiscordBot } from './bot/discordBot';
 import { DiscordBotRealtime } from './bot/discordBotRealtime';
 import { OrchestratorServer } from './orchestrator/orchestratorServer';
 import { VoiceCommand, OrchestratorRequest } from './types';
-import { getDatabase } from './services/database';
+import { getDatabase } from './services/databaseFactory';
 import { TrelloService } from './services/trello';
 import { getCleanupManager } from './utils/cleanupManager';
+import { MarketUpdateScheduler, DEFAULT_SCHEDULE_CONFIG } from './services/marketUpdateScheduler';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -144,11 +145,45 @@ async function main() {
 
       await bot.start();
 
+      // Register Discord client with webhook service for real-time notifications
+      orchestratorServer.setDiscordClient((bot as DiscordBotRealtime).getClient());
+
       logger.info('AgentFlow started successfully (Realtime API Mode)');
+
+      // Initialize market update scheduler if enabled
+      let marketScheduler: MarketUpdateScheduler | undefined;
+      if (config.marketUpdatesEnabled && config.marketUpdatesGuildId) {
+        try {
+          marketScheduler = new MarketUpdateScheduler(
+            (bot as DiscordBotRealtime).getClient(),
+            {
+              ...DEFAULT_SCHEDULE_CONFIG,
+              guildId: config.marketUpdatesGuildId,
+              dailyUpdateCron: config.marketUpdatesDailyCron!,
+              marketCloseCron: config.marketUpdatesCloseCron!,
+              newsCheckCron: config.marketUpdatesNewsCron!,
+              weeklyAnalysisCron: config.marketUpdatesWeeklyCron!,
+              timezone: config.marketUpdatesTimezone!,
+              enabled: true,
+              finnhubApiKey: config.finnhubApiKey,
+              anthropicApiKey: config.anthropicApiKey
+            },
+            config.systemNotificationChannelId
+          );
+          marketScheduler.start();
+          logger.info('📈 Market update scheduler started');
+        } catch (error) {
+          logger.error('Failed to start market update scheduler:', error);
+          logger.warn('Continuing without market updates');
+        }
+      } else {
+        logger.info('Market updates disabled or not configured');
+      }
 
       // Graceful shutdown
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
+        if (marketScheduler) marketScheduler.stop();
         await bot.stop();
         await orchestratorServer.stop();
         getDatabase().close();
@@ -158,6 +193,7 @@ async function main() {
 
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
+        if (marketScheduler) marketScheduler.stop();
         await bot.stop();
         await orchestratorServer.stop();
         getDatabase().close();

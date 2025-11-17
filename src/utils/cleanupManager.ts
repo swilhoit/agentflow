@@ -1,7 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from './logger';
-import { getDatabase } from '../services/database';
+import { getSQLiteDatabase } from '../services/databaseFactory';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -226,7 +226,7 @@ export class CleanupManager {
    */
   private async cleanStaleTasksInDB(): Promise<number> {
     try {
-      const dbService = getDatabase();
+      const dbService = getSQLiteDatabase();
       const db = dbService.getDb();
       
       // Find tasks that have been running for more than 1 hour
@@ -388,7 +388,7 @@ export class CleanupManager {
       const runningProcesses = parseInt(psOut.trim()) || 0;
 
       // Count database tasks
-      const dbService = getDatabase();
+      const dbService = getSQLiteDatabase();
       const db = dbService.getDb();
       const runningTasks = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
         .get() as { count: number };

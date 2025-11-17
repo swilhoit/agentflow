@@ -39,7 +39,24 @@ export function loadConfig(): BotConfig {
     systemNotificationChannelId: process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
     ttsSpeed: Math.max(0.25, Math.min(4.0, ttsSpeed)),
     trelloApiKey: process.env.TRELLO_API_KEY,
-    trelloApiToken: process.env.TRELLO_API_TOKEN
+    trelloApiToken: process.env.TRELLO_API_TOKEN,
+    // Market updates configuration
+    marketUpdatesEnabled: process.env.MARKET_UPDATES_ENABLED === 'true',
+    marketUpdatesGuildId: process.env.MARKET_UPDATES_GUILD_ID,
+    marketUpdatesDailyCron: process.env.MARKET_UPDATES_DAILY_CRON || '0 9 * * 1-5',
+    marketUpdatesCloseCron: process.env.MARKET_UPDATES_CLOSE_CRON || '5 16 * * 1-5',
+    marketUpdatesNewsCron: process.env.MARKET_UPDATES_NEWS_CRON || '0 9-16 * * 1-5',
+    marketUpdatesWeeklyCron: process.env.MARKET_UPDATES_WEEKLY_CRON || '0 18 * * 0',
+    marketUpdatesTimezone: process.env.MARKET_UPDATES_TIMEZONE || 'America/New_York',
+    // News monitoring
+    finnhubApiKey: process.env.FINNHUB_API_KEY,
+    finnhubWebhookSecret: process.env.FINNHUB_WEBHOOK_SECRET,
+    // Database configuration
+    databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'cloudsql') || 'sqlite',
+    cloudSqlInstanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,
+    cloudSqlDatabase: process.env.CLOUDSQL_DATABASE,
+    cloudSqlUser: process.env.CLOUDSQL_USER,
+    cloudSqlPassword: process.env.CLOUDSQL_PASSWORD
   };
 }
 

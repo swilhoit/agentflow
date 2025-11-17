@@ -1,7 +1,7 @@
 import * as cron from 'node-cron';
 import { Client, TextChannel, EmbedBuilder, Colors, Message } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getDatabase } from './database';
+import { getSQLiteDatabase } from './databaseFactory';
 
 export interface GoalsSchedulerConfig {
   goalsChannelId: string; // The channel ID where goals reminders should be sent
@@ -12,7 +12,7 @@ export interface GoalsSchedulerConfig {
 
 export class GoalsScheduler {
   private client: Client;
-  private db = getDatabase();
+  private db = getSQLiteDatabase();
   private scheduledTasks: Map<string, any> = new Map();
   private pendingGoals: Map<string, { date: string; guildId: string; channelId: string }> = new Map();
 

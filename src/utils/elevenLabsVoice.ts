@@ -53,6 +53,14 @@ class DiscordAudioInterface extends AudioInterface {
   }
 
   /**
+   * Resume audio output after interruption
+   */
+  resume(): void {
+    logger.info('[ElevenLabs Audio] Resuming audio output');
+    this.isActive = true;
+  }
+
+  /**
    * Send user audio from Discord to ElevenLabs
    */
   sendUserAudio(audio: Buffer): void {
@@ -125,11 +133,14 @@ export class ElevenLabsVoiceService extends EventEmitter {
         throw new Error('Agent ID is required. Please create an agent in the ElevenLabs dashboard and provide its ID.');
       }
 
+      // Note: System instructions are now set directly in the ElevenLabs agent configuration
+      // via the API or dashboard. No need to override at connection time.
+      
       // Create conversation instance
       this.conversation = new Conversation({
         client: this.client,
         agentId: this.config.agentId,
-        requiresAuth: true,
+        requiresAuth: false,  // Changed from true - auth is handled by API key
         audioInterface: this.audioInterface,
         clientTools: this.clientTools,
         callbackAgentResponse: (response: string) => {
@@ -142,13 +153,16 @@ export class ElevenLabsVoiceService extends EventEmitter {
         },
         callbackLatencyMeasurement: (latencyMs: number) => {
           logger.debug(`[ElevenLabs] Latency: ${latencyMs}ms`);
+        },
+        callbackAgentResponseCorrection: (correction: string) => {
+          logger.info(`[ElevenLabs] Agent response correction: ${correction}`);
         }
       });
 
       // Start the conversation session
       await this.conversation.startSession();
 
-      logger.info('[ElevenLabs] Connected successfully');
+      logger.info('[ElevenLabs] Connected successfully - using agent prompt from API configuration');
       this.emit('connected');
       this.reconnectAttempts = 0;
 
@@ -168,16 +182,30 @@ export class ElevenLabsVoiceService extends EventEmitter {
    * Send audio data to ElevenLabs
    * @param audioData - PCM16 audio buffer at 16kHz mono
    */
+  private audioChunksSent = 0;
+
   sendAudio(audioData: Buffer): void {
-    if (!this.conversation || !this.audioInterface.isAudioActive()) {
+    if (!this.conversation) {
       logger.warn('[ElevenLabs] Cannot send audio - conversation not active');
       return;
+    }
+
+    // If audio interface is not active after interruption, resume it
+    if (!this.audioInterface.isAudioActive()) {
+      logger.info('[ElevenLabs] Audio interface inactive - auto-resuming after interruption');
+      this.audioInterface.resume();
     }
 
     // ElevenLabs expects 16-bit PCM mono at 16kHz
     // Our Discord audio is at 24kHz after resampling, so we need to downsample
     const downsampledAudio = this.downsampleAudio(audioData, 24000, 16000);
     this.audioInterface.sendUserAudio(downsampledAudio);
+    
+    // Log every 100th chunk to avoid spam
+    this.audioChunksSent++;
+    if (this.audioChunksSent % 100 === 0) {
+      logger.info(`[ElevenLabs] Sent ${this.audioChunksSent} audio chunks to ElevenLabs (latest: ${downsampledAudio.length} bytes)`);
+    }
   }
 
   /**
@@ -230,6 +258,20 @@ export class ElevenLabsVoiceService extends EventEmitter {
     // The conversation will naturally handle the interruption through its turn-taking model
     // No need to send explicit cancel messages - ElevenLabs manages this automatically
     logger.info('[ElevenLabs] Agent interrupted - turn-taking will handle cleanup');
+  }
+
+  /**
+   * Resume audio output after interruption
+   */
+  resumeAudio(): void {
+    this.audioInterface.resume();
+  }
+
+  /**
+   * Check if audio interface is active
+   */
+  isAudioActive(): boolean {
+    return this.audioInterface.isAudioActive();
   }
 
   /**
@@ -311,6 +353,21 @@ export class ElevenLabsVoiceService extends EventEmitter {
    */
   getConversationId(): string | undefined {
     return this.conversation?.getConversationId();
+  }
+
+  /**
+   * Send contextual update to the agent
+   * This provides additional context without interrupting the conversation
+   */
+  sendContextualUpdate(context: string): void {
+    if (!this.conversation) {
+      logger.error('[ElevenLabs] Cannot send contextual update - not connected');
+      return;
+    }
+
+    logger.info(`[ElevenLabs] 📤 Sending contextual update (${context.length} characters)`);
+    this.conversation.sendContextualUpdate(context);
+    logger.info('[ElevenLabs] ✅ Contextual update sent successfully to agent');
   }
 }
 

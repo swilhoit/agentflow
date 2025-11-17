@@ -15,7 +15,8 @@ import { logger } from '../utils/logger';
 import { RealtimeVoiceReceiver } from './realtimeVoiceReceiver';
 import { CloudDeploymentService } from '../services/cloudDeployment';
 import { SubAgentManager } from '../agents/subAgentManager';
-import { getDatabase, DatabaseService } from '../services/database';
+import { getSQLiteDatabase } from '../services/databaseFactory';
+import { DatabaseService } from '../services/database';
 import { ChannelNotifier } from '../services/channelNotifier';
 import { DirectCommandExecutor } from '../services/directCommandExecutor';
 
@@ -33,6 +34,7 @@ export class DiscordBotRealtime {
   private subAgentManager: SubAgentManager;
   private db: DatabaseService;
   private channelNotifier: ChannelNotifier;
+  private activeVoiceConnections: Map<string, any> = new Map(); // Track voice receivers by guildId for task announcements
 
   // Rate limiting for text messages (user -> last message timestamp)
   private messageRateLimits: Map<string, number> = new Map();
@@ -59,8 +61,8 @@ export class DiscordBotRealtime {
     // Initialize Sub-Agent Manager
     this.subAgentManager = new SubAgentManager(config);
 
-    // Initialize database
-    this.db = getDatabase();
+    // Initialize database (uses SQLite for conversation history)
+    this.db = getSQLiteDatabase();
 
     this.client = new Client({
       intents: [
@@ -183,6 +185,7 @@ export class DiscordBotRealtime {
         if (receiver) {
           receiver.stopListening();
           this.realtimeReceivers.delete(newState.guild.id);
+          this.activeVoiceConnections.delete(newState.guild.id);
         }
       }
     });
@@ -447,15 +450,31 @@ ${statusEmoji} **Task Status**
         speechSpeed
       );
       this.realtimeReceivers.set(message.guild!.id, receiver);
+      
+      // Track for task announcements
+      this.activeVoiceConnections.set(message.guild!.id, receiver);
 
       await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n🔄 **Step 3/4:** Connecting to ElevenLabs Conversational AI...');
 
-      // Capture channel ID and guild ID in closure-safe variables
-      const channelId = member.voice.channel.id;
+      // Capture channel IDs and guild ID in closure-safe variables
+      // IMPORTANT: Use the TEXT channel where the command was issued, NOT the voice channel!
+      const textChannelId = message.channel.id;  // Text channel for messages
+      const voiceChannelId = member.voice.channel.id;  // Voice channel for audio
+      const channelId = textChannelId;  // Use text channel for all Discord messages
       const guildId = message.guild!.id;
+      
+      logger.info(`📍 Text channel for messages: ${textChannelId}`);
+      logger.info(`🎤 Voice channel for audio: ${voiceChannelId}`);
 
       // Set context for message logging
       receiver.setContext(guildId, channelId);
+
+      // Get recent conversation history and send to agent
+      const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+      if (conversationContext && conversationContext.trim().length > 0) {
+        logger.info('[Voice Setup] Sending recent conversation context to agent');
+        // We'll send this after connection is established
+      }
 
       // Set up message callback to save to database
       receiver.onMessage((userId: string, username: string, msg: string, isBot: boolean) => {
@@ -468,6 +487,11 @@ ${statusEmoji} **Task Status**
           messageType: isBot ? 'agent_response' : 'voice',
           timestamp: new Date()
         });
+      });
+
+      // Set up conversation refresh callback so voice agent can get latest messages
+      receiver.setConversationRefreshCallback((gId: string, cId: string) => {
+        return this.db.getConversationContext(gId, cId, 20);
       });
 
       // Set up Discord message handler for transcription/response notifications
@@ -508,6 +532,13 @@ ${statusEmoji} **Task Status**
       await statusMsg.edit('✅ **Step 1/4:** Voice channel joined\n✅ **Step 2/4:** Audio receiver ready\n✅ **Step 3/4:** Connected to ElevenLabs AI\n🔄 **Step 4/4:** Starting audio streams...');
 
       await receiver.startListening(connection, message.author.id, this.client.user!.id, message.author.tag);
+
+      // Send conversation context to agent after connection
+      if (conversationContext && conversationContext.trim().length > 0) {
+        const contextMessage = `📝 Recent conversation history:\n\n${conversationContext}\n\nThis is your conversation history with the user. You can reference this information when responding to their requests.`;
+        receiver.sendConversationContext(contextMessage);
+        logger.info('[Voice Setup] ✅ Conversation context sent to agent');
+      }
 
       await statusMsg.edit('✅ **All systems ready!**\n\n🎤 Voice agent is now listening in **' + member.voice.channel.name + '**\n\n_Mode: ElevenLabs Conversational AI with natural interruptions_');
     } catch (error) {
@@ -556,6 +587,7 @@ ${statusEmoji} **Task Status**
     if (receiver) {
       receiver.stopListening();
       this.realtimeReceivers.delete(message.guild!.id);
+      this.activeVoiceConnections.delete(message.guild!.id);
     }
 
     connection.destroy();
@@ -1175,15 +1207,37 @@ ${statusEmoji} **Task Status**
       try {
         // Log that we're starting the task
         logger.info(`🚀 Starting task: ${args.task_description}`);
+        logger.info(`📍 Channel ID for notifications: ${channelId}`);
+        logger.info(`👤 User ID: ${userId}, Guild ID: ${guildId}`);
 
         // Send initial notification to Discord channel
         try {
+          logger.info(`🔍 Attempting to fetch channel: ${channelId}`);
           const channel = await this.client.channels.fetch(channelId);
+          logger.info(`✅ Channel fetched successfully. Type: ${channel?.type}, isTextBased: ${channel && 'isTextBased' in channel ? (channel as any).isTextBased() : 'N/A'}`);
+          
           if (channel && channel.isTextBased() && 'send' in channel) {
-            await channel.send(`🤖 **Task Started**\n\`\`\`\n${args.task_description}\n\`\`\``);
+            logger.info(`📤 Sending task start message to channel...`);
+            const startMessage = `🤖 **Task Started**\n\`\`\`\n${args.task_description}\n\`\`\``;
+            await channel.send(startMessage);
+            logger.info(`✅ Task start message sent successfully!`);
+
+            // Save task start to database so voice agent can see it
+            this.db.saveMessage({
+              guildId,
+              channelId,
+              userId: this.client.user!.id,
+              username: 'TaskAgent',
+              message: startMessage,
+              messageType: 'agent_response',
+              timestamp: new Date()
+            });
+            logger.info('[DB] 🤖 Task start saved to conversation history');
+          } else {
+            logger.warn(`⚠️ Channel conditions not met - channel: ${!!channel}, isTextBased: ${channel && 'isTextBased' in channel ? (channel as any).isTextBased() : false}, hasSend: ${channel && 'send' in channel}`);
           }
         } catch (err) {
-          logger.error('Failed to send task start notification', err);
+          logger.error('❌ Failed to send task start notification:', err);
         }
 
         // IMPORTANT: Return immediate acknowledgment to voice so user doesn't wait in silence
@@ -1233,7 +1287,41 @@ ${statusEmoji} **Task Status**
               try {
                 const channel = await this.client.channels.fetch(channelId);
                 if (channel && channel.isTextBased() && 'send' in channel) {
-                  await channel.send(`✅ **Task Completed**\n${result.message || 'Task executed successfully'}`);
+                  const message = result.message || 'Task executed successfully';
+                  const fullMessage = `✅ **Task Completed**\n${message}`;
+                  
+                  // Discord has a 2000 character limit, chunk if needed
+                  if (fullMessage.length <= 2000) {
+                    await channel.send(fullMessage);
+                  } else {
+                    // Send header first
+                    await channel.send('✅ **Task Completed**');
+                    
+                    // Chunk the message into 1900 character pieces (leave room for code blocks)
+                    const chunks = [];
+                    for (let i = 0; i < message.length; i += 1900) {
+                      chunks.push(message.substring(i, i + 1900));
+                    }
+                    
+                    for (const chunk of chunks) {
+                      await channel.send(chunk);
+                    }
+                  }
+
+                  // CRITICAL: Save task result to database so voice agent can see it!
+                  this.db.saveMessage({
+                    guildId,
+                    channelId,
+                    userId: this.client.user!.id,
+                    username: 'TaskAgent',
+                    message: fullMessage.length <= 500 ? fullMessage : `✅ Task Completed\n${message.substring(0, 500)}... (truncated)`,
+                    messageType: 'agent_response',
+                    timestamp: new Date()
+                  });
+                  logger.info('[DB] ✅ Task result saved to conversation history');
+                  
+                  // VOICE UPDATE: Make voice agent speak the completion!
+                  this.speakTaskCompletion(guildId, channelId, userId, message, args.task_description);
                 }
               } catch (err) {
                 logger.error('Failed to send task completion notification', err);
@@ -1245,7 +1333,23 @@ ${statusEmoji} **Task Status**
               try {
                 const channel = await this.client.channels.fetch(channelId);
                 if (channel && channel.isTextBased() && 'send' in channel) {
-                  await channel.send(`❌ **Task Failed**\n${result.error || 'Task execution failed'}`);
+                  const failureMessage = `❌ **Task Failed**\n${result.error || 'Task execution failed'}`;
+                  await channel.send(failureMessage);
+                  
+                  // VOICE UPDATE: Announce failure
+                  this.speakTaskFailure(guildId, channelId, userId, result.error || 'Task execution failed');
+
+                  // Save failure to database so voice agent can see it
+                  this.db.saveMessage({
+                    guildId,
+                    channelId,
+                    userId: this.client.user!.id,
+                    username: 'TaskAgent',
+                    message: failureMessage,
+                    messageType: 'agent_response',
+                    timestamp: new Date()
+                  });
+                  logger.info('[DB] ❌ Task failure saved to conversation history');
                 }
               } catch (err) {
                 logger.error('Failed to send task failure notification', err);
@@ -1258,7 +1362,20 @@ ${statusEmoji} **Task Status**
             try {
               const channel = await this.client.channels.fetch(channelId);
               if (channel && channel.isTextBased() && 'send' in channel) {
-                await channel.send(`❌ **Error**\n${error instanceof Error ? error.message : 'Unknown error'}`);
+                const errorMessage = `❌ **Error**\n${error instanceof Error ? error.message : 'Unknown error'}`;
+                await channel.send(errorMessage);
+
+                // Save error to database so voice agent can see it
+                this.db.saveMessage({
+                  guildId,
+                  channelId,
+                  userId: this.client.user!.id,
+                  username: 'TaskAgent',
+                  message: errorMessage,
+                  messageType: 'agent_response',
+                  timestamp: new Date()
+                });
+                logger.info('[DB] ❌ Task error saved to conversation history');
               }
             } catch (err) {
               logger.error('Failed to send task error notification', err);
@@ -1391,8 +1508,116 @@ ${statusEmoji} **Task Status**
       }
     }
     this.realtimeReceivers.clear();
+    this.activeVoiceConnections.clear();
 
     await this.client.destroy();
     logger.info('Discord bot stopped');
+  }
+
+  /**
+   * Get the Discord client instance (for external services like market scheduler)
+   */
+  getClient(): Client {
+    return this.client;
+  }
+
+  /**
+   * Make voice agent speak task completion with insightful summary
+   */
+  private speakTaskCompletion(guildId: string, channelId: string, userId: string, taskResult: string, taskDescription: string): void {
+    const receiver = this.activeVoiceConnections.get(guildId);
+    if (!receiver) {
+      logger.warn(`No active voice connection for guild ${guildId} to announce task completion`);
+      return;
+    }
+
+    try {
+      // Extract key insights from task result
+      const summary = this.generateInsightfulSummary(taskResult, taskDescription);
+      
+      // Make voice agent speak the completion
+      receiver.sendText(summary);
+      logger.info(`🗣️ Voice agent announcing task completion: "${summary.substring(0, 100)}..."`);
+    } catch (error) {
+      logger.error('Failed to speak task completion:', error);
+    }
+  }
+
+  /**
+   * Make voice agent speak task failure
+   */
+  private speakTaskFailure(guildId: string, channelId: string, userId: string, errorMessage: string): void {
+    const receiver = this.activeVoiceConnections.get(guildId);
+    if (!receiver) {
+      logger.warn(`No active voice connection for guild ${guildId} to announce task failure`);
+      return;
+    }
+
+    try {
+      const announcement = `The task encountered an issue and couldn't be completed. ${errorMessage}`;
+      receiver.sendText(announcement);
+      logger.info(`🗣️ Voice agent announcing task failure`);
+    } catch (error) {
+      logger.error('Failed to speak task failure:', error);
+    }
+  }
+
+  /**
+   * Generate insightful summary from task result
+   */
+  private generateInsightfulSummary(taskResult: string, taskDescription: string): string {
+    // Extract key information from result
+    const lines = taskResult.split('\n');
+    
+    // Check for common patterns and create insightful summaries
+    
+    // Pattern 1: List items (boards, repos, services)
+    const listMatch = taskResult.match(/(\d+)\s+(boards?|repos?|repositories|services?|projects?|cards?|items?)/i);
+    if (listMatch) {
+      const count = listMatch[1];
+      const itemType = listMatch[2];
+      return `I found ${count} ${itemType}. The details are now visible in the Discord channel.`;
+    }
+    
+    // Pattern 2: Creation/completion
+    if (taskResult.toLowerCase().includes('created') || taskResult.toLowerCase().includes('added')) {
+      return `Task completed successfully. I've created what you requested. Check the Discord channel for the details.`;
+    }
+    
+    // Pattern 3: Updates/changes
+    if (taskResult.toLowerCase().includes('updated') || taskResult.toLowerCase().includes('modified')) {
+      return `Done! I've made the changes you requested. You can see the updated information in Discord.`;
+    }
+    
+    // Pattern 4: Search/retrieval results
+    if (taskResult.toLowerCase().includes('found') || taskResult.toLowerCase().includes('retrieved')) {
+      return `I've retrieved the information you asked for. Take a look at the Discord channel for the full details.`;
+    }
+    
+    // Pattern 5: Status checks
+    if (taskResult.toLowerCase().includes('status') || taskResult.toLowerCase().includes('running')) {
+      return `I've checked the status for you. The information is now in the Discord channel.`;
+    }
+    
+    // Pattern 6: Deployments
+    if (taskResult.toLowerCase().includes('deployed') || taskResult.toLowerCase().includes('deployment')) {
+      return `Deployment complete! The service is now live. Check Discord for the deployment details.`;
+    }
+    
+    // Generic fallback with first useful line
+    const meaningfulLines = lines.filter(line => 
+      line.trim().length > 20 && 
+      !line.includes('```') && 
+      !line.includes('**') &&
+      !line.toLowerCase().includes('task completed')
+    );
+    
+    if (meaningfulLines.length > 0) {
+      const firstLine = meaningfulLines[0].trim().substring(0, 150);
+      return `Task completed! ${firstLine}. See Discord for the full results.`;
+    }
+    
+    // Ultimate fallback
+    return `Your task is complete! I've posted all the details in the Discord channel.`;
   }
 }

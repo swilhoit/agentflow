@@ -64,6 +64,23 @@ export interface BotConfig {
   ttsSpeed?: number; // 0.25 to 4.0, default 1.0, higher is faster
   trelloApiKey?: string;
   trelloApiToken?: string;
+  // Market updates configuration
+  marketUpdatesEnabled?: boolean;
+  marketUpdatesGuildId?: string;
+  marketUpdatesDailyCron?: string;
+  marketUpdatesCloseCron?: string;
+  marketUpdatesNewsCron?: string;
+  marketUpdatesWeeklyCron?: string;
+  marketUpdatesTimezone?: string;
+  // News monitoring
+  finnhubApiKey?: string;
+  finnhubWebhookSecret?: string;
+  // Database configuration
+  databaseType?: 'sqlite' | 'cloudsql';
+  cloudSqlInstanceConnectionName?: string;
+  cloudSqlDatabase?: string;
+  cloudSqlUser?: string;
+  cloudSqlPassword?: string;
 }
 
 export interface TrelloTaskRequest {

@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "category": "company news",
+      "datetime": 1700251200,
+      "headline": "OKLO Announces Major Nuclear Reactor Partnership with Tech Giant",
+      "id": 999999999,
+      "related": "OKLO",
+      "source": "Reuters",
+      "summary": "Oklo Inc. has signed a groundbreaking partnership agreement with a major technology company to provide clean nuclear energy for AI data centers. The deal marks a significant milestone in the commercialization of small modular reactor technology.",
+      "url": "https://example.com/test-news"
+    }
+  ],
+  "event": "news"
+}
