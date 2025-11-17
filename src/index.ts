@@ -8,6 +8,7 @@ import { getDatabase } from './services/databaseFactory';
 import { TrelloService } from './services/trello';
 import { getCleanupManager } from './utils/cleanupManager';
 import { MarketUpdateScheduler, DEFAULT_SCHEDULE_CONFIG } from './services/marketUpdateScheduler';
+import { startCacheCleanup, globalCache } from './utils/smartCache';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -149,6 +150,10 @@ async function main() {
       orchestratorServer.setDiscordClient((bot as DiscordBotRealtime).getClient());
 
       logger.info('AgentFlow started successfully (Realtime API Mode)');
+
+      // Start cache cleanup system
+      startCacheCleanup(60000); // Clean every minute
+      logger.info('⚡ Smart cache system initialized (auto-cleanup every 60s)');
 
       // Initialize market update scheduler if enabled
       let marketScheduler: MarketUpdateScheduler | undefined;

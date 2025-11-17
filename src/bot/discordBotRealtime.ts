@@ -91,6 +91,21 @@ export class DiscordBotRealtime {
           if (channel && channel.isTextBased() && 'send' in channel) {
             await channel.send(message);
             logger.info(`Sent agent notification to channel ${channelId}`);
+            
+            // 🔥 CRITICAL FIX: Save task output to database so voice agent can see it!
+            // Get guild ID from channel
+            if ('guild' in channel && channel.guild) {
+              this.db.saveMessage({
+                guildId: channel.guild.id,
+                channelId: channelId,
+                userId: this.client.user!.id,
+                username: 'TaskAgent',
+                message: message,
+                messageType: 'agent_response',
+                timestamp: new Date()
+              });
+              logger.info('✅ Task output saved to database for voice agent access');
+            }
           }
         } catch (error) {
           logger.error(`Failed to send agent notification to channel ${channelId}`, error);

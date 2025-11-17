@@ -55,14 +55,14 @@ export class SmartIterationCalculator {
       };
     }
 
-    // 4. Check for analysis tasks (10-15 iterations)
+    // 4. Check for analysis tasks (8-12 iterations)
     if (this.isAnalysisTask(lowerDesc)) {
       return {
-        recommended: 12,
+        recommended: 10,
         min: 8,
-        max: 18,
-        reasoning: 'Analysis/review task',
-        confidence: 'medium'
+        max: 15,
+        reasoning: 'Analysis/information gathering task',
+        confidence: 'high'
       };
     }
 
@@ -115,20 +115,27 @@ export class SmartIterationCalculator {
   }
 
   /**
-   * Listing tasks: fetch and display data
+   * Listing tasks: fetch and display data (simple, no analysis)
    */
   private static isListingTask(desc: string): boolean {
+    // Simple listing keywords (just fetching and displaying)
     const listingKeywords = [
       'list', 'show', 'display', 'get', 'fetch',
       'view', 'see', 'find', 'search', 'retrieve',
-      'pull', 'tell me about', 'information about',
-      'details about', 'what', 'look at'
+      'pull', 'look at'
     ];
 
     const hasListingKeyword = listingKeywords.some(kw => desc.includes(kw));
     const hasMultipleSteps = desc.includes('and') || desc.includes('then');
 
-    return hasListingKeyword && !hasMultipleSteps;
+    // If it's "tell me about" or "information about", it's ANALYSIS not listing!
+    const isAnalysisQuery = desc.includes('tell me about') || 
+                           desc.includes('information about') ||
+                           desc.includes('details about') ||
+                           desc.includes('describe') ||
+                           desc.includes('explain');
+
+    return hasListingKeyword && !hasMultipleSteps && !isAnalysisQuery;
   }
 
   /**
@@ -145,12 +152,14 @@ export class SmartIterationCalculator {
   }
 
   /**
-   * Analysis tasks
+   * Analysis tasks (require gathering + analyzing data)
    */
   private static isAnalysisTask(desc: string): boolean {
     const keywords = [
       'analyze', 'review', 'examine', 'inspect',
-      'summarize', 'compare', 'evaluate', 'assess'
+      'summarize', 'compare', 'evaluate', 'assess',
+      'tell me about', 'information about', 'details about',
+      'describe', 'explain', 'what is', 'how does'
     ];
 
     return keywords.some(kw => desc.includes(kw));

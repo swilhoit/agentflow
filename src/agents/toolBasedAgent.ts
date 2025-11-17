@@ -5,6 +5,8 @@ import { logger } from '../utils/logger';
 import { TrelloService } from '../services/trello';
 import { TaskDecomposer, TaskAnalysis, SubTask } from '../utils/taskDecomposer';
 import { SmartIterationCalculator } from '../utils/smartIterationCalculator';
+import { globalCache, isCacheable, SmartCache, startCacheCleanup } from '../utils/smartCache';
+import { executeWithRetry, validateToolResult, compressResult, isRateLimited, getRetryAfter } from '../utils/resultValidator';
 
 const execAsync = promisify(exec);
 
@@ -323,56 +325,110 @@ export class ToolBasedAgent {
   }
 
   /**
-   * Execute a tool call
+   * Execute a tool call (with caching, retry, and validation)
    */
   private async executeTool(toolName: string, toolInput: any): Promise<any> {
     logger.info(`🔧 Executing tool: ${toolName}`);
 
-    try {
-      switch (toolName) {
-        case 'execute_bash':
-          return await this.executeBash(toolInput.command);
-
-        case 'trello_list_boards':
-          return await this.trelloListBoards();
-
-        case 'trello_get_board':
-          return await this.trelloGetBoard(toolInput.boardName);
-
-        case 'trello_create_list':
-          return await this.trelloCreateList(toolInput.boardName, toolInput.listName);
-
-        case 'trello_create_card':
-          return await this.trelloCreateCard(
-            toolInput.boardName,
-            toolInput.listName,
-            toolInput.cardName,
-            toolInput.description
-          );
-
-        case 'trello_list_cards':
-          return await this.trelloListCards(toolInput.boardName);
-
-        // Extended Trello operations - for now, suggest using execute_bash with curl
-        case 'trello_update_card':
-        case 'trello_get_lists':
-        case 'trello_search_cards':
-        case 'trello_add_comment':
-        case 'trello_archive_card':
-        case 'trello_add_checklist':
-          return {
-            success: false,
-            error: `Tool '${toolName}' not yet implemented. Use execute_bash with curl or Trello API for advanced operations.`,
-            suggestion: `Example: execute_bash("curl -X GET 'https://api.trello.com/1/boards/...')"}`
-          };
-
-        default:
-          throw new Error(`Unknown tool: ${toolName}`);
+    // OPTIMIZATION 1: Check cache first
+    const cacheability = isCacheable(toolName, toolInput);
+    if (cacheability.cacheable) {
+      const cacheKey = SmartCache.generateKey(toolName, toolInput);
+      const cached = globalCache.get(cacheKey);
+      
+      if (cached) {
+        logger.info(`⚡ CACHE HIT for ${toolName} - instant response!`);
+        return cached;
       }
+    }
+
+    // OPTIMIZATION 2: Execute with retry logic
+    try {
+      const result = await executeWithRetry(
+        async () => await this.executeToolInternal(toolName, toolInput),
+        { maxRetries: 2, retryDelay: 1000, backoffMultiplier: 2 },
+        `${toolName} call`
+      );
+
+      // OPTIMIZATION 3: Validate result
+      const validation = validateToolResult(result, toolName);
+      if (!validation.valid) {
+        logger.warn(`[Validator] Invalid result from ${toolName}: ${validation.error}`);
+      }
+
+      // OPTIMIZATION 4: Compress large results
+      const compressed = compressResult(result, 2000);
+
+      // OPTIMIZATION 5: Cache successful results
+      if (cacheability.cacheable && result.success) {
+        const cacheKey = SmartCache.generateKey(toolName, toolInput);
+        globalCache.set(cacheKey, compressed, cacheability.ttl);
+      }
+
+      // OPTIMIZATION 6: Handle rate limiting
+      if (isRateLimited(result)) {
+        const retryAfter = getRetryAfter(result);
+        if (retryAfter) {
+          logger.warn(`[Rate Limited] Waiting ${retryAfter}ms before retry`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter));
+        }
+      }
+
+      return compressed;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`Tool execution failed: ${toolName}`, error);
       return { error: errorMessage, success: false };
+    }
+  }
+
+  /**
+   * Internal tool execution (without caching/retry)
+   */
+  private async executeToolInternal(toolName: string, toolInput: any): Promise<any> {
+    switch (toolName) {
+      case 'execute_bash':
+        return await this.executeBash(toolInput.command);
+
+      case 'trello_list_boards':
+        return await this.trelloListBoards();
+
+      case 'trello_get_board':
+        return await this.trelloGetBoard(toolInput.boardName);
+
+      case 'trello_create_list':
+        // Invalidate cache on mutations
+        globalCache.invalidatePattern('trello_.*');
+        return await this.trelloCreateList(toolInput.boardName, toolInput.listName);
+
+      case 'trello_create_card':
+        // Invalidate cache on mutations
+        globalCache.invalidatePattern('trello_.*');
+        return await this.trelloCreateCard(
+          toolInput.boardName,
+          toolInput.listName,
+          toolInput.cardName,
+          toolInput.description
+        );
+
+      case 'trello_list_cards':
+        return await this.trelloListCards(toolInput.boardName);
+
+      // Extended Trello operations - for now, suggest using execute_bash with curl
+      case 'trello_update_card':
+      case 'trello_get_lists':
+      case 'trello_search_cards':
+      case 'trello_add_comment':
+      case 'trello_archive_card':
+      case 'trello_add_checklist':
+        return {
+          success: false,
+          error: `Tool '${toolName}' not yet implemented. Use execute_bash with curl or Trello API for advanced operations.`,
+          suggestion: `Example: execute_bash("curl -X GET 'https://api.trello.com/1/boards/...')"}`
+        };
+
+      default:
+        throw new Error(`Unknown tool: ${toolName}`);
     }
   }
 
@@ -739,6 +795,29 @@ export class ToolBasedAgent {
           content: response.content
         });
 
+        // OPTIMIZATION: Early completion detection
+        const textContent = response.content
+          .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
+          .map(block => block.text)
+          .join(' ')
+          .toLowerCase();
+
+        const completionPhrases = [
+          'task complete', 'task is complete', 'all done', 'finished successfully',
+          'task has been completed', 'successfully completed', 'work is complete',
+          'everything is done', 'task is now complete', 'completed successfully'
+        ];
+
+        const hasCompletionPhrase = completionPhrases.some(phrase => textContent.includes(phrase));
+        
+        // If task appears complete and we've made at least one tool call, stop early
+        if (hasCompletionPhrase && toolCalls > 0 && response.stop_reason !== 'tool_use') {
+          logger.info(`✅ Early completion detected at iteration ${iterations}/${maxIter} - stopping!`);
+          await this.notify(`✅ **Task Complete** (early stop at iteration ${iterations}/${maxIter})`);
+          continueLoop = false;
+          break;
+        }
+
         // Check if Claude wants to use tools
         if (response.stop_reason === 'tool_use') {
           const toolUses = response.content.filter(
@@ -747,30 +826,36 @@ export class ToolBasedAgent {
 
           logger.info(`🔧 Claude requested ${toolUses.length} tool call(s)`);
 
-          // Execute each tool
+          // OPTIMIZATION: Execute tools in parallel for speed
           const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
 
-          for (const toolUse of toolUses) {
-            toolCalls++;
-
-            await this.notify(
-              `🔧 **Tool Call ${toolCalls}**\n**Tool:** \`${toolUse.name}\`\n**Input:** \`\`\`json\n${JSON.stringify(toolUse.input, null, 2)}\n\`\`\``
+          // Fire all notifications at once (non-blocking)
+          toolUses.forEach((toolUse, index) => {
+            this.notify(
+              `🔧 **Tool Call ${toolCalls + index + 1}**\n**Tool:** \`${toolUse.name}\`\n**Input:** \`\`\`json\n${JSON.stringify(toolUse.input, null, 2)}\n\`\`\``
             );
+          });
 
+          // Execute all tools in parallel!
+          const toolExecutionPromises = toolUses.map(async (toolUse) => {
+            toolCalls++;
             const result = await this.executeTool(toolUse.name, toolUse.input);
-
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: toolUse.id,
-              content: JSON.stringify(result)
-            });
-
-            // Send result notification
+            
+            // Send result notification (non-blocking)
             const resultPreview = JSON.stringify(result).substring(0, 300);
-            await this.notify(
+            this.notify(
               `✅ **Tool Result**\n\`\`\`json\n${resultPreview}${JSON.stringify(result).length > 300 ? '...' : ''}\n\`\`\``
             );
-          }
+
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: toolUse.id,
+              content: JSON.stringify(result)
+            };
+          });
+
+          // Wait for all tools to complete
+          toolResults.push(...await Promise.all(toolExecutionPromises));
 
           // Send tool results back to Claude
           conversationHistory.push({
