@@ -47,72 +47,85 @@ export class AdvisorTools {
    */
   getToolDefinitions(): any[] {
     return [
+      // ===== CACHED DATABASE TOOLS (FAST - USE THESE FIRST!) =====
       {
-        name: 'get_accounts',
-        description: 'Get all connected bank accounts with current balances. Shows checking, savings, credit cards, and investment accounts.',
+        name: 'get_cached_transactions',
+        description: '⚡ FAST - Get recent transactions from local database. Use this for ANY transaction query - spending analysis, reviewing purchases, etc. Database is synced daily.',
         input_schema: {
           type: 'object',
-          properties: {},
+          properties: {
+            days: {
+              type: 'number',
+              description: 'Number of days to retrieve (default: 30, supports up to 365)'
+            }
+          },
           required: []
         }
       },
       {
-        name: 'get_account_details',
-        description: 'Get detailed information about a specific account including balance, transactions, and account metadata.',
+        name: 'get_spending_by_category',
+        description: '⚡ FAST - Get spending breakdown by category from database. Perfect for "how much did I spend on X" questions.',
         input_schema: {
           type: 'object',
           properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            }
-          },
-          required: ['account_id']
-        }
-      },
-      {
-        name: 'get_transactions',
-        description: 'Get recent transactions for an account. Useful for spending analysis, budget tracking, and finding specific purchases.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            },
-            count: {
-              type: 'number',
-              description: 'Number of transactions to retrieve (default: 30, max: 100)'
-            }
-          },
-          required: ['account_id']
-        }
-      },
-      {
-        name: 'analyze_spending',
-        description: 'Analyze spending patterns by category. Shows where money is going and identifies trends.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            },
             days: {
               type: 'number',
               description: 'Number of days to analyze (default: 30)'
             }
           },
-          required: ['account_id']
+          required: []
         }
       },
       {
-        name: 'get_balance_summary',
-        description: 'Get total balance across all accounts. Shows net worth, total assets, total liabilities.',
+        name: 'search_transactions',
+        description: '⚡ FAST - Search transactions by merchant name or description in cached database. Use this to find specific purchases.',
         input_schema: {
           type: 'object',
-          properties: {},
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search term (merchant name or description)'
+            },
+            days: {
+              type: 'number',
+              description: 'Number of days to search (default: 90)'
+            }
+          },
+          required: ['query']
+        }
+      },
+      {
+        name: 'get_transaction_history',
+        description: '⚡ FAST - Get full transaction history from database with all details. Use for comprehensive spending reviews.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            days: {
+              type: 'number',
+              description: 'Number of days of history (default: 90, supports up to 365)'
+            }
+          },
           required: []
+        }
+      },
+      
+      // ===== UTILITY TOOLS =====
+      {
+        name: 'savings_goal',
+        description: 'Calculate how to reach a savings goal. Provides timeline and monthly savings needed.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            goal_amount: {
+              type: 'number',
+              description: 'Target amount to save'
+            },
+            months: {
+              type: 'number',
+              description: 'Number of months to reach goal'
+            }
+          },
+          required: ['goal_amount', 'months']
         }
       },
       {
@@ -133,82 +146,74 @@ export class AdvisorTools {
           required: ['category', 'budget_amount']
         }
       },
+      
+      // ===== REAL-TIME API TOOLS (SLOW - Only use when cached data is insufficient) =====
       {
-        name: 'savings_goal',
-        description: 'Calculate how to reach a savings goal. Provides timeline and monthly savings needed.',
+        name: 'get_accounts',
+        description: '🐌 SLOW API CALL - Get real-time account balances. Only use if user explicitly asks for current balance or account status.',
         input_schema: {
           type: 'object',
-          properties: {
-            goal_amount: {
-              type: 'number',
-              description: 'Target amount to save'
-            },
-            months: {
-              type: 'number',
-              description: 'Number of months to reach goal'
-            }
-          },
-          required: ['goal_amount', 'months']
-        }
-      },
-      {
-        name: 'get_cached_transactions',
-        description: 'Get recent transactions from local database (FAST - use this first!). Much faster than API calls.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            days: {
-              type: 'number',
-              description: 'Number of days to retrieve (default: 30)'
-            }
-          },
+          properties: {},
           required: []
         }
       },
       {
-        name: 'search_transactions',
-        description: 'Search transactions by merchant name or description. Searches cached database.',
+        name: 'get_balance_summary',
+        description: '🐌 SLOW API CALL - Get real-time total balance across all accounts. Only use if user asks for current net worth.',
         input_schema: {
           type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'Search term (merchant name or description)'
-            },
-            days: {
-              type: 'number',
-              description: 'Number of days to search (default: 90)'
-            }
-          },
-          required: ['query']
+          properties: {},
+          required: []
         }
       },
       {
-        name: 'get_spending_by_category',
-        description: 'Get spending breakdown by category from database. Shows where money is going.',
+        name: 'get_account_details',
+        description: '🐌 SLOW API CALL - Get real-time account details. Rarely needed - cached transactions are usually sufficient.',
         input_schema: {
           type: 'object',
           properties: {
+            account_id: {
+              type: 'string',
+              description: 'The Teller account ID'
+            }
+          },
+          required: ['account_id']
+        }
+      },
+      {
+        name: 'get_transactions',
+        description: '🐌 SLOW API CALL - Get real-time transactions from API. DO NOT USE - use get_cached_transactions instead.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            account_id: {
+              type: 'string',
+              description: 'The Teller account ID'
+            },
+            count: {
+              type: 'number',
+              description: 'Number of transactions to retrieve (default: 30, max: 100)'
+            }
+          },
+          required: ['account_id']
+        }
+      },
+      {
+        name: 'analyze_spending',
+        description: '🐌 SLOW API CALL - Analyze spending via API. DO NOT USE - use get_spending_by_category instead.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            account_id: {
+              type: 'string',
+              description: 'The Teller account ID'
+            },
             days: {
               type: 'number',
               description: 'Number of days to analyze (default: 30)'
             }
           },
-          required: []
-        }
-      },
-      {
-        name: 'get_transaction_history',
-        description: 'Get full transaction history from database with all details.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            days: {
-              type: 'number',
-              description: 'Number of days of history (default: 90)'
-            }
-          },
-          required: []
+          required: ['account_id']
         }
       }
     ];
