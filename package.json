@@ -21,6 +21,7 @@
     "test:teller": "tsx scripts/test-teller-api.ts",
     "test:sync": "tsx scripts/test-transaction-sync.ts",
     "test:krabs": "tsx scripts/test-mr-krabs-db-access.ts",
+    "diagnose:krabs": "tsx scripts/diagnose-mr-krabs.ts",
     "logs": "tsx scripts/view-message-logs.ts",
     "logs:search": "tsx scripts/view-message-logs.ts search",
     "cleanup": "ts-node cleanup.ts cleanup",
