@@ -81,6 +81,12 @@ export interface BotConfig {
   cloudSqlDatabase?: string;
   cloudSqlUser?: string;
   cloudSqlPassword?: string;
+  // Global Markets Agent configuration
+  globalMarketsChannels?: string[];
+  // Financial Advisor configuration
+  financialAdvisorChannels?: string[];
+  // Orchestrator configuration
+  orchestratorChannels?: string[];
 }
 
 export interface TrelloTaskRequest {

@@ -52,6 +52,24 @@ export interface DailyGoal {
   metadata?: string; // JSON string for additional data
 }
 
+export interface FinancialTransaction {
+  id?: number;
+  transactionId: string;
+  accountId: string;
+  accountName?: string;
+  accountType?: string;
+  institution?: string;
+  date: string; // Format: YYYY-MM-DD
+  description: string;
+  amount: number;
+  type: string;
+  category?: string;
+  merchant?: string;
+  details?: string; // JSON string
+  syncedAt?: Date;
+  metadata?: string; // JSON string for additional data
+}
+
 export class DatabaseService {
   private db: Database.Database;
 
@@ -238,6 +256,37 @@ export class DatabaseService {
                    ON weekly_analysis(week_start DESC)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_analysis_type
                    ON weekly_analysis(analysis_type, week_start DESC)`);
+
+    // Create financial_transactions table for Teller API data
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS financial_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id TEXT UNIQUE NOT NULL,
+        account_id TEXT NOT NULL,
+        account_name TEXT,
+        account_type TEXT,
+        institution TEXT,
+        date TEXT NOT NULL,
+        description TEXT NOT NULL,
+        amount REAL NOT NULL,
+        type TEXT NOT NULL,
+        category TEXT,
+        merchant TEXT,
+        details TEXT,
+        synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT
+      )
+    `);
+
+    // Create indexes for financial_transactions
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_account_date
+                   ON financial_transactions(account_id, date DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_date
+                   ON financial_transactions(date DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_category
+                   ON financial_transactions(category, date DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_merchant
+                   ON financial_transactions(merchant, date DESC)`);
 
     logger.info('Database schema initialized');
   }
@@ -908,6 +957,216 @@ export class DatabaseService {
    */
   prepare(sql: string): Database.Statement {
     return this.db.prepare(sql);
+  }
+
+  /**
+   * Save a financial transaction (Teller API)
+   */
+  saveTransaction(transaction: FinancialTransaction): number {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO financial_transactions 
+      (transaction_id, account_id, account_name, account_type, institution, date, description, amount, type, category, merchant, details, synced_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      transaction.transactionId,
+      transaction.accountId,
+      transaction.accountName || null,
+      transaction.accountType || null,
+      transaction.institution || null,
+      transaction.date,
+      transaction.description,
+      transaction.amount,
+      transaction.type,
+      transaction.category || null,
+      transaction.merchant || null,
+      transaction.details || null,
+      transaction.syncedAt ? transaction.syncedAt.toISOString() : new Date().toISOString(),
+      transaction.metadata || null
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Save multiple transactions in a batch
+   */
+  saveTransactionsBatch(transactions: FinancialTransaction[]): number {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO financial_transactions 
+      (transaction_id, account_id, account_name, account_type, institution, date, description, amount, type, category, merchant, details, synced_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertMany = this.db.transaction((txns: FinancialTransaction[]) => {
+      for (const transaction of txns) {
+        stmt.run(
+          transaction.transactionId,
+          transaction.accountId,
+          transaction.accountName || null,
+          transaction.accountType || null,
+          transaction.institution || null,
+          transaction.date,
+          transaction.description,
+          transaction.amount,
+          transaction.type,
+          transaction.category || null,
+          transaction.merchant || null,
+          transaction.details || null,
+          transaction.syncedAt ? transaction.syncedAt.toISOString() : new Date().toISOString(),
+          transaction.metadata || null
+        );
+      }
+    });
+
+    insertMany(transactions);
+    return transactions.length;
+  }
+
+  /**
+   * Get transactions for a specific account
+   */
+  getTransactionsByAccount(accountId: string, limit: number = 100): FinancialTransaction[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM financial_transactions
+      WHERE account_id = ?
+      ORDER BY date DESC, id DESC
+      LIMIT ?
+    `);
+
+    return stmt.all(accountId, limit) as FinancialTransaction[];
+  }
+
+  /**
+   * Get transactions within a date range
+   */
+  getTransactionsByDateRange(startDate: string, endDate: string, accountId?: string): FinancialTransaction[] {
+    const stmt = accountId
+      ? this.db.prepare(`
+          SELECT * FROM financial_transactions
+          WHERE date BETWEEN ? AND ? AND account_id = ?
+          ORDER BY date DESC, id DESC
+        `)
+      : this.db.prepare(`
+          SELECT * FROM financial_transactions
+          WHERE date BETWEEN ? AND ?
+          ORDER BY date DESC, id DESC
+        `);
+
+    return accountId 
+      ? (stmt.all(startDate, endDate, accountId) as FinancialTransaction[])
+      : (stmt.all(startDate, endDate) as FinancialTransaction[]);
+  }
+
+  /**
+   * Get transactions by category
+   */
+  getTransactionsByCategory(category: string, days: number = 30): FinancialTransaction[] {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const startDate = cutoffDate.toISOString().split('T')[0];
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM financial_transactions
+      WHERE category = ? AND date >= ?
+      ORDER BY date DESC, id DESC
+    `);
+
+    return stmt.all(category, startDate) as FinancialTransaction[];
+  }
+
+  /**
+   * Get all unique categories
+   */
+  getTransactionCategories(): string[] {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT category
+      FROM financial_transactions
+      WHERE category IS NOT NULL
+      ORDER BY category
+    `);
+
+    return stmt.all().map((row: any) => row.category);
+  }
+
+  /**
+   * Get spending summary by category for a date range
+   */
+  getSpendingSummary(startDate: string, endDate: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT 
+        category,
+        COUNT(*) as transaction_count,
+        SUM(ABS(amount)) as total_spent,
+        AVG(ABS(amount)) as avg_amount
+      FROM financial_transactions
+      WHERE date BETWEEN ? AND ? AND amount < 0
+      GROUP BY category
+      ORDER BY total_spent DESC
+    `);
+
+    return stmt.all(startDate, endDate);
+  }
+
+  /**
+   * Get total balance from all transactions
+   */
+  getTransactionBalance(accountId?: string): number {
+    const stmt = accountId
+      ? this.db.prepare(`SELECT SUM(amount) as balance FROM financial_transactions WHERE account_id = ?`)
+      : this.db.prepare(`SELECT SUM(amount) as balance FROM financial_transactions`);
+
+    const result: any = accountId ? stmt.get(accountId) : stmt.get();
+    return result?.balance || 0;
+  }
+
+  /**
+   * Get recent transactions (last N days)
+   */
+  getRecentTransactions(days: number = 30, limit: number = 100): FinancialTransaction[] {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const startDate = cutoffDate.toISOString().split('T')[0];
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM financial_transactions
+      WHERE date >= ?
+      ORDER BY date DESC, id DESC
+      LIMIT ?
+    `);
+
+    return stmt.all(startDate, limit) as FinancialTransaction[];
+  }
+
+  /**
+   * Get last sync time for transactions
+   */
+  getLastTransactionSync(): Date | null {
+    const stmt = this.db.prepare(`
+      SELECT MAX(synced_at) as last_sync
+      FROM financial_transactions
+    `);
+
+    const result: any = stmt.get();
+    return result?.last_sync ? new Date(result.last_sync) : null;
+  }
+
+  /**
+   * Delete old transactions (for cleanup)
+   */
+  deleteOldTransactions(daysToKeep: number = 365): number {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+    const stmt = this.db.prepare(`
+      DELETE FROM financial_transactions
+      WHERE date < ?
+    `);
+
+    const result = stmt.run(cutoffDateStr);
+    return result.changes;
   }
 
   close(): void {

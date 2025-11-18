@@ -151,3 +151,4 @@ However, `libsodium-wrappers` should work fine for most use cases and is easier 
 
 The enhanced logging will now provide much better diagnostic information if connection issues occur again.
 
+

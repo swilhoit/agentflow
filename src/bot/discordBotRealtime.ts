@@ -2,7 +2,8 @@ import {
   Client,
   GatewayIntentBits,
   VoiceState,
-  Message
+  Message,
+  ActivityType
 } from 'discord.js';
 import {
   joinVoiceChannel,
@@ -79,6 +80,12 @@ export class DiscordBotRealtime {
       config.systemNotificationChannelId
     );
 
+    // NOTE: Global Markets Agent (Atlas) is now a separate bot process
+    // Main bot ignores messages in Atlas's channels (configured via GLOBAL_MARKETS_CHANNELS)
+    if (config.globalMarketsChannels && config.globalMarketsChannels.length > 0) {
+      logger.info(`📝 Main bot will ignore ${config.globalMarketsChannels.length} Atlas-monitored channels`);
+    }
+
     this.setupEventHandlers();
   }
 
@@ -118,8 +125,28 @@ export class DiscordBotRealtime {
   }
 
   private setupEventHandlers(): void {
-    this.client.on('ready', () => {
+    this.client.on('ready', async () => {
       logger.info(`Bot logged in as ${this.client.user?.tag} (ElevenLabs Conversational AI Mode)`);
+      
+      // Set bot status
+      this.client.user?.setPresence({
+        activities: [{ name: '🤖 agent man • AI Assistant', type: ActivityType.Playing }],
+        status: 'online'
+      });
+
+      // Try to set nickname in all guilds
+      for (const [, guild] of this.client.guilds.cache) {
+        try {
+          const me = await guild.members.fetchMe();
+          if (me.nickname !== 'agent man') {
+            await me.setNickname('agent man');
+            logger.info(`✅ Set nickname to "agent man" in guild: ${guild.name}`);
+          }
+        } catch (error) {
+          logger.warn(`⚠️  Could not set nickname in ${guild.name}:`, error);
+        }
+      }
+
       // Setup notifications after client is ready
       this.setupSubAgentNotifications();
     });
@@ -127,6 +154,31 @@ export class DiscordBotRealtime {
     this.client.on('messageCreate', async (message: Message) => {
       logger.info(`Message received: "${message.content}" from ${message.author.tag}`);
       if (message.author.bot) return;
+
+      // Check if bot is mentioned or tagged with keywords
+      const isMentioned = message.mentions.has(this.client.user!.id);
+      const content = message.content.toLowerCase();
+      const isTagged = content.startsWith('orchestrator') || 
+                       content.startsWith('@orchestrator') ||
+                       content.startsWith('!orchestrator') ||
+                       content.includes('<@orchestrator>');
+
+      // If mentioned/tagged, respond regardless of channel
+      if (isMentioned || isTagged) {
+        logger.info(`✨ Orchestrator was mentioned/tagged - responding in channel ${message.channelId}`);
+        // Continue to handle the message below
+      } 
+      // IMPORTANT: Ignore messages in Atlas's channels (unless mentioned)
+      // Atlas (market intelligence bot) handles all market discussions
+      else if (this.config.globalMarketsChannels && this.config.globalMarketsChannels.includes(message.channelId)) {
+        logger.info(`⏭️  Ignoring message in Atlas channel ${message.channelId}`);
+        return;
+      }
+      // Also ignore messages in Financial Advisor channels (unless mentioned)
+      else if (this.config.financialAdvisorChannels && this.config.financialAdvisorChannels.includes(message.channelId)) {
+        logger.info(`⏭️  Ignoring message in Financial Advisor channel ${message.channelId}`);
+        return;
+      }
 
       // Check if user is authorized
       logger.info(`Checking auth: allowedUserIds.length=${this.config.allowedUserIds.length}, userId=${message.author.id}`);
@@ -178,7 +230,15 @@ export class DiscordBotRealtime {
         await this.handleHelpCommand(message);
       } else if (!message.content.startsWith('!')) {
         // Handle general text messages (not commands)
-        await this.handleTextMessage(message);
+        // But ONLY if bot is tagged/mentioned OR message is in orchestrator's channels
+        const shouldRespond = isMentioned || isTagged || 
+          (this.config.orchestratorChannels && this.config.orchestratorChannels.includes(message.channelId));
+        
+        if (shouldRespond) {
+          await this.handleTextMessage(message);
+        } else {
+          logger.info(`⏭️  Orchestrator ignoring message in non-monitored channel ${message.channelId} (not tagged)`);
+        }
       }
     });
 

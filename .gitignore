@@ -9,6 +9,11 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Teller API Certificates (sensitive)
+teller_certificates/*.pem
+*.pem
+!teller_certificates/README.md
+
 # Build output
 dist/
 build/
@@ -69,3 +74,8 @@ recordings/
 coverage/
 .nyc_output/
 github-actions-key.json
+
+# Documentation with sensitive examples
+advisor-env.yaml
+ATLAS_BOT_SETUP.md
+FINANCIAL_ADVISOR_SETUP.md

@@ -289,18 +289,10 @@ export class TickerMonitor {
   }
 
   /**
-   * Generate daily summary embed
+   * Generate daily summary embed (mobile-friendly format)
    */
   generateDailySummaryEmbed(categoryData: Map<string, Map<string, TickerData>>): EmbedBuilder[] {
     const embeds: EmbedBuilder[] = [];
-
-    // Main summary embed
-    const mainEmbed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle('📈 AI Manhattan Project + China/ROW Daily Market Update')
-      .setDescription('Tracking the energy revolution powering AI × global competition')
-      .setTimestamp()
-      .setFooter({ text: 'Data from Yahoo Finance' });
 
     // Calculate overall portfolio stats
     let totalTickers = 0;
@@ -316,48 +308,43 @@ export class TickerMonitor {
       allTickerData.push(...tickerArray);
     }
 
-    mainEmbed.addFields({
-      name: '📊 Portfolio Overview',
-      value: `**Total Tickers:** ${totalTickers}\n**Gainers:** 🟢 ${gainers}\n**Losers:** 🔴 ${losers}\n**Neutral:** ⚪ ${totalTickers - gainers - losers}`,
-      inline: false
-    });
+    // Main summary embed - simplified for mobile
+    const mainEmbed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle('📈 AI Manhattan Project Daily Update')
+      .setDescription('Energy revolution powering AI × global competition')
+      .setTimestamp()
+      .setFooter({ text: 'Yahoo Finance • Swipe for details' });
 
-    // Add color-coding legend
     mainEmbed.addFields({
-      name: '🎨 Color Guide',
-      value: '**Daily:** 🟩 >+5% | 🟢 +2-5% | 🔵 0-2% | 🟡 0 to -2% | 🟠 -2 to -5% | 🔴 <-5%\n**Historical:** 🟩 >+20% | 🟢 +10-20% | 🔵 0-10% | 🟡 0 to -10% | 🟠 -10 to -20% | 🔴 <-20%',
+      name: '📊 Overview',
+      value: `🟢 ${gainers} Up • 🔴 ${losers} Down • ⚪ ${totalTickers - gainers - losers} Flat`,
       inline: false
     });
 
     embeds.push(mainEmbed);
 
-    // Top movers embed
+    // Top movers embed - cleaner mobile format
     const allData = new Map(allTickerData.map(t => [t.symbol, t]));
-    const { gainers: topGainers, losers: topLosers } = this.getTopMovers(allData, 5);
+    const { gainers: topGainers, losers: topLosers } = this.getTopMovers(allData, 3);
 
     const moversEmbed = new EmbedBuilder()
       .setColor(Colors.Gold)
-      .setTitle('🎯 Top Movers Today')
+      .setTitle('🎯 Top Movers')
       .setTimestamp();
 
     if (topGainers.length > 0) {
       const gainersText = topGainers
-        .map(t => {
-          const marker = t.changePercent >= 5 ? '🟩' : '🟢';
-          return `${marker} **${t.symbol}**: $${t.price.toFixed(2)} (+${t.changePercent.toFixed(2)}%)`;
-        })
+        .map(t => `**${t.symbol}** $${t.price.toFixed(2)} ⬆ ${t.changePercent.toFixed(1)}%`)
         .join('\n');
-      moversEmbed.addFields({ name: '🟢 Top Gainers', value: gainersText, inline: false });
+      moversEmbed.addFields({ name: '🟢 Gainers', value: gainersText, inline: true });
     }
 
     if (topLosers.length > 0) {
       const losersText = topLosers
-        .map(t => {
-          const marker = t.changePercent <= -5 ? '🔴' : '🟠';
-          return `${marker} **${t.symbol}**: $${t.price.toFixed(2)} (${t.changePercent.toFixed(2)}%)`;
-        })
+        .map(t => `**${t.symbol}** $${t.price.toFixed(2)} ⬇ ${Math.abs(t.changePercent).toFixed(1)}%`)
         .join('\n');
-      moversEmbed.addFields({ name: '🔴 Top Losers', value: losersText, inline: false });
+      moversEmbed.addFields({ name: '🔴 Losers', value: losersText, inline: true });
     }
 
     embeds.push(moversEmbed);

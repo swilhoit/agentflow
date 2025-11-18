@@ -6,9 +6,23 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
+    "atlas": "ts-node src/atlas/index.ts",
+    "atlas:build": "tsc && node dist/atlas/index.js",
+    "atlas:dev": "nodemon --watch src/atlas --ext ts --exec ts-node src/atlas/index.ts",
+    "advisor": "ts-node src/advisor/index.ts",
+    "advisor:build": "tsc && node dist/advisor/index.js",
+    "advisor:dev": "nodemon --watch src/advisor --ext ts --exec ts-node src/advisor/index.ts",
+    "start:all": "./start-all-bots.sh",
+    "start:all:dev": "concurrently \"npm run dev\" \"npm run atlas:dev\"",
+    "start:all:three": "concurrently \"npm run dev\" \"npm run atlas:dev\" \"npm run advisor:dev\"",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "test:teller": "tsx scripts/test-teller-api.ts",
+    "test:sync": "tsx scripts/test-transaction-sync.ts",
+    "test:krabs": "tsx scripts/test-mr-krabs-db-access.ts",
+    "logs": "tsx scripts/view-message-logs.ts",
+    "logs:search": "tsx scripts/view-message-logs.ts search",
     "cleanup": "ts-node cleanup.ts cleanup",
     "cleanup:status": "ts-node cleanup.ts status",
     "cleanup:emergency": "ts-node cleanup.ts emergency"
@@ -48,6 +62,7 @@
   "devDependencies": {
     "@types/pg": "^8.15.6",
     "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
     "nodemon": "^3.1.11"
   }
 }

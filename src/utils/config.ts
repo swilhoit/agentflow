@@ -56,7 +56,13 @@ export function loadConfig(): BotConfig {
     cloudSqlInstanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,
     cloudSqlDatabase: process.env.CLOUDSQL_DATABASE,
     cloudSqlUser: process.env.CLOUDSQL_USER,
-    cloudSqlPassword: process.env.CLOUDSQL_PASSWORD
+    cloudSqlPassword: process.env.CLOUDSQL_PASSWORD,
+    // Global Markets Agent configuration
+    globalMarketsChannels: process.env.GLOBAL_MARKETS_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
+    // Financial Advisor configuration
+    financialAdvisorChannels: process.env.FINANCIAL_ADVISOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
+    // Orchestrator configuration
+    orchestratorChannels: process.env.ORCHESTRATOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || []
   };
 }
 
