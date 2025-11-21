@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { logger } from './logger';
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import * as path from 'path';
 
 export class WhisperService {
@@ -12,8 +13,14 @@ export class WhisperService {
     this.tempDir = path.join(process.cwd(), 'temp');
 
     // Ensure temp directory exists
-    if (!fs.existsSync(this.tempDir)) {
-      fs.mkdirSync(this.tempDir, { recursive: true });
+    this.ensureTempDir();
+  }
+
+  private async ensureTempDir() {
+    try {
+      await fs.mkdir(this.tempDir, { recursive: true });
+    } catch (error) {
+      logger.error('Failed to create temp directory', error);
     }
   }
 
@@ -21,7 +28,8 @@ export class WhisperService {
     try {
       logger.info(`Transcribing audio file: ${audioPath}`);
 
-      const file = fs.createReadStream(audioPath);
+      // Use fs.createReadStream (from 'fs', not 'fs/promises') for OpenAI API compatibility
+      const file = createReadStream(audioPath);
 
       const transcription = await this.client.audio.transcriptions.create({
         file: file,
@@ -42,35 +50,43 @@ export class WhisperService {
     const tempPath = path.join(this.tempDir, `${Date.now()}_${filename}`);
 
     try {
-      // Write buffer to temporary file
-      fs.writeFileSync(tempPath, buffer);
+      // Write buffer to temporary file asynchronously
+      await fs.writeFile(tempPath, buffer);
 
       const result = await this.transcribeAudio(tempPath);
 
       return result;
     } finally {
-      // Clean up temporary file
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
+      // Clean up temporary file asynchronously
+      try {
+        await fs.unlink(tempPath);
+      } catch (e) {
+        // Ignore errors if file doesn't exist or can't be deleted
       }
     }
   }
 
-  cleanupTempFiles(): void {
+  async cleanupTempFiles(): Promise<void> {
     try {
-      const files = fs.readdirSync(this.tempDir);
+      const files = await fs.readdir(this.tempDir);
       const now = Date.now();
       const maxAge = 3600000; // 1 hour
 
-      for (const file of files) {
-        const filePath = path.join(this.tempDir, file);
-        const stats = fs.statSync(filePath);
+      // Process cleanup in parallel
+      await Promise.all(files.map(async (file) => {
+        try {
+          const filePath = path.join(this.tempDir, file);
+          const stats = await fs.stat(filePath);
 
-        if (now - stats.mtimeMs > maxAge) {
-          fs.unlinkSync(filePath);
-          logger.debug(`Cleaned up old temp file: ${file}`);
+          if (now - stats.mtimeMs > maxAge) {
+            await fs.unlink(filePath);
+            logger.debug(`Cleaned up old temp file: ${file}`);
+          }
+        } catch (err) {
+          // Ignore errors for individual files
+          logger.warn(`Failed to cleanup individual file: ${file}`, err);
         }
-      }
+      }));
     } catch (error) {
       logger.error('Failed to cleanup temp files', error);
     }

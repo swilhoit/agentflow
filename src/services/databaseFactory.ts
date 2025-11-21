@@ -55,6 +55,10 @@ export interface IDatabase {
   getMarketNewsByDateRange(startDate: string, endDate: string): Promise<any[]> | any[];
   getLatestWeeklyAnalysis(analysisType?: 'thesis' | 'performance' | 'news'): Promise<any | null> | any | null;
 
+  // Task management methods
+  getAllActiveAgentTasks(): any[];
+  getFailedTasks(hours: number): any[];
+
   // Lifecycle methods
   close(): Promise<void> | void;
 }
@@ -92,6 +96,14 @@ class SQLiteDatabaseWrapper implements IDatabase {
   async getLatestWeeklyAnalysis(analysisType?: 'thesis' | 'performance' | 'news'): Promise<any | null> {
     const result = this.db.getLatestWeeklyAnalysis(analysisType);
     return result !== null ? result : null;
+  }
+
+  getAllActiveAgentTasks(): any[] {
+    return this.db.getAllActiveAgentTasks();
+  }
+
+  getFailedTasks(hours: number): any[] {
+    return this.db.getFailedTasks(hours);
   }
 
   async close(): Promise<void> {

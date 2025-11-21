@@ -87,6 +87,10 @@ export interface BotConfig {
   financialAdvisorChannels?: string[];
   // Orchestrator configuration
   orchestratorChannels?: string[];
+  // Trello configuration
+  trelloBoardId?: string;
+  trelloInboxListId?: string;
+  trelloDoneListId?: string;
 }
 
 export interface TrelloTaskRequest {

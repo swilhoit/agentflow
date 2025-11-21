@@ -17,11 +17,17 @@
     "start:all:three": "concurrently \"npm run dev\" \"npm run atlas:dev\" \"npm run advisor:dev\"",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "test:teller": "tsx scripts/test-teller-api.ts",
+    "test:teller:curl": "./scripts/test-teller-curl.sh",
     "test:sync": "tsx scripts/test-transaction-sync.ts",
+    "sync:transactions": "tsx scripts/sync-all-transactions.ts",
+    "sync:all": "tsx scripts/sync-all-accounts.ts",
     "test:krabs": "tsx scripts/test-mr-krabs-db-access.ts",
     "diagnose:krabs": "tsx scripts/diagnose-mr-krabs.ts",
+    "setup:truist": "tsx scripts/setup-truist-connection.ts",
+    "connect:truist": "node serve-truist.js",
     "logs": "tsx scripts/view-message-logs.ts",
     "logs:search": "tsx scripts/view-message-logs.ts search",
     "cleanup": "ts-node cleanup.ts cleanup",
@@ -49,6 +55,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "finnhub": "^2.0.11",
+    "googleapis": "^166.0.0",
     "groq-sdk": "^0.35.0",
     "libsodium-wrappers": "^0.7.15",
     "node-cron": "^4.2.1",
@@ -58,12 +65,17 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "ws": "^8.18.3",
-    "yahoo-finance2": "^3.10.1"
+    "yahoo-finance2": "^3.10.1",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/pg": "^8.15.6",
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
-    "nodemon": "^3.1.11"
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.11",
+    "ts-jest": "^29.4.5",
+    "tsx": "^4.20.6"
   }
 }

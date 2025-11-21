@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Truist to Teller</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .status {
+            background: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        
+        .status h3 {
+            color: #0369a1;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        
+        .status ul {
+            list-style: none;
+            color: #0c4a6e;
+        }
+        
+        .status li {
+            margin: 5px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+        
+        .status li::before {
+            content: "✅";
+            position: absolute;
+            left: 0;
+        }
+        
+        .status li.missing::before {
+            content: "❌";
+        }
+        
+        .button-container {
+            margin: 30px 0;
+        }
+        
+        .connect-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 18px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .connect-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        .connect-button:active {
+            transform: translateY(0);
+        }
+        
+        .instructions {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .instructions h3 {
+            color: #92400e;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .instructions ol {
+            color: #78350f;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 8px 0;
+        }
+        
+        .instructions strong {
+            color: #92400e;
+        }
+        
+        .info {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #4b5563;
+        }
+        
+        .success {
+            background: #d1fae5;
+            border-left: 4px solid #10b981;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .success h3 {
+            color: #065f46;
+            margin-bottom: 8px;
+        }
+        
+        .success p {
+            color: #047857;
+        }
+        
+        code {
+            background: #1f2937;
+            color: #10b981;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏦 Add Truist to Teller</h1>
+        <p class="subtitle">Connect your Truist bank account securely</p>
+        
+        <div class="status">
+            <h3>📊 Current Status</h3>
+            <ul>
+                <li>5 American Express accounts connected</li>
+                <li class="missing">0 Truist accounts connected</li>
+            </ul>
+        </div>
+        
+        <div class="button-container">
+            <button class="connect-button" onclick="openTellerConnect()">
+                🔗 Connect Truist Account
+            </button>
+        </div>
+        
+        <div class="instructions">
+            <h3>📝 What Will Happen:</h3>
+            <ol>
+                <li>Click the <strong>"Connect Truist Account"</strong> button above</li>
+                <li>A secure Teller Connect window will open</li>
+                <li>Search for <strong>"Truist"</strong> in the institution list</li>
+                <li>Enter your Truist online banking credentials</li>
+                <li>Complete any 2FA/security verification</li>
+                <li>Select which accounts to share</li>
+                <li>Done! Your account will be connected</li>
+            </ol>
+        </div>
+        
+        <div class="success" id="successMessage">
+            <h3>✅ Success!</h3>
+            <p>Your Truist account has been connected. Run <code>npm run test:teller</code> to verify.</p>
+        </div>
+        
+        <div class="info">
+            <strong>🔒 Security Note:</strong> Your Truist credentials are handled securely by Teller and never stored in your application. Teller uses bank-grade encryption and security.
+        </div>
+    </div>
+    
+    <script>
+        // Teller Connect Configuration
+        // Note: You'll need your Teller application ID here
+        
+        function openTellerConnect() {
+            // Check if Teller Connect SDK is loaded
+            if (typeof TellerConnect === 'undefined') {
+                alert('⚠️ Teller Connect SDK not loaded. See instructions below to set up properly.');
+                showSDKInstructions();
+                return;
+            }
+            
+            // Initialize Teller Connect
+            const tellerConnect = TellerConnect.setup({
+                applicationId: 'YOUR_APPLICATION_ID', // Replace with your actual application ID
+                onSuccess: function(enrollment) {
+                    console.log('✅ Successfully connected bank account!');
+                    console.log('Enrollment:', enrollment);
+                    
+                    // Show success message
+                    document.getElementById('successMessage').style.display = 'block';
+                    
+                    // Show access token info
+                    alert('✅ Account connected successfully!\n\nAccess Token: ' + enrollment.accessToken + '\n\nRun "npm run test:teller" to see your new Truist accounts!');
+                },
+                onExit: function() {
+                    console.log('User closed Teller Connect');
+                },
+                onFailure: function(error) {
+                    console.error('❌ Teller Connect error:', error);
+                    alert('Error connecting account: ' + error.message);
+                }
+            });
+            
+            // Open Teller Connect
+            tellerConnect.open();
+        }
+        
+        function showSDKInstructions() {
+            const instructions = `
+To use this page properly, you need to:
+
+1. Get your Teller Application ID from https://teller.io
+
+2. Add the Teller Connect SDK to this HTML file:
+   <script src="https://cdn.teller.io/connect/connect.js"></script>
+
+3. Replace 'YOUR_APPLICATION_ID' in the code with your actual ID
+
+Alternative: Use Teller's sandbox/testing interface at https://teller.io
+
+Or contact Teller support at support@teller.io for help setting up account connections.
+            `;
+            
+            console.log(instructions);
+            
+            // Show in alert
+            alert('⚠️ Setup Required:\n\n' + instructions);
+        }
+        
+        // Show a helpful message on load
+        window.addEventListener('load', function() {
+            console.log('🏦 Teller Connect Page Loaded');
+            console.log('Click the button to connect your Truist account');
+            console.log('Note: You may need to configure your Teller Application ID first');
+        });
+    </script>
+    
+    <!-- 
+    TO USE THIS PAGE:
+    1. Uncomment the line below and add your Teller Application ID to the script
+    2. Open this HTML file in a browser
+    3. Click the "Connect Truist Account" button
+    
+    <script src="https://cdn.teller.io/connect/connect.js"></script>
+    -->
+</body>
+</html>
+

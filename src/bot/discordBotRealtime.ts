@@ -277,6 +277,9 @@ export class DiscordBotRealtime {
 
 **Agent Management:**
 \`!agents\` / \`!tasks\` - List all tasks across all channels (default)
+\`!tasks failed\` - Show all failed tasks with details
+\`!tasks running\` - Show all running tasks
+\`!tasks completed\` - Show all completed tasks
 \`!agents --current\` - List tasks in current channel only
 \`!task-status <taskId>\` - Get detailed status of a specific task
 \`!cancel-task <taskId>\` - Cancel a running task
@@ -305,8 +308,11 @@ You can have multiple agents working on different tasks across different channel
     }
 
     try {
-      // Show all tasks by default, use --current to filter to current channel only
+      // Parse command options
       const showCurrentOnly = message.content.includes('--current') || message.content.includes('-c');
+      const showFailedOnly = message.content.includes('failed');
+      const showRunningOnly = message.content.includes('running');
+      const showCompletedOnly = message.content.includes('completed');
 
       const response = await fetch(`${this.orchestratorUrl}/tasks?${showCurrentOnly ? `channelId=${message.channel.id}` : ''}`, {
         method: 'GET',
@@ -328,6 +334,68 @@ You can have multiple agents working on different tasks across different channel
       const failed = data.tasks.filter((t: any) => t.status === 'failed');
       const pending = data.tasks.filter((t: any) => t.status === 'pending');
 
+      // Handle specific status filters
+      if (showFailedOnly) {
+        if (failed.length === 0) {
+          await message.reply('✅ No failed tasks found!');
+          return;
+        }
+        
+        let taskList = `**❌ Failed Tasks (${failed.length})**\n\n`;
+        failed.forEach((t: any) => {
+          const failedAt = new Date(t.updatedAt).toLocaleString();
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\`${channel}\n`;
+          taskList += `  📝 ${t.description}\n`;
+          taskList += `  ⏰ Failed: ${failedAt}\n`;
+          if (t.error) {
+            const errorPreview = t.error.substring(0, 100);
+            taskList += `  ⚠️ Error: ${errorPreview}${t.error.length > 100 ? '...' : ''}\n`;
+          }
+          taskList += '\n';
+        });
+        taskList += `\n_Use \`!task-status <taskId>\` for full details_`;
+        await message.reply(taskList);
+        return;
+      }
+
+      if (showRunningOnly) {
+        if (running.length === 0) {
+          await message.reply('No tasks currently running.');
+          return;
+        }
+        
+        let taskList = `**🏃 Running Tasks (${running.length})**\n\n`;
+        running.forEach((t: any) => {
+          const duration = Math.floor((Date.now() - new Date(t.startedAt).getTime()) / 1000);
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description}${channel}\n`;
+          taskList += `  ⏱️ Running for ${duration}s\n\n`;
+        });
+        await message.reply(taskList);
+        return;
+      }
+
+      if (showCompletedOnly) {
+        if (completed.length === 0) {
+          await message.reply('No completed tasks found.');
+          return;
+        }
+        
+        let taskList = `**✅ Completed Tasks (${completed.length})**\n\n`;
+        completed.slice(0, 10).forEach((t: any) => {
+          const duration = t.duration ? `${(t.duration / 1000).toFixed(1)}s` : 'N/A';
+          const channel = showCurrentOnly ? '' : ` [<#${t.channelId}>]`;
+          taskList += `• \`${t.taskId}\` - ${t.description.substring(0, 60)}...${channel} (${duration})\n`;
+        });
+        if (completed.length > 10) {
+          taskList += `\n_...and ${completed.length - 10} more_`;
+        }
+        await message.reply(taskList);
+        return;
+      }
+
+      // Default: show all tasks summary
       let taskList = `**${showCurrentOnly ? 'Tasks in This Channel' : 'All Tasks (All Channels)'}**\n\n`;
       taskList += `**Stats:** ${data.stats.running} running, ${data.stats.completed} completed, ${data.stats.failed} failed\n\n`;
 
@@ -373,6 +441,7 @@ You can have multiple agents working on different tasks across different channel
       }
 
       taskList += `\n_Use \`!task-status <taskId>\` for details_`;
+      taskList += `\n_Use \`!tasks failed\` to see all failed tasks_`;
       taskList += `\n_Use \`!agents --current\` to see only this channel's tasks_`;
 
       await message.reply(taskList);

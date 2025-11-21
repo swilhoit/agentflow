@@ -350,7 +350,7 @@ export class DiscordBot {
       await this.client.login(this.config.discordToken);
       logger.info('Discord bot started successfully');
 
-      // Setup periodic cleanup of temp files
+      // Setup periodic cleanup of temp files (non-blocking now)
       setInterval(() => {
         this.whisperService.cleanupTempFiles();
       }, 3600000); // Every hour

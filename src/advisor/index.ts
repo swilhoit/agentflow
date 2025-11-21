@@ -3,6 +3,7 @@ import { AdvisorBot } from './advisorBot';
 import { logger, LogLevel } from '../utils/logger';
 import * as http from 'http';
 import { TransactionSyncService } from '../services/transactionSyncService';
+import { CategoryBudgetService } from '../services/categoryBudgetService';
 
 dotenv.config();
 
@@ -72,6 +73,29 @@ async function main() {
 
     await advisor.start();
 
+    // Start Category Budget Service
+    const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
+    const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
+    const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
+    
+    logger.info(`💰 Initializing Category Budget Service...`);
+    logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
+    logger.info(`   🍽️  Dining: $${diningBudget}/week`);
+    logger.info(`   💵 Other: $${otherBudget}/week`);
+    
+    const budgetService = new CategoryBudgetService({
+      groceriesBudget,
+      diningBudget,
+      otherBudget,
+      channelId: channels[0],
+      enabled: true,
+      dailyUpdateTime: process.env.BUDGET_UPDATE_TIME || '0 9 * * *'
+    });
+    
+    // Register Discord client with budget service
+    budgetService.setDiscordClient(advisor.getClient());
+    budgetService.start();
+
     // Start Transaction Sync Service
     logger.info('📊 Initializing Transaction Sync Service...');
     const transactionSync = new TransactionSyncService({
@@ -96,6 +120,7 @@ async function main() {
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('💰 Shutting down Financial Advisor bot...');
+      budgetService.stop();
       transactionSync.stop();
       server.close();
       await advisor.stop();

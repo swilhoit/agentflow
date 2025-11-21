@@ -43,7 +43,19 @@ export class SmartIterationCalculator {
       };
     }
 
-    // 3. Check for create/update operations (8-12 iterations)
+    // 3. Check for complex multi-step tasks (15-25 iterations) - CHECK THIS BEFORE CREATE/UPDATE
+    if (this.isComplexTask(lowerDesc)) {
+      const count = this.estimateItemCount(lowerDesc);
+      return {
+        recommended: Math.min(15 + (count * 3), 30),
+        min: 12,
+        max: 30,
+        reasoning: `Complex multi-step task (${count} item(s))`,
+        confidence: 'medium'
+      };
+    }
+
+    // 4. Check for create/update operations (8-12 iterations)
     if (this.isCreateUpdateTask(lowerDesc)) {
       const count = this.estimateItemCount(lowerDesc);
       return {
@@ -55,7 +67,7 @@ export class SmartIterationCalculator {
       };
     }
 
-    // 4. Check for analysis tasks (8-12 iterations)
+    // 5. Check for analysis tasks (8-12 iterations)
     if (this.isAnalysisTask(lowerDesc)) {
       return {
         recommended: 10,
@@ -63,18 +75,6 @@ export class SmartIterationCalculator {
         max: 15,
         reasoning: 'Analysis/information gathering task',
         confidence: 'high'
-      };
-    }
-
-    // 5. Check for complex multi-step tasks (15-25 iterations)
-    if (this.isComplexTask(lowerDesc)) {
-      const count = this.estimateItemCount(lowerDesc);
-      return {
-        recommended: Math.min(15 + (count * 3), 30),
-        min: 12,
-        max: 30,
-        reasoning: `Complex multi-step task (${count} item(s))`,
-        confidence: 'medium'
       };
     }
 
@@ -98,6 +98,8 @@ export class SmartIterationCalculator {
    * Simple tasks: single operations, no loops
    */
   private static isSimpleTask(desc: string): boolean {
+    if (!desc || desc.trim().length === 0) return false;
+
     const simplePatterns = [
       /^(get|show|display|list|find) (the |my )?[a-z]+$/i,
       /^check [a-z]+ status$/i,
@@ -260,4 +262,3 @@ export class SmartIterationCalculator {
     return `Recommended: ${estimate.recommended} iterations (${estimate.reasoning})`;
   }
 }
-

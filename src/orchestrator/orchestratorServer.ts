@@ -379,6 +379,9 @@ ${status.result.message}
   }
 
   async start(): Promise<void> {
+    // Restore interrupted tasks from database
+    await this.taskManager.restoreTasks();
+
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port)
         .on('listening', () => {

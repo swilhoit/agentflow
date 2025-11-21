@@ -62,7 +62,11 @@ export function loadConfig(): BotConfig {
     // Financial Advisor configuration
     financialAdvisorChannels: process.env.FINANCIAL_ADVISOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
     // Orchestrator configuration
-    orchestratorChannels: process.env.ORCHESTRATOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || []
+    orchestratorChannels: process.env.ORCHESTRATOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
+    // Trello configuration
+    trelloBoardId: process.env.TRELLO_BOARD_ID,
+    trelloInboxListId: process.env.TRELLO_INBOX_LIST_ID,
+    trelloDoneListId: process.env.TRELLO_DONE_LIST_ID
   };
 }
 

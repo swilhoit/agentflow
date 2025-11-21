@@ -533,6 +533,61 @@ export class DatabaseService {
   }
 
   /**
+   * Get all active agent tasks (across all guilds)
+   */
+  getAllActiveAgentTasks(): AgentTask[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM agent_tasks
+      WHERE status IN ('pending', 'running')
+      ORDER BY started_at DESC
+    `);
+
+    const rows = stmt.all() as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      agentId: row.agent_id,
+      guildId: row.guild_id,
+      channelId: row.channel_id,
+      userId: row.user_id,
+      taskDescription: row.task_description,
+      status: row.status,
+      startedAt: new Date(row.started_at),
+      completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
+      result: row.result,
+      error: row.error
+    }));
+  }
+
+  /**
+   * Get failed tasks within the last N hours
+   */
+  getFailedTasks(hours: number = 24): AgentTask[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM agent_tasks
+      WHERE status = 'failed' 
+      AND completed_at >= datetime('now', '-' || ? || ' hours')
+      ORDER BY completed_at DESC
+    `);
+
+    const rows = stmt.all(hours) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      agentId: row.agent_id,
+      guildId: row.guild_id,
+      channelId: row.channel_id,
+      userId: row.user_id,
+      taskDescription: row.task_description,
+      status: row.status,
+      startedAt: new Date(row.started_at),
+      completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
+      result: row.result,
+      error: row.error
+    }));
+  }
+
+  /**
    * Search conversations
    */
   searchConversations(

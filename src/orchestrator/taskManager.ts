@@ -1,6 +1,7 @@
 import { ToolBasedAgent, AgentTask, AgentResult } from '../agents/toolBasedAgent';
 import { TrelloService } from '../services/trello';
 import { logger } from '../utils/logger';
+import { getSQLiteDatabase } from '../services/databaseFactory';
 
 export interface ManagedTask {
   taskId: string;
@@ -15,6 +16,8 @@ export interface ManagedTask {
   guildId: string;
   userId: string;
   description: string;
+  trelloCardId?: string;
+  trelloCardUrl?: string;
 }
 
 export interface TaskStatus {
@@ -40,6 +43,7 @@ export interface TaskStatus {
  * - Task tracking and status queries
  * - Concurrent task execution
  * - Task cancellation support
+ * - Persistent conversation history (SQLite)
  */
 export class TaskManager {
   private tasks: Map<string, ManagedTask> = new Map();
@@ -79,6 +83,45 @@ export class TaskManager {
     const taskId = this.generateTaskId();
     logger.info(`🚀 Starting new task: ${taskId} in channel ${task.context.channelId}`);
 
+    // PERSISTENCE: Save user command to database
+    try {
+      const db = getSQLiteDatabase();
+      
+      // Save user message
+      db.saveMessage({
+        guildId: task.context.guildId,
+        channelId: task.context.channelId,
+        userId: task.context.userId,
+        username: 'User', // Placeholder until context has username
+        message: task.command,
+        messageType: 'voice', // Assuming voice for now, or update context to include type
+        timestamp: new Date()
+      });
+
+      // Save initial task state to DB
+      db.createAgentTask({
+        agentId: taskId,
+        guildId: task.context.guildId,
+        channelId: task.context.channelId,
+        userId: task.context.userId,
+        taskDescription: description,
+        status: 'pending',
+        startedAt: new Date()
+      });
+      logger.info(`💾 Persisted task ${taskId} to database`);
+
+      // Load context (recent history)
+      const history = db.getConversationContext(task.context.guildId, task.context.channelId, 10);
+      
+      // Inject into task context
+      task.context.conversationHistory = history;
+      logger.info(`📜 Injected conversation history (${history.length} chars)`);
+      
+    } catch (error) {
+      logger.error('Failed to persist message or load history:', error);
+      // Continue without history if DB fails
+    }
+
     // Create a new ToolBasedAgent instance for this task (full isolation!)
     const agent = new ToolBasedAgent(this.anthropicApiKey, this.trelloService);
 
@@ -109,6 +152,36 @@ export class TaskManager {
       description
     };
 
+    // TRELLO SYNC: Create card in Inbox
+    if (this.trelloService) {
+      try {
+        // Need to get configuration (passed in or from env)
+        // For now, we'll check process.env directly as a fallback, but ideally config should be passed to TaskManager
+        const boardId = process.env.TRELLO_BOARD_ID;
+        const listId = process.env.TRELLO_INBOX_LIST_ID;
+
+        if (listId) {
+           logger.info(`📋 Syncing task to Trello List: ${listId}`);
+           const card = await this.trelloService.createCard({
+             idList: listId,
+             name: `[${taskId}] ${description.substring(0, 80)}${description.length > 80 ? '...' : ''}`,
+             desc: `**Task ID:** ${taskId}\n**User:** ${task.context.userId}\n**Channel:** ${task.context.channelId}\n\n${description}`
+           });
+           
+           managedTask.trelloCardId = card.id;
+           managedTask.trelloCardUrl = card.shortUrl;
+           logger.info(`✅ Trello Card created: ${card.shortUrl}`);
+           
+           // Notify user
+           if (notificationHandler) {
+             await notificationHandler(task.context.channelId, `📋 **Trello Card Created:** <${card.shortUrl}>`);
+           }
+        }
+      } catch (error) {
+        logger.error('Failed to sync task to Trello:', error);
+      }
+    }
+
     this.tasks.set(taskId, managedTask);
 
     // Execute task asynchronously
@@ -127,6 +200,11 @@ export class TaskManager {
       managedTask.status = 'running';
       logger.info(`▶️ Task ${taskId} started execution`);
 
+      // PERSISTENCE: Update status
+      try {
+        getSQLiteDatabase().updateAgentTask(taskId, { status: 'running' });
+      } catch (e) { logger.error('Failed to update task status in DB', e); }
+
       const result = await agent.executeTask(task);
 
       managedTask.status = result.success ? 'completed' : 'failed';
@@ -137,11 +215,83 @@ export class TaskManager {
         managedTask.error = result.error;
       }
 
+      // TRELLO SYNC: Update card on completion
+      if (this.trelloService && managedTask.trelloCardId) {
+        try {
+          logger.info(`📋 Updating Trello Card ${managedTask.trelloCardId}...`);
+          
+          // 1. Add comment with result
+          const comment = result.success 
+            ? `✅ **Task Completed**\n\n${result.message}`
+            : `❌ **Task Failed**\n\nError: ${result.error}\n\n${result.message}`;
+          
+          await this.trelloService.addComment(managedTask.trelloCardId, comment);
+
+          // 2. Move to Done list (if success and configured)
+          const doneListId = process.env.TRELLO_DONE_LIST_ID;
+          if (result.success && doneListId) {
+            await this.trelloService.moveCard(managedTask.trelloCardId, doneListId, 'top');
+            logger.info(`✅ Moved Trello card to Done list`);
+          } else if (!result.success) {
+            // Maybe add a "Failed" label? (For now just leaving in Inbox with comment)
+            // await this.trelloService.addLabelToCard(managedTask.trelloCardId, 'red_label_id');
+          }
+        } catch (error) {
+          logger.error('Failed to update Trello card:', error);
+        }
+      }
+
+      // PERSISTENCE: Update completion status
+      try {
+        const db = getSQLiteDatabase();
+        db.updateAgentTask(taskId, {
+          status: managedTask.status,
+          completedAt: managedTask.completedAt,
+          result: JSON.stringify(result),
+          error: managedTask.error
+        });
+        
+        db.saveMessage({
+          guildId: task.context.guildId,
+          channelId: task.context.channelId,
+          userId: 'agent', // System ID
+          username: 'AgentFlow',
+          message: result.message || (result.success ? 'Task completed' : 'Task failed'),
+          messageType: 'agent_response',
+          timestamp: new Date(),
+          metadata: JSON.stringify({
+            taskId,
+            iterations: result.iterations,
+            toolCalls: result.toolCalls,
+            success: result.success,
+            trelloCardUrl: managedTask.trelloCardUrl
+          })
+        });
+      } catch (error) {
+        logger.error('Failed to save agent response to DB:', error);
+      }
+
       logger.info(`${result.success ? '✅' : '❌'} Task ${taskId} ${managedTask.status}`);
     } catch (error) {
       managedTask.status = 'failed';
       managedTask.completedAt = new Date();
       managedTask.error = error instanceof Error ? error.message : 'Unknown error';
+
+      // TRELLO SYNC: Report fatal error
+      if (this.trelloService && managedTask.trelloCardId) {
+        try {
+          await this.trelloService.addComment(managedTask.trelloCardId, `🔥 **Fatal System Error**\n\n${managedTask.error}`);
+        } catch (e) { logger.error('Failed to update Trello card on fatal error', e); }
+      }
+
+      // PERSISTENCE: Update error status
+      try {
+        getSQLiteDatabase().updateAgentTask(taskId, {
+          status: 'failed',
+          completedAt: managedTask.completedAt,
+          error: managedTask.error
+        });
+      } catch (e) { logger.error('Failed to update task error in DB', e); }
 
       logger.error(`❌ Task ${taskId} failed with exception`, error);
     }
@@ -271,6 +421,62 @@ export class TaskManager {
       cancelled: tasks.filter(t => t.status === 'cancelled').length,
       pending: tasks.filter(t => t.status === 'pending').length
     };
+  }
+
+  /**
+   * Restore active tasks from database on startup
+   * Marks interrupted tasks as failed so they don't hang forever
+   */
+  async restoreTasks(): Promise<void> {
+    try {
+      const db = getSQLiteDatabase();
+      const activeTasks = db.getAllActiveAgentTasks();
+      
+      if (activeTasks.length > 0) {
+        logger.info(`🔄 Restoring ${activeTasks.length} interrupted tasks from database...`);
+
+        for (const task of activeTasks) {
+          // Create a placeholder agent
+          const agent = new ToolBasedAgent(this.anthropicApiKey, this.trelloService);
+          
+          // Reconstruct context (partial)
+          const context = {
+            userId: task.userId,
+            guildId: task.guildId,
+            channelId: task.channelId
+          };
+
+          const managedTask: ManagedTask = {
+            taskId: task.agentId,
+            agent,
+            task: {
+              command: task.taskDescription,
+              context
+            },
+            status: 'failed', // Mark as failed because process died
+            startedAt: task.startedAt,
+            completedAt: new Date(), // Completed now (by interruption)
+            error: 'System restart detected - Task interrupted',
+            channelId: task.channelId,
+            guildId: task.guildId,
+            userId: task.userId,
+            description: task.taskDescription
+          };
+
+          // Update DB to reflect failure
+          db.updateAgentTask(task.agentId, {
+            status: 'failed',
+            completedAt: new Date(),
+            error: 'System restart detected - Task interrupted'
+          });
+
+          this.tasks.set(task.agentId, managedTask);
+          logger.info(`⚠️ Marked task ${task.agentId} as interrupted`);
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to restore tasks:', error);
+    }
   }
 
   /**

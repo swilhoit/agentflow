@@ -209,6 +209,35 @@ export class TrelloService {
     }
   }
 
+  /**
+   * Update a list (e.g. to archive it)
+   */
+  async updateList(listId: string, options: { name?: string; closed?: boolean; pos?: number | 'top' | 'bottom' }): Promise<TrelloList> {
+    try {
+      const response = await this.client.put(`/lists/${listId}`, null, {
+        params: options
+      });
+      logger.info(`Updated list: ${listId}`);
+      return response.data;
+    } catch (error) {
+      logger.error(`Error updating list ${listId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Archive all cards in a list
+   */
+  async archiveAllCardsInList(listId: string): Promise<void> {
+    try {
+      await this.client.post(`/lists/${listId}/archiveAllCards`);
+      logger.info(`Archived all cards in list: ${listId}`);
+    } catch (error) {
+      logger.error(`Error archiving cards in list ${listId}:`, error);
+      throw error;
+    }
+  }
+
   // ==================== CARDS ====================
 
   /**

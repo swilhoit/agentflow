@@ -247,6 +247,26 @@ export class CloudDatabaseService {
   }
 
   /**
+   * Get all active agent tasks
+   */
+  getAllActiveAgentTasks(): any[] {
+    // Cloud SQL doesn't support synchronous operations
+    // This is a placeholder - in production, you'd need to handle this differently
+    logger.warn('getAllActiveAgentTasks not implemented for Cloud SQL (async required)');
+    return [];
+  }
+
+  /**
+   * Get failed tasks within hours
+   */
+  getFailedTasks(hours: number): any[] {
+    // Cloud SQL doesn't support synchronous operations
+    // This is a placeholder - in production, you'd need to handle this differently
+    logger.warn('getFailedTasks not implemented for Cloud SQL (async required)');
+    return [];
+  }
+
+  /**
    * Close the database connection
    */
   async close(): Promise<void> {

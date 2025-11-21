@@ -1,0 +1,112 @@
+═══════════════════════════════════════════════════════════════════════════
+   🏦 CAN'T FIND WHERE TO ADD TRUIST? HERE'S THE ANSWER
+═══════════════════════════════════════════════════════════════════════════
+
+Your Question: "I don't see anywhere to add another account"
+
+The Answer: You're not alone! Teller's interface for adding additional 
+            institutions isn't always obvious.
+
+═══════════════════════════════════════════════════════════════════════════
+   ⭐ FASTEST SOLUTION: Email Teller Support
+═══════════════════════════════════════════════════════════════════════════
+
+📧 Send this to: support@teller.io
+
+---
+Subject: Need to Add Truist Bank to Existing Enrollment
+
+Hi Teller Team,
+
+I need help adding a Truist bank account. I currently have 5 American
+Express accounts connected (enrollment: enr_pl4snqa7g7u803egte000) but
+can't find where to add another institution in the dashboard.
+
+Can you provide instructions or a link to add Truist?
+
+My API token: token_77lfbjzhhtidtosa4rctadmclq
+
+Thank you!
+---
+
+They usually respond within a few hours with exact instructions!
+
+═══════════════════════════════════════════════════════════════════════════
+   🔍 ALTERNATIVE: Check These Dashboard Locations
+═══════════════════════════════════════════════════════════════════════════
+
+Log into https://teller.io and look for:
+
+In Left Sidebar:
+  □ "Enrollments" tab
+  □ "Connected Accounts"  
+  □ "Institutions"
+  □ "API" settings
+
+On Main Page:
+  □ "+ Add Account" button
+  □ "Connect Bank" link
+  □ "New Enrollment" button
+  □ Your enrollment ID: enr_pl4snqa7g7u803egte000
+    (Click it - may have "Add Institution" option)
+
+In Settings:
+  □ Settings → Enrollments → Manage
+  □ Settings → API → Connections
+
+═══════════════════════════════════════════════════════════════════════════
+   📚 Additional Resources Created For You
+═══════════════════════════════════════════════════════════════════════════
+
+Detailed guides:
+  • HOW_TO_ADD_TRUIST.md           - Complete solutions
+  • ADD_TRUIST_HELP.md             - Troubleshooting guide
+  • TELLER_API_REFERENCE.md        - API documentation
+  • teller-connect.html            - Web interface to add accounts
+
+Quick test:
+  npm run test:teller              - See current accounts
+
+═══════════════════════════════════════════════════════════════════════════
+   💡 WHY THIS IS CONFUSING
+═══════════════════════════════════════════════════════════════════════════
+
+You already connected 5 AmEx accounts, which means you HAVE used
+Teller's connection process before. But you can't remember/find how!
+
+This is common because:
+  • Teller uses "Teller Connect" widget (popup/iframe)
+  • The UI may have changed since you set up AmEx
+  • The option might be in a section you don't usually visit
+  • You may have used a direct link (not dashboard)
+
+Solution: Teller support knows their interface and can help immediately!
+
+═══════════════════════════════════════════════════════════════════════════
+   🎯 YOUR CURRENT STATUS
+═══════════════════════════════════════════════════════════════════════════
+
+✅ Teller API: Working perfectly
+✅ Certificates: Installed and secure  
+✅ Connected: 5 American Express accounts
+✅ Enrollment: enr_pl4snqa7g7u803egte000
+❌ Missing: Truist bank account
+
+═══════════════════════════════════════════════════════════════════════════
+   ⚡ QUICK ACTION
+═══════════════════════════════════════════════════════════════════════════
+
+1. Copy the email template above
+2. Send to: support@teller.io
+3. Wait for response (usually < 4 hours)
+4. Follow their instructions
+5. Run: npm run test:teller
+6. See Truist accounts appear! 🎉
+
+═══════════════════════════════════════════════════════════════════════════
+
+Bottom line: Email Teller support. They'll tell you exactly where to click
+            or send you a direct link. It's the fastest solution!
+
+Read HOW_TO_ADD_TRUIST.md for complete details and alternatives.
+

@@ -9,6 +9,7 @@ import { TrelloService } from './services/trello';
 import { getCleanupManager } from './utils/cleanupManager';
 import { MarketUpdateScheduler, DEFAULT_SCHEDULE_CONFIG } from './services/marketUpdateScheduler';
 import { startCacheCleanup, globalCache } from './utils/smartCache';
+import { SupervisorService } from './services/supervisor';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -185,10 +186,19 @@ async function main() {
         logger.info('Market updates disabled or not configured');
       }
 
+      // Initialize Supervisor Service
+      const supervisorService = new SupervisorService(
+        (bot as DiscordBotRealtime).getClient(),
+        config,
+        trelloService
+      );
+      supervisorService.start();
+
       // Graceful shutdown
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
         if (marketScheduler) marketScheduler.stop();
+        supervisorService.stop(); // Stop supervisor
         await bot.stop();
         await orchestratorServer.stop();
         getDatabase().close();
@@ -199,6 +209,7 @@ async function main() {
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         if (marketScheduler) marketScheduler.stop();
+        supervisorService.stop(); // Stop supervisor
         await bot.stop();
         await orchestratorServer.stop();
         getDatabase().close();
@@ -212,6 +223,14 @@ async function main() {
     // Legacy mode: Use original bot with Whisper + Claude + TTS
     logger.info('Using legacy mode (Whisper + Claude + TTS)');
     bot = new DiscordBot(config);
+
+    // Initialize Supervisor Service (also for Legacy Mode)
+    const supervisorService = new SupervisorService(
+      (bot as DiscordBot).getClient(),
+      config,
+      trelloService
+    );
+    supervisorService.start();
 
     // Wire up the Discord message handler to the orchestrator
     orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
@@ -290,6 +309,9 @@ async function main() {
       
       // Stop auto-cleanup
       cleanupManager.stopAutoCleanup();
+
+      // Stop supervisor
+      supervisorService.stop();
       
       // Cleanup agents
       const subAgentManager = orchestratorServer.getSubAgentManager();
