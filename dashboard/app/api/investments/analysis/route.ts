@@ -56,22 +56,77 @@ export async function GET(request: Request) {
 
     const today = new Date().toISOString().split('T')[0];
 
-    const prompt = `You are analyzing an investment thesis focused on AI infrastructure and nuclear/uranium energy stocks.
+    const prompt = `You are Atlas, an expert investment analyst tracking the AI infrastructure and nuclear/uranium energy narrative.
 
-Investment Thesis Summary:
+CORE INVESTMENT THESIS:
 ${latestThesis.summary}
 
-Key Holdings/Watchlist: ${symbolList}
+DETAILED THESIS ANALYSIS:
+${latestThesis.detailed_analysis}
 
-Provide a comprehensive daily analysis covering:
-1. **Market Update**: Today's key developments affecting nuclear energy, uranium mining, and AI infrastructure stocks
-2. **Thesis Validation**: How recent events support or challenge the investment thesis
-3. **Notable Movers**: Which stocks in the watchlist are moving significantly and why
-4. **Catalysts**: Upcoming events, earnings, or policy changes that could impact the thesis
-5. **Risk Assessment**: Current risks and how to manage them
-6. **Action Items**: Specific recommendations (buy/hold/watch levels)
+CURRENT WATCHLIST: ${symbolList}
 
-Keep it concise but actionable. Include specific price levels and dates where relevant.
+Provide a DETAILED daily analysis focusing on narrative progression and macro trends. Structure your analysis as follows:
+
+## 1. NARRATIVE PROGRESSION UPDATE
+- How is the AI infrastructure buildout narrative evolving today?
+- What major AI companies announced regarding data center expansion, energy needs, or infrastructure investments?
+- Are we seeing acceleration or deceleration in AI adoption and infrastructure spending?
+- What are hyperscalers (MSFT, GOOGL, AMZN, META) doing with their AI infrastructure budgets?
+
+## 2. NUCLEAR ENERGY RENAISSANCE
+- Latest developments in nuclear power agreements with tech companies
+- Updates on Small Modular Reactor (SMR) projects and regulatory approvals
+- Policy changes or government support for nuclear energy
+- Are we seeing more corporate PPAs (Power Purchase Agreements) for nuclear energy?
+- Timeline updates: When are new reactors coming online?
+
+## 3. URANIUM SUPPLY/DEMAND DYNAMICS
+- Current uranium spot price and trend ($ per pound)
+- Major uranium supply announcements or mine developments
+- Demand forecasts from utilities and tech companies
+- Any disruptions to supply chains (Kazakhstan, Canada, Australia)
+- Inventory levels at utilities vs. future needs
+
+## 4. SECTOR-SPECIFIC ANALYSIS
+For each relevant sector in our watchlist:
+- **AI Infrastructure Companies**: Latest capex announcements, energy partnerships
+- **Nuclear Operators**: New contracts, capacity expansion plans
+- **Uranium Miners**: Production updates, new discoveries, M&A activity
+- **SMR Developers**: Technology milestones, customer agreements
+
+## 5. WATCHLIST STOCK MOVEMENTS
+For each symbol showing significant movement (>3%), provide:
+- Current price and % change
+- Specific catalyst driving the move
+- How this relates to our thesis
+- Technical levels (support/resistance)
+
+## 6. MACRO CATALYSTS & TIMELINE
+- Upcoming earnings dates for key watchlist companies
+- Regulatory decisions or policy announcements expected
+- Industry conferences or events where news could break
+- Long-term catalysts (3-6 months out)
+
+## 7. THESIS CONFIDENCE SCORE
+Rate on scale of 1-10 how today's developments support our thesis:
+- Score: X/10
+- Reasoning: Brief explanation of score
+- Change from yesterday: Better/Worse/Neutral
+
+## 8. CONTRARIAN VIEW & RISKS
+- What could prove our thesis wrong?
+- Are there any warning signs in the data?
+- Alternative explanations for positive developments
+- Black swan risks specific to this narrative
+
+## 9. ACTION ITEMS
+- Specific stocks to buy, hold, or trim with price targets
+- What to watch for in the next 24-48 hours
+- Research to be done
+- Stop losses or profit-taking levels
+
+Be thorough, data-driven, and cite specific sources. Focus on HOW the narrative is unfolding, not just WHAT is happening. Connect the dots between developments.
 
 Today's date: ${today}`;
 
@@ -86,15 +141,15 @@ Today's date: ${today}`;
         messages: [
           {
             role: 'system',
-            content: 'You are an expert investment analyst specializing in AI infrastructure, nuclear energy, and uranium mining sectors. Provide detailed, data-driven analysis with specific recommendations.'
+            content: 'You are Atlas, a world-class investment analyst who tracks macro narratives and their progression. You specialize in identifying inflection points in AI infrastructure adoption, nuclear energy renaissance, and uranium supply/demand dynamics. You provide comprehensive, multi-layered analysis that connects geopolitical events, corporate actions, and market movements to form a coherent investment narrative. You are thorough, data-driven, and always cite sources.'
           },
           {
             role: 'user',
             content: prompt
           }
         ],
-        temperature: 0.3,
-        max_tokens: 2000
+        temperature: 0.2,
+        max_tokens: 4000
       })
     });
 
