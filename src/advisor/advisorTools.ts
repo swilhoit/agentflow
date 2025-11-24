@@ -12,6 +12,7 @@ import type { DatabaseService } from '../services/database';
  */
 export class AdvisorTools {
   private tellerToken: string;
+  private tellerTokenAmex: string;
   private certPath: string;
   private keyPath: string;
   private httpsAgent: https.Agent;
@@ -20,6 +21,7 @@ export class AdvisorTools {
 
   constructor(useCache: boolean = true) {
     this.tellerToken = process.env.TELLER_API_TOKEN || '';
+    this.tellerTokenAmex = process.env.TELLER_API_TOKEN_AMEX || '';
     this.certPath = process.env.TELLER_CERT_PATH || '';
     this.keyPath = process.env.TELLER_KEY_PATH || '';
     this.useCache = useCache;
@@ -145,77 +147,11 @@ export class AdvisorTools {
           },
           required: ['category', 'budget_amount']
         }
-      },
-      
-      // ===== REAL-TIME API TOOLS (SLOW - Only use when cached data is insufficient) =====
-      {
-        name: 'get_accounts',
-        description: '🐌 SLOW API CALL - Get real-time account balances. Only use if user explicitly asks for current balance or account status.',
-        input_schema: {
-          type: 'object',
-          properties: {},
-          required: []
-        }
-      },
-      {
-        name: 'get_balance_summary',
-        description: '🐌 SLOW API CALL - Get real-time total balance across all accounts. Only use if user asks for current net worth.',
-        input_schema: {
-          type: 'object',
-          properties: {},
-          required: []
-        }
-      },
-      {
-        name: 'get_account_details',
-        description: '🐌 SLOW API CALL - Get real-time account details. Rarely needed - cached transactions are usually sufficient.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            }
-          },
-          required: ['account_id']
-        }
-      },
-      {
-        name: 'get_transactions',
-        description: '🐌 SLOW API CALL - Get real-time transactions from API. DO NOT USE - use get_cached_transactions instead.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            },
-            count: {
-              type: 'number',
-              description: 'Number of transactions to retrieve (default: 30, max: 100)'
-            }
-          },
-          required: ['account_id']
-        }
-      },
-      {
-        name: 'analyze_spending',
-        description: '🐌 SLOW API CALL - Analyze spending via API. DO NOT USE - use get_spending_by_category instead.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            account_id: {
-              type: 'string',
-              description: 'The Teller account ID'
-            },
-            days: {
-              type: 'number',
-              description: 'Number of days to analyze (default: 30)'
-            }
-          },
-          required: ['account_id']
-        }
       }
+
+      // ===== DISABLED: REAL-TIME API TOOLS =====
+      // Removed because some accounts have MFA issues and cached data is always up-to-date
+      // Database is synced daily at 2 AM with latest transactions
     ];
   }
 
@@ -449,33 +385,26 @@ export class AdvisorTools {
   }
 
   /**
-   * Check spending against budget
+   * Check spending against budget (using cached data only)
    */
   private async budgetCheck(category: string, budgetAmount: number): Promise<any> {
     try {
-      // Get all accounts
-      const accountsResponse = await this.getAccounts();
-      if (accountsResponse.error) return accountsResponse;
+      // Use cached spending analysis instead of API
+      const analysis = this.getCachedSpendingAnalysis(30);
 
-      const accounts = accountsResponse.accounts;
+      if (analysis.error) return analysis;
 
-      // Analyze spending across all checking accounts
-      let totalSpent = 0;
+      // Find the category in spending data
       const categoryNormalized = category.toLowerCase();
+      let totalSpent = 0;
 
-      for (const account of accounts) {
-        if (account.type === 'depository') {
-          const analysis = await this.analyzeSpending(account.id, 30);
+      if (analysis.categories) {
+        const categoryData = analysis.categories.find((c: any) =>
+          c.category.toLowerCase().includes(categoryNormalized)
+        );
 
-          if (!analysis.error) {
-            const categoryData = analysis.categories.find((c: any) =>
-              c.category.toLowerCase().includes(categoryNormalized)
-            );
-
-            if (categoryData) {
-              totalSpent += parseFloat(categoryData.amount);
-            }
-          }
+        if (categoryData) {
+          totalSpent = parseFloat(categoryData.amount);
         }
       }
 
@@ -484,11 +413,12 @@ export class AdvisorTools {
 
       return {
         category,
-        budget_amount: budgetAmount.toFixed(2),
+        budget: budgetAmount.toFixed(2),
         spent: totalSpent.toFixed(2),
         remaining: remaining.toFixed(2),
         percent_used: percentUsed.toFixed(1),
         status: percentUsed > 100 ? 'over_budget' : percentUsed > 80 ? 'warning' : 'on_track',
+        source: 'database_cache',
         timestamp: new Date().toISOString()
       };
     } catch (error) {
@@ -498,26 +428,25 @@ export class AdvisorTools {
   }
 
   /**
-   * Calculate savings goal
+   * Calculate savings goal (using cached data only)
    */
   private async savingsGoal(goalAmount: number, months: number): Promise<any> {
     try {
       const monthlyRequired = goalAmount / months;
 
-      // Get current savings balance
-      const summary = await this.getBalanceSummary();
-      const currentSavings = summary.error ? 0 : parseFloat(summary.total_assets);
-
+      // Simplified calculation without API call
+      // User can provide current savings if needed
       return {
         goal_amount: goalAmount.toFixed(2),
         months,
         monthly_savings_needed: monthlyRequired.toFixed(2),
-        current_savings: currentSavings.toFixed(2),
-        additional_needed: (goalAmount - currentSavings).toFixed(2),
         target_date: new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         weekly_savings: (monthlyRequired / 4).toFixed(2),
         daily_savings: (monthlyRequired / 30).toFixed(2),
-        timestamp: new Date().toISOString()
+        per_paycheck: (monthlyRequired / 2).toFixed(2), // Assuming bi-weekly pay
+        source: 'calculation',
+        timestamp: new Date().toISOString(),
+        note: 'Based on goal amount and timeline. Add your current savings to see how much additional saving is needed.'
       };
     } catch (error) {
       logger.error('Error calculating savings goal:', error);

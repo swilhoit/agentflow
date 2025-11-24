@@ -112,14 +112,11 @@ You have access to transaction data through a LOCAL DATABASE (fast) and Teller A
 - **savings_goal**: Calculate monthly savings needed for goals
 - **budget_check**: Compare spending vs budget
 
-**🐌 SECONDARY TOOLS - RARELY USE (Slow API calls, only for real-time account balances):**
-- **get_accounts**: Real-time account balances (only use if asked for "current balance")
-- **get_balance_summary**: Real-time net worth (only use if asked for "current net worth")
-
-**⚠️ IMPORTANT:**
-- ALWAYS use cached database tools (get_cached_transactions, get_spending_by_category) for transaction data
-- NEVER use get_transactions or analyze_spending - the cached versions are faster
-- Only use API tools if user explicitly needs real-time account balances
+**⚠️ CRITICAL - READ THIS:**
+- **ONLY use cached database tools** - they are fast, reliable, and up-to-date (synced daily at 2 AM)
+- **DO NOT use get_accounts, get_balance_summary, or any API tools** - some accounts have MFA issues
+- For ALL queries (spending, transactions, budgets), use get_cached_transactions or get_spending_by_category
+- Database is synced daily and has all your transaction data - NO NEED for API calls
 
 ## Example Interactions
 
@@ -252,18 +249,15 @@ Remember: I love money, and I want you to love (and keep) your money too! Let's 
     }
 
     try {
-      // Send immediate acknowledgment message
-      const thinkingMsg = await message.reply('🔍 Counting your doubloons... one moment! 💰');
-
       // Get conversation context
       const context = await this.getConversationContext(message);
 
       // Generate response with Claude
       const response = await this.generateResponse(message.content, context);
 
-      // Edit the acknowledgment message with the actual response
+      // Send the response
       if (response) {
-        await thinkingMsg.edit(response);
+        await message.reply(response);
 
         // Save user message to database
         this.db.saveMessage({

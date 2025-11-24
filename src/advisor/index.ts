@@ -4,6 +4,7 @@ import { logger, LogLevel } from '../utils/logger';
 import * as http from 'http';
 import { TransactionSyncService } from '../services/transactionSyncService';
 import { CategoryBudgetService } from '../services/categoryBudgetService';
+import { WeeklyBudgetService } from '../services/weeklyBudgetService';
 
 dotenv.config();
 
@@ -73,16 +74,16 @@ async function main() {
 
     await advisor.start();
 
-    // Start Category Budget Service
+    // Start Category Budget Service (daily updates)
     const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
     const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
     const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
-    
-    logger.info(`💰 Initializing Category Budget Service...`);
+
+    logger.info(`💰 Initializing Category Budget Service (Daily Updates)...`);
     logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
     logger.info(`   🍽️  Dining: $${diningBudget}/week`);
     logger.info(`   💵 Other: $${otherBudget}/week`);
-    
+
     const budgetService = new CategoryBudgetService({
       groceriesBudget,
       diningBudget,
@@ -91,10 +92,30 @@ async function main() {
       enabled: true,
       dailyUpdateTime: process.env.BUDGET_UPDATE_TIME || '0 9 * * *'
     });
-    
+
     // Register Discord client with budget service
     budgetService.setDiscordClient(advisor.getClient());
     budgetService.start();
+
+    // Start Weekly Budget Summary Service
+    const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
+
+    logger.info(`📅 Initializing Weekly Budget Service...`);
+    logger.info(`   Personal Weekly: $${groceriesBudget + diningBudget + otherBudget}`);
+    logger.info(`   Business Monthly: $${monthlyBusinessBudget}`);
+
+    const weeklyBudgetService = new WeeklyBudgetService({
+      groceriesBudget,
+      diningBudget,
+      otherBudget,
+      monthlyBusinessBudget,
+      channelId: channels[0],
+      enabled: true,
+      weeklyUpdateTime: process.env.WEEKLY_BUDGET_UPDATE_TIME || '0 20 * * 0' // 8 PM Sunday
+    });
+
+    weeklyBudgetService.setDiscordClient(advisor.getClient());
+    weeklyBudgetService.start();
 
     // Start Transaction Sync Service
     logger.info('📊 Initializing Transaction Sync Service...');
@@ -121,6 +142,7 @@ async function main() {
     const shutdown = async () => {
       logger.info('💰 Shutting down Financial Advisor bot...');
       budgetService.stop();
+      weeklyBudgetService.stop();
       transactionSync.stop();
       server.close();
       await advisor.stop();
