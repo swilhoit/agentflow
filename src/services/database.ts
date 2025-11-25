@@ -91,6 +91,14 @@ export class DatabaseService {
   }
 
   /**
+   * Get raw database instance for direct access
+   * @returns The underlying better-sqlite3 database instance
+   */
+  getRawDatabase(): Database.Database {
+    return this.db;
+  }
+
+  /**
    * Initialize database schema
    */
   private initialize(): void {

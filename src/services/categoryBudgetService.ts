@@ -138,15 +138,27 @@ export class CategoryBudgetService {
     const transactions = this.db.getTransactionsByDateRange(startDate, endDate);
     
     // Filter to actual spending
+    // IMPORTANT: Credit cards use positive amounts for purchases, checking uses negative
     const excludeKeywords = [
       'PAYMENT', 'ONLINE PAYMENT', 'AUTOPAY', 'ACH PMT', 'EPAYMENT',
-      'WIRE REF', 'TRANSFER', 'INST XFER', 'ROBINHOOD', 'INVESTMENT'
+      'WIRE REF', 'TRANSFER', 'INST XFER', 'ROBINHOOD', 'INVESTMENT', 'CREDIT'
     ];
     
     const allSpending = transactions.filter(t => {
-      if (t.amount >= 0) return false;
       const upper = t.description.toUpperCase();
-      return !excludeKeywords.some(kw => upper.includes(kw));
+      
+      // Skip transfers, payments, income deposits, etc
+      if (excludeKeywords.some(kw => upper.includes(kw))) return false;
+      
+      // Skip income/deposits (these are always positive on checking)
+      if (upper.includes('FROM ****') || upper.includes('DEPOSIT') || upper.includes('INTERCEPT SALES')) return false;
+      
+      // For checking accounts: purchases are negative amounts
+      // For credit cards: purchases are positive amounts
+      const isChecking = (t.accountName?.includes('Checking') || t.accountType === 'depository');
+      const isPurchase = isChecking ? t.amount < 0 : t.amount > 0;
+      
+      return isPurchase;
     });
     
     // Categorize transactions

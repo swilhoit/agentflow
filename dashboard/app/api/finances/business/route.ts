@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 // IRS Business Expense Categories
 export const TAX_CATEGORIES = [
@@ -31,7 +31,7 @@ interface BusinessExpenseSummary {
     amount: number;
   }>;
   transactions: Array<{
-    id: number;
+    id: string;
     date: string;
     description: string;
     amount: number;
@@ -52,10 +52,10 @@ interface BusinessExpenseSummary {
 
 function getQuarterDates(year: number, quarter: number): { start: string; end: string } {
   const quarters: Record<number, { start: [number, number]; end: [number, number] }> = {
-    1: { start: [0, 1], end: [2, 31] },    // Jan 1 - Mar 31
-    2: { start: [3, 1], end: [5, 30] },    // Apr 1 - Jun 30
-    3: { start: [6, 1], end: [8, 30] },    // Jul 1 - Sep 30
-    4: { start: [9, 1], end: [11, 31] }    // Oct 1 - Dec 31
+    1: { start: [0, 1], end: [2, 31] },
+    2: { start: [3, 1], end: [5, 30] },
+    3: { start: [6, 1], end: [8, 30] },
+    4: { start: [9, 1], end: [11, 31] }
   };
 
   const q = quarters[quarter];
@@ -73,10 +73,10 @@ function getNextTaxDueDate(): string {
   const now = new Date();
   const year = now.getFullYear();
   const dueDates = [
-    new Date(year, 3, 15),  // April 15
-    new Date(year, 5, 15),  // June 15
-    new Date(year, 8, 15),  // September 15
-    new Date(year + 1, 0, 15) // January 15 (next year)
+    new Date(year, 3, 15),
+    new Date(year, 5, 15),
+    new Date(year, 8, 15),
+    new Date(year + 1, 0, 15)
   ];
 
   for (const date of dueDates) {
@@ -90,7 +90,7 @@ function getNextTaxDueDate(): string {
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -102,70 +102,59 @@ export async function GET(request: Request) {
     const ytdStart = `${currentYear}-01-01`;
     const quarterDates = getQuarterDates(currentYear, currentQuarter);
 
+    // For business expenses, filter by 'Business' category
     // This month business expenses
-    const thisMonthResult = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-        AND date < ?
-    `).get(thisMonthStart, nextMonthStart) as any;
+    const { data: thisMonthData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .lt('amount', 0)
+      .eq('category', 'Business')
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart);
+
+    const thisMonth = (thisMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
     // This quarter business expenses
-    const thisQuarterResult = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-        AND date <= ?
-    `).get(quarterDates.start, quarterDates.end) as any;
+    const { data: thisQuarterData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .lt('amount', 0)
+      .eq('category', 'Business')
+      .gte('date', quarterDates.start)
+      .lte('date', quarterDates.end);
+
+    const thisQuarter = (thisQuarterData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
     // YTD business expenses
-    const ytdResult = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-    `).get(ytdStart) as any;
+    const { data: ytdData } = await supabase
+      .from('transactions')
+      .select('amount, category')
+      .lt('amount', 0)
+      .eq('category', 'Business')
+      .gte('date', ytdStart);
 
-    // Tax deductible amount (all business expenses are deductible, but meals are 50%)
-    const taxDeductibleResult = db.prepare(`
-      SELECT
-        COALESCE(SUM(
-          CASE
-            WHEN tax_category = 'Travel & Meals' THEN ABS(amount) * 0.5
-            ELSE ABS(amount)
-          END
-        ), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-    `).get(ytdStart) as any;
+    const ytd = (ytdData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
-    // Category breakdown (YTD)
-    const categoryData = db.prepare(`
-      SELECT
-        COALESCE(tax_category, 'Uncategorized') as category,
-        COALESCE(SUM(ABS(amount)), 0) as amount,
-        COUNT(*) as count
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-      GROUP BY tax_category
-      ORDER BY amount DESC
-    `).all(ytdStart) as any[];
+    // Tax deductible - for now equal to YTD (meals would be 50% but we don't have that detail)
+    const taxDeductible = ytd;
 
-    const totalCategoryAmount = categoryData.reduce((sum, row) => sum + row.amount, 0);
-    const categoryBreakdown = categoryData.map((row: any) => ({
-      category: row.category,
-      amount: row.amount,
-      count: row.count,
-      percentage: totalCategoryAmount > 0 ? (row.amount / totalCategoryAmount) * 100 : 0
+    // Category breakdown (we don't have tax_category, so use generic breakdown)
+    const categoryMap = new Map<string, { amount: number; count: number }>();
+    (ytdData || []).forEach(tx => {
+      const cat = 'Other Business Expenses';
+      const existing = categoryMap.get(cat) || { amount: 0, count: 0 };
+      categoryMap.set(cat, {
+        amount: existing.amount + Math.abs(Number(tx.amount)),
+        count: existing.count + 1
+      });
+    });
+
+    const totalCategoryAmount = Array.from(categoryMap.values()).reduce((sum, v) => sum + v.amount, 0);
+    const categoryBreakdown = Array.from(categoryMap.entries()).map(([category, data]) => ({
+      category,
+      amount: data.amount,
+      count: data.count,
+      percentage: totalCategoryAmount > 0 ? (data.amount / totalCategoryAmount) * 100 : 0
     }));
 
     // Monthly trend (last 12 months)
@@ -173,62 +162,69 @@ export async function GET(request: Request) {
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
     const twelveMonthsAgoStr = twelveMonthsAgo.toISOString().split('T')[0];
 
-    const trendData = db.prepare(`
-      SELECT
-        strftime('%Y-%m', date) as month,
-        COALESCE(SUM(ABS(amount)), 0) as amount
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-        AND date >= ?
-      GROUP BY month
-      ORDER BY month ASC
-    `).all(twelveMonthsAgoStr) as any[];
+    const { data: trendData } = await supabase
+      .from('transactions')
+      .select('date, amount')
+      .lt('amount', 0)
+      .eq('category', 'Business')
+      .gte('date', twelveMonthsAgoStr)
+      .order('date');
+
+    const monthlyMap = new Map<string, number>();
+    (trendData || []).forEach(tx => {
+      const month = tx.date.substring(0, 7);
+      monthlyMap.set(month, (monthlyMap.get(month) || 0) + Math.abs(Number(tx.amount)));
+    });
+
+    const monthlyTrend = Array.from(monthlyMap.entries())
+      .map(([month, amount]) => ({ month, amount }))
+      .sort((a, b) => a.month.localeCompare(b.month));
 
     // Business transactions (last 100)
-    const transactions = db.prepare(`
-      SELECT
-        id, date, description, amount, category, tax_category, merchant, receipt_url
-      FROM financial_transactions
-      WHERE amount < 0
-        AND is_business_expense = 1
-      ORDER BY date DESC, id DESC
-      LIMIT 100
-    `).all() as any[];
+    const { data: transactionsData } = await supabase
+      .from('transactions')
+      .select('id, date, name, amount, category, merchant_name')
+      .lt('amount', 0)
+      .eq('category', 'Business')
+      .order('date', { ascending: false })
+      .limit(100);
 
-    // Quarterly tax estimates
-    const quarterlyEstimates = {
-      q1: 0,
-      q2: 0,
-      q3: 0,
-      q4: 0
-    };
+    const transactions = (transactionsData || []).map(t => ({
+      id: t.id,
+      date: t.date,
+      description: t.name || '',
+      amount: Math.abs(Number(t.amount)),
+      category: t.category,
+      tax_category: null,
+      merchant: t.merchant_name,
+      receipt_url: null
+    }));
+
+    // Quarterly tax estimates - get each quarter's business expenses
+    const quarterlyEstimates = { q1: 0, q2: 0, q3: 0, q4: 0 };
 
     for (let q = 1; q <= 4; q++) {
       const dates = getQuarterDates(currentYear, q);
-      const result = db.prepare(`
-        SELECT COALESCE(SUM(ABS(amount)), 0) as total
-        FROM financial_transactions
-        WHERE amount < 0
-          AND is_business_expense = 1
-          AND date >= ?
-          AND date <= ?
-      `).get(dates.start, dates.end) as any;
+      const { data: qData } = await supabase
+        .from('transactions')
+        .select('amount')
+        .lt('amount', 0)
+        .eq('category', 'Business')
+        .gte('date', dates.start)
+        .lte('date', dates.end);
 
-      quarterlyEstimates[`q${q}` as keyof typeof quarterlyEstimates] = result.total;
+      quarterlyEstimates[`q${q}` as keyof typeof quarterlyEstimates] = 
+        (qData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
     }
 
     const summary: BusinessExpenseSummary = {
-      thisMonth: thisMonthResult.total,
-      thisQuarter: thisQuarterResult.total,
-      ytd: ytdResult.total,
-      taxDeductible: taxDeductibleResult.total,
+      thisMonth,
+      thisQuarter,
+      ytd,
+      taxDeductible,
       categoryBreakdown,
-      monthlyTrend: trendData,
-      transactions: transactions.map((t: any) => ({
-        ...t,
-        amount: Math.abs(t.amount) // Convert to positive for display
-      })),
+      monthlyTrend,
+      transactions,
       quarterlyTaxEstimate: {
         ...quarterlyEstimates,
         current: quarterlyEstimates[`q${currentQuarter}` as keyof typeof quarterlyEstimates],
@@ -249,9 +245,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const body = await request.json();
-    const { transactionId, taxCategory, isBusinessExpense, receiptUrl } = body;
+    const { transactionId, taxCategory, isBusinessExpense } = body;
 
     if (!transactionId) {
       return NextResponse.json(
@@ -260,20 +256,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // Update transaction
-    db.prepare(`
-      UPDATE financial_transactions
-      SET
-        is_business_expense = ?,
-        tax_category = ?,
-        receipt_url = ?
-      WHERE id = ?
-    `).run(
-      isBusinessExpense ? 1 : 0,
-      taxCategory || null,
-      receiptUrl || null,
-      transactionId
-    );
+    // Update transaction category to 'Business' or remove it
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        category: isBusinessExpense ? 'Business' : null
+      })
+      .eq('id', transactionId);
+
+    if (error) throw error;
 
     return NextResponse.json({ success: true });
 

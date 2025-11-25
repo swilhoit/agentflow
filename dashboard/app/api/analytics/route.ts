@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -11,86 +11,134 @@ export async function GET(request: Request) {
     const thisMonthStart = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
     const lastMonthStart = `${currentMonth === 1 ? currentYear - 1 : currentYear}-${String(currentMonth === 1 ? 12 : currentMonth - 1).padStart(2, '0')}-01`;
     const ytdStart = `${currentYear}-01-01`;
+    const nextMonthStart = `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`;
+
+    // Get YTD transactions for analytics
+    const { data: ytdData } = await supabase
+      .from('transactions')
+      .select('merchant_name, amount, date, category, name')
+      .gte('date', ytdStart)
+      .lt('amount', 0);
+
+    const transactions = ytdData || [];
 
     // Top merchants by spending
-    const topMerchants = db.prepare(`
-      SELECT merchant, COALESCE(SUM(ABS(amount)), 0) as total, COUNT(*) as count
-      FROM financial_transactions
-      WHERE amount < 0 AND merchant IS NOT NULL AND date >= ?
-      GROUP BY merchant
-      ORDER BY total DESC
-      LIMIT 10
-    `).all(ytdStart) as any[];
+    const merchantMap = new Map<string, { total: number; count: number }>();
+    transactions.forEach(tx => {
+      const merchant = tx.merchant_name;
+      if (merchant) {
+        const existing = merchantMap.get(merchant) || { total: 0, count: 0 };
+        merchantMap.set(merchant, {
+          total: existing.total + Math.abs(Number(tx.amount)),
+          count: existing.count + 1
+        });
+      }
+    });
+
+    const topMerchants = Array.from(merchantMap.entries())
+      .map(([merchant, data]) => ({
+        merchant,
+        total: data.total,
+        count: data.count
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
 
     // Spending by day of week
-    const dayOfWeekSpending = db.prepare(`
-      SELECT 
-        CASE CAST(strftime('%w', date) AS INTEGER)
-          WHEN 0 THEN 'Sunday'
-          WHEN 1 THEN 'Monday'
-          WHEN 2 THEN 'Tuesday'
-          WHEN 3 THEN 'Wednesday'
-          WHEN 4 THEN 'Thursday'
-          WHEN 5 THEN 'Friday'
-          WHEN 6 THEN 'Saturday'
-        END as day,
-        COALESCE(AVG(ABS(amount)), 0) as avgAmount,
-        COUNT(*) as count
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ?
-      GROUP BY strftime('%w', date)
-      ORDER BY CAST(strftime('%w', date) AS INTEGER)
-    `).all(ytdStart) as any[];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayStats = dayNames.map(day => ({ day, totalAmount: 0, count: 0 }));
+
+    transactions.forEach(tx => {
+      const date = new Date(tx.date);
+      const dayIndex = date.getDay();
+      dayStats[dayIndex].totalAmount += Math.abs(Number(tx.amount));
+      dayStats[dayIndex].count++;
+    });
+
+    const dayOfWeekSpending = dayStats.map(d => ({
+      day: d.day,
+      avgAmount: d.count > 0 ? d.totalAmount / d.count : 0,
+      count: d.count
+    }));
 
     // Monthly comparison (this month vs last month)
-    const thisMonthTotal = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ?
-    `).get(thisMonthStart, `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`) as any;
+    const { data: thisMonthData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .lt('amount', 0);
 
-    const lastMonthTotal = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ?
-    `).get(lastMonthStart, thisMonthStart) as any;
+    const thisMonthTotal = (thisMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+
+    const { data: lastMonthData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gte('date', lastMonthStart)
+      .lt('date', thisMonthStart)
+      .lt('amount', 0);
+
+    const lastMonthTotal = (lastMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
     // Category trends over last 6 months
     const sixMonthsAgo = new Date(now);
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const categoryTrends = db.prepare(`
-      SELECT 
-        strftime('%Y-%m', date) as month,
-        category,
-        COALESCE(SUM(ABS(amount)), 0) as amount
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ?
-      GROUP BY month, category
-      ORDER BY month, amount DESC
-    `).all(sixMonthsAgo.toISOString().split('T')[0]) as any[];
+    const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+
+    const { data: trendData } = await supabase
+      .from('transactions')
+      .select('date, category, amount')
+      .gte('date', sixMonthsAgoStr)
+      .lt('amount', 0);
+
+    // Group by month and category
+    const categoryTrendsMap = new Map<string, Map<string, number>>();
+    (trendData || []).forEach(tx => {
+      const month = tx.date.substring(0, 7);
+      const category = tx.category || 'Uncategorized';
+
+      if (!categoryTrendsMap.has(month)) {
+        categoryTrendsMap.set(month, new Map());
+      }
+      const monthMap = categoryTrendsMap.get(month)!;
+      monthMap.set(category, (monthMap.get(category) || 0) + Math.abs(Number(tx.amount)));
+    });
+
+    const categoryTrends: Array<{ month: string; category: string; amount: number }> = [];
+    categoryTrendsMap.forEach((categoryMap, month) => {
+      categoryMap.forEach((amount, category) => {
+        categoryTrends.push({ month, category, amount });
+      });
+    });
+    categoryTrends.sort((a, b) => a.month.localeCompare(b.month) || b.amount - a.amount);
 
     // Largest transactions this month
-    const largestTransactions = db.prepare(`
-      SELECT date, description, amount, category, merchant
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ?
-      ORDER BY ABS(amount) DESC
-      LIMIT 10
-    `).all(thisMonthStart) as any[];
+    const { data: largestData } = await supabase
+      .from('transactions')
+      .select('date, name, amount, category, merchant_name')
+      .gte('date', thisMonthStart)
+      .lt('amount', 0)
+      .order('amount', { ascending: true }) // Most negative first
+      .limit(10);
+
+    const largestTransactions = (largestData || []).map(t => ({
+      date: t.date,
+      description: t.name,
+      amount: Math.abs(Number(t.amount)),
+      category: t.category,
+      merchant: t.merchant_name
+    }));
 
     return NextResponse.json({
       topMerchants,
       dayOfWeekSpending,
       monthlyComparison: {
-        thisMonth: thisMonthTotal.total,
-        lastMonth: lastMonthTotal.total,
-        change: ((thisMonthTotal.total - lastMonthTotal.total) / lastMonthTotal.total) * 100
+        thisMonth: thisMonthTotal,
+        lastMonth: lastMonthTotal,
+        change: lastMonthTotal > 0 ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100 : 0
       },
       categoryTrends,
-      largestTransactions: largestTransactions.map((t: any) => ({
-        ...t,
-        amount: Math.abs(t.amount)
-      }))
+      largestTransactions
     });
   } catch (error: any) {
     console.error('Error fetching analytics:', error);

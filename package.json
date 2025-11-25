@@ -32,7 +32,11 @@
     "logs:search": "tsx scripts/view-message-logs.ts search",
     "cleanup": "ts-node cleanup.ts cleanup",
     "cleanup:status": "ts-node cleanup.ts status",
-    "cleanup:emergency": "ts-node cleanup.ts emergency"
+    "cleanup:emergency": "ts-node cleanup.ts emergency",
+    "vercel:check": "tsx scripts/check-vercel-deployments.ts",
+    "vercel:health": "tsx scripts/vercel-health-summary.ts",
+    "vercel:test": "tsx scripts/test-vercel-api.ts",
+    "vercel:db": "tsx scripts/view-vercel-database.ts"
   },
   "keywords": [],
   "author": "",

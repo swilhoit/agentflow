@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const now = new Date();
 
     // Calculate date ranges
@@ -21,87 +21,119 @@ export async function GET(request: Request) {
     const twelveMonthsAgoStr = twelveMonthsAgo.toISOString().split('T')[0];
 
     // This month income
-    const thisMonthResult = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND date < ? AND type != 'transfer'
-    `).get(thisMonthStart, nextMonthStart) as any;
+    const { data: thisMonthData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .neq('category', 'transfer');
+
+    const thisMonthTotal = (thisMonthData || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
     // Last month income
-    const lastMonthResult = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND date < ? AND type != 'transfer'
-    `).get(lastMonthStart, thisMonthStart) as any;
+    const { data: lastMonthData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gt('amount', 0)
+      .gte('date', lastMonthStart)
+      .lt('date', thisMonthStart)
+      .neq('category', 'transfer');
+
+    const lastMonthTotal = (lastMonthData || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
     // YTD income
-    const ytdResult = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND type != 'transfer'
-    `).get(ytdStart) as any;
+    const { data: ytdData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gt('amount', 0)
+      .gte('date', ytdStart)
+      .neq('category', 'transfer');
 
-    // Average per month (last 12 months)
-    const avgResult = db.prepare(`
-      SELECT COALESCE(AVG(monthly_income), 0) as avg_income
-      FROM (
-        SELECT strftime('%Y-%m', date) as month, SUM(amount) as monthly_income
-        FROM financial_transactions
-        WHERE amount > 0 AND date >= ? AND type != 'transfer'
-        GROUP BY month
-      )
-    `).get(twelveMonthsAgoStr) as any;
+    const ytdTotal = (ytdData || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
     // Monthly trend (last 12 months)
-    const trendData = db.prepare(`
-      SELECT
-        strftime('%Y-%m', date) as month,
-        COALESCE(SUM(amount), 0) as amount
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND type != 'transfer'
-      GROUP BY month
-      ORDER BY month ASC
-    `).all(twelveMonthsAgoStr) as any[];
+    const { data: trendRaw } = await supabase
+      .from('transactions')
+      .select('date, amount')
+      .gt('amount', 0)
+      .gte('date', twelveMonthsAgoStr)
+      .neq('category', 'transfer')
+      .order('date');
+
+    // Group by month
+    const monthlyMap = new Map<string, number>();
+    (trendRaw || []).forEach(tx => {
+      const month = tx.date.substring(0, 7);
+      monthlyMap.set(month, (monthlyMap.get(month) || 0) + Number(tx.amount));
+    });
+
+    const trendData = Array.from(monthlyMap.entries())
+      .map(([month, amount]) => ({ month, amount }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    // Average per month
+    const avgPerMonth = trendData.length > 0
+      ? trendData.reduce((sum, m) => sum + m.amount, 0) / trendData.length
+      : 0;
 
     // Income sources breakdown (YTD)
-    const sourcesData = db.prepare(`
-      SELECT
-        description as source,
-        COALESCE(SUM(amount), 0) as amount,
-        COUNT(*) as count
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND type != 'transfer'
-      GROUP BY description
-      ORDER BY amount DESC
-      LIMIT 10
-    `).all(ytdStart) as any[];
+    const { data: sourcesRaw } = await supabase
+      .from('transactions')
+      .select('name, amount')
+      .gt('amount', 0)
+      .gte('date', ytdStart)
+      .neq('category', 'transfer');
 
-    const totalSourceIncome = sourcesData.reduce((sum, row) => sum + row.amount, 0);
-    const sources = sourcesData.map((row: any) => ({
-      source: row.source,
-      amount: row.amount,
-      count: row.count,
-      percentage: totalSourceIncome > 0 ? (row.amount / totalSourceIncome) * 100 : 0
-    }));
+    // Group by source (name/description)
+    const sourceMap = new Map<string, { amount: number; count: number }>();
+    (sourcesRaw || []).forEach(tx => {
+      const source = tx.name || 'Unknown';
+      const existing = sourceMap.get(source) || { amount: 0, count: 0 };
+      sourceMap.set(source, {
+        amount: existing.amount + Number(tx.amount),
+        count: existing.count + 1
+      });
+    });
+
+    const totalSourceIncome = Array.from(sourceMap.values()).reduce((sum, s) => sum + s.amount, 0);
+    const sources = Array.from(sourceMap.entries())
+      .map(([source, data]) => ({
+        source,
+        amount: data.amount,
+        count: data.count,
+        percentage: totalSourceIncome > 0 ? (data.amount / totalSourceIncome) * 100 : 0
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 10);
 
     // Recent income transactions
-    const transactions = db.prepare(`
-      SELECT
-        id, date, description, amount, category, account_name, merchant
-      FROM financial_transactions
-      WHERE amount > 0 AND type != 'transfer'
-      ORDER BY date DESC, id DESC
-      LIMIT 100
-    `).all() as any[];
+    const { data: recentTransactions } = await supabase
+      .from('transactions')
+      .select('id, date, name, amount, category, merchant_name')
+      .gt('amount', 0)
+      .neq('category', 'transfer')
+      .order('date', { ascending: false })
+      .limit(100);
+
+    const transactions = (recentTransactions || []).map(t => ({
+      id: t.id,
+      date: t.date,
+      description: t.name,
+      amount: Number(t.amount),
+      category: t.category,
+      account_name: null,
+      merchant: t.merchant_name
+    }));
 
     return NextResponse.json({
       summary: {
-        thisMonth: thisMonthResult.total,
-        lastMonth: lastMonthResult.total,
-        ytd: ytdResult.total,
-        avgPerMonth: avgResult.avg_income,
-        changeFromLastMonth: lastMonthResult.total > 0
-          ? ((thisMonthResult.total - lastMonthResult.total) / lastMonthResult.total) * 100
+        thisMonth: thisMonthTotal,
+        lastMonth: lastMonthTotal,
+        ytd: ytdTotal,
+        avgPerMonth,
+        changeFromLastMonth: lastMonthTotal > 0
+          ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100
           : 0
       },
       trend: trendData,

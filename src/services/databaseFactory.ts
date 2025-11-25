@@ -123,13 +123,15 @@ let databaseInstance: IDatabase | null = null;
 
 /**
  * Get the appropriate database service based on DATABASE_TYPE environment variable
+ * Default is now 'cloudsql' for cloud-first operation
  */
 export function getDatabase(): IDatabase {
   if (databaseInstance) {
     return databaseInstance;
   }
 
-  const databaseType = process.env.DATABASE_TYPE || 'sqlite';
+  // Default to cloud database - only use SQLite if explicitly set
+  const databaseType = process.env.DATABASE_TYPE || 'cloudsql';
 
   if (databaseType === 'cloudsql') {
     // Check if Cloud SQL credentials are configured
@@ -137,14 +139,15 @@ export function getDatabase(): IDatabase {
         !process.env.CLOUDSQL_DATABASE ||
         !process.env.CLOUDSQL_USER ||
         !process.env.CLOUDSQL_PASSWORD) {
-      logger.error('❌ DATABASE_TYPE=cloudsql but Cloud SQL credentials are not configured!');
-      logger.error('   Required: CLOUDSQL_INSTANCE_CONNECTION_NAME, CLOUDSQL_DATABASE, CLOUDSQL_USER, CLOUDSQL_PASSWORD');
-      logger.error('   Falling back to SQLite...');
-
-      const sqliteDb = new DatabaseService();
-      databaseInstance = new SQLiteDatabaseWrapper(sqliteDb);
-      logger.info('📁 Using SQLite database (fallback)');
-      return databaseInstance;
+      logger.error('❌ Cloud SQL credentials not configured!');
+      logger.error('   Required environment variables:');
+      logger.error('   - CLOUDSQL_INSTANCE_CONNECTION_NAME');
+      logger.error('   - CLOUDSQL_DATABASE');
+      logger.error('   - CLOUDSQL_USER');
+      logger.error('   - CLOUDSQL_PASSWORD');
+      logger.error('');
+      logger.error('   Set DATABASE_TYPE=sqlite for local development without cloud');
+      throw new Error('Cloud SQL credentials not configured. Set DATABASE_TYPE=sqlite for local development.');
     }
 
     logger.info('☁️  Initializing Cloud SQL (PostgreSQL) database...');
@@ -159,11 +162,14 @@ export function getDatabase(): IDatabase {
     logger.info('✅ Cloud SQL database initialized');
     logger.info(`   Instance: ${config.instanceConnectionName}`);
     logger.info(`   Database: ${config.database}`);
-  } else {
-    logger.info('📁 Initializing SQLite database...');
+  } else if (databaseType === 'sqlite') {
+    logger.warn('⚠️  Using SQLite database (local development mode)');
+    logger.warn('   For production, configure Cloud SQL credentials');
     const sqliteDb = new DatabaseService();
     databaseInstance = new SQLiteDatabaseWrapper(sqliteDb);
     logger.info('✅ SQLite database initialized');
+  } else {
+    throw new Error(`Unknown DATABASE_TYPE: ${databaseType}. Valid options: 'cloudsql', 'sqlite'`);
   }
 
   return databaseInstance;

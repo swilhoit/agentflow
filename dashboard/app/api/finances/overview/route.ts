@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 interface FinancialOverview {
   summary: {
@@ -44,7 +44,7 @@ interface FinancialOverview {
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -52,118 +52,169 @@ export async function GET(request: Request) {
     const thisMonthStart = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
     const nextMonthStart = `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`;
 
-    const incomeResult = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND date < ? AND type != 'transfer'
-    `).get(thisMonthStart, nextMonthStart) as any;
+    // Get income this month (positive amounts)
+    const { data: incomeData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .neq('category', 'transfer');
 
-    const expensesResult = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ? AND type != 'transfer' AND COALESCE(is_business_expense, 0) = 0
-    `).get(thisMonthStart, nextMonthStart) as any;
+    const totalIncome = (incomeData || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
-    const businessResult = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ? AND is_business_expense = 1
-    `).get(thisMonthStart, nextMonthStart) as any;
+    // Get expenses this month (negative amounts, excluding business expenses)
+    const { data: expenseData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .lt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .neq('category', 'transfer');
 
-    const loansResult = db.prepare(`
-      SELECT COALESCE(SUM(monthly_payment), 0) as total
-      FROM loans WHERE status = 'active'
-    `).get() as any;
+    const totalExpenses = (expenseData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
-    // Get account balances by summing all transactions per account
-    // For duplicate accounts (same name), only show the most recently updated one
-    const accounts = db.prepare(`
-      SELECT
-        account_id,
-        account_name as name,
-        account_type as type,
-        institution,
-        COALESCE(SUM(amount), 0) as balance,
-        MAX(date) as last_transaction
-      FROM financial_transactions
-      WHERE account_id IS NOT NULL
-      GROUP BY account_id, account_name, account_type, institution
-      ORDER BY ABS(balance) DESC
-    `).all() as any[];
+    // Business expenses - transactions with category 'Business'
+    const { data: businessData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .lt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .eq('category', 'Business');
 
-    // Filter out duplicate accounts - keep only the most recent one for each name
-    const uniqueAccounts = accounts.reduce((acc: any[], current: any) => {
-      const existing = acc.find(a => a.name === current.name);
-      if (!existing) {
-        acc.push(current);
-      } else if (current.last_transaction > existing.last_transaction) {
-        // Replace with more recent account
-        const index = acc.indexOf(existing);
-        acc[index] = current;
-      }
-      return acc;
-    }, []);
+    const businessExpenses = (businessData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
+    // Get loan payments - try the loans table if it exists
+    let loanPayments = 0;
+    try {
+      const { data: loansData } = await supabase
+        .from('financial_goals')
+        .select('target_amount')
+        .eq('goal_type', 'debt')
+        .eq('status', 'active');
+      
+      // Approximate monthly from total target
+      loanPayments = (loansData || []).reduce((sum, loan) => sum + (Number(loan.target_amount) / 12), 0);
+    } catch {
+      // Loans table might not exist
+    }
+
+    // Get account balances from teller_accounts
+    const { data: accountsData } = await supabase
+      .from('teller_accounts')
+      .select('account_id, name, type, institution_name, current_balance')
+      .eq('is_active', true)
+      .order('current_balance', { ascending: false });
+
+    const accounts = (accountsData || []).map(acc => ({
+      name: acc.name || acc.account_id,
+      type: acc.type || 'unknown',
+      balance: Number(acc.current_balance) || 0,
+      institution: acc.institution_name || 'Unknown'
+    }));
+
+    // Monthly trend - last 6 months
     const sixMonthsAgo = new Date(now);
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
 
-    const monthlyData = db.prepare(`
-      SELECT strftime('%Y-%m', date) as month,
-        COALESCE(SUM(CASE WHEN amount > 0 AND type != 'transfer' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN amount < 0 AND type != 'transfer' THEN ABS(amount) ELSE 0 END), 0) as expenses
-      FROM financial_transactions WHERE date >= ? GROUP BY month ORDER BY month ASC
-    `).all(sixMonthsAgoStr) as any[];
+    const { data: monthlyData } = await supabase
+      .from('transactions')
+      .select('date, amount, category')
+      .gte('date', sixMonthsAgoStr)
+      .neq('category', 'transfer')
+      .order('date');
 
-    const monthlyTrend = monthlyData.map((row: any) => ({
-      month: row.month,
-      income: row.income,
-      expenses: row.expenses,
-      net: row.income - row.expenses
-    }));
+    // Group by month
+    const monthlyMap = new Map<string, { income: number; expenses: number }>();
+    (monthlyData || []).forEach(tx => {
+      const month = tx.date.substring(0, 7); // YYYY-MM
+      if (!monthlyMap.has(month)) {
+        monthlyMap.set(month, { income: 0, expenses: 0 });
+      }
+      const entry = monthlyMap.get(month)!;
+      const amount = Number(tx.amount);
+      if (amount > 0) {
+        entry.income += amount;
+      } else {
+        entry.expenses += Math.abs(amount);
+      }
+    });
 
-    const categoryData = db.prepare(`
-      SELECT COALESCE(category, 'Uncategorized') as category, COALESCE(SUM(ABS(amount)), 0) as amount
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ? AND type != 'transfer' AND COALESCE(is_business_expense, 0) = 0
-      GROUP BY category ORDER BY amount DESC LIMIT 8
-    `).all(thisMonthStart, nextMonthStart) as any[];
+    const monthlyTrend = Array.from(monthlyMap.entries())
+      .map(([month, data]) => ({
+        month,
+        income: data.income,
+        expenses: data.expenses,
+        net: data.income - data.expenses
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
 
-    const totalCategoryAmount = categoryData.reduce((sum: number, row: any) => sum + row.amount, 0);
-    const categoryBreakdown = categoryData.map((row: any) => ({
-      category: row.category,
-      amount: row.amount,
-      percentage: totalCategoryAmount > 0 ? (row.amount / totalCategoryAmount) * 100 : 0
-    }));
+    // Category breakdown
+    const { data: categoryData } = await supabase
+      .from('transactions')
+      .select('category, amount')
+      .lt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .neq('category', 'transfer')
+      .not('category', 'is', null);
 
-    const upcomingLoans = db.prepare(`
-      SELECT name, monthly_payment as amount, payoff_date
-      FROM loans WHERE status = 'active' ORDER BY monthly_payment DESC LIMIT 5
-    `).all() as any[];
+    const categoryMap = new Map<string, number>();
+    (categoryData || []).forEach(tx => {
+      const cat = tx.category || 'Uncategorized';
+      categoryMap.set(cat, (categoryMap.get(cat) || 0) + Math.abs(Number(tx.amount)));
+    });
+
+    const totalCategoryAmount = Array.from(categoryMap.values()).reduce((sum, val) => sum + val, 0);
+    const categoryBreakdown = Array.from(categoryMap.entries())
+      .map(([category, amount]) => ({
+        category,
+        amount,
+        percentage: totalCategoryAmount > 0 ? (amount / totalCategoryAmount) * 100 : 0
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 8);
+
+    // Upcoming payments (from financial_goals with type 'debt')
+    const { data: upcomingGoals } = await supabase
+      .from('financial_goals')
+      .select('goal_name, target_amount, target_date')
+      .eq('goal_type', 'debt')
+      .eq('status', 'active')
+      .order('target_amount', { ascending: false })
+      .limit(5);
 
     const nextMonth = new Date(now);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     const nextMonthStr = nextMonth.toISOString().split('T')[0].substring(0, 7);
 
-    const upcomingPayments = upcomingLoans.map((loan: any) => ({
+    const upcomingPayments = (upcomingGoals || []).map(goal => ({
       type: 'loan' as const,
-      name: loan.name,
-      amount: loan.amount,
+      name: goal.goal_name,
+      amount: Number(goal.target_amount) / 12, // Approximate monthly
       dueDate: `${nextMonthStr}-01`
     }));
 
-    // Get recent transactions (last 10)
-    const recentTransactions = db.prepare(`
-      SELECT date, description, amount, category, merchant
-      FROM financial_transactions
-      WHERE type != 'transfer'
-      ORDER BY date DESC, id DESC
-      LIMIT 10
-    `).all() as any[];
+    // Recent transactions
+    const { data: recentTxData } = await supabase
+      .from('transactions')
+      .select('date, name, amount, category, merchant_name')
+      .neq('category', 'transfer')
+      .order('date', { ascending: false })
+      .limit(10);
 
-    const totalIncome = incomeResult.total;
-    const totalExpenses = expensesResult.total;
-    const netSavings = totalIncome - totalExpenses - businessResult.total - loansResult.total;
+    const recentTransactions = (recentTxData || []).map(tx => ({
+      date: tx.date,
+      description: tx.name || '',
+      amount: Number(tx.amount),
+      category: tx.category,
+      merchant: tx.merchant_name
+    }));
+
+    // Calculate summary
+    const netSavings = totalIncome - totalExpenses - businessExpenses - loanPayments;
     const savingsRate = totalIncome > 0 ? (netSavings / totalIncome) * 100 : 0;
 
     const overview: FinancialOverview = {
@@ -172,15 +223,10 @@ export async function GET(request: Request) {
         totalExpenses,
         netSavings,
         savingsRate,
-        businessExpenses: businessResult.total,
-        loanPayments: loansResult.total
+        businessExpenses,
+        loanPayments
       },
-      accounts: uniqueAccounts.map((acc: any) => ({
-        name: acc.name || acc.account_id,
-        type: acc.type || 'unknown',
-        balance: acc.balance || 0,
-        institution: acc.institution || 'Unknown'
-      })),
+      accounts,
       monthlyTrend,
       categoryBreakdown,
       upcomingPayments,

@@ -1,44 +1,48 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
 
     // Get the latest investment thesis
-    const latestThesis = db.prepare(`
-      SELECT
-        title,
-        summary,
-        detailed_analysis,
-        week_start,
-        week_end
-      FROM weekly_analysis
-      WHERE analysis_type = 'thesis'
-      ORDER BY week_start DESC
-      LIMIT 1
-    `).get() as any;
+    const { data: thesisData } = await supabase
+      .from('weekly_analysis')
+      .select('title, executive_summary, detailed_analysis, week_start, week_end')
+      .eq('analysis_type', 'thesis')
+      .order('week_start', { ascending: false })
+      .limit(1);
+
+    const latestThesis = thesisData?.[0] 
+      ? { ...thesisData[0], summary: thesisData[0].executive_summary }
+      : null;
 
     if (!latestThesis) {
       return NextResponse.json({ error: 'No investment thesis found' }, { status: 404 });
     }
 
+    // Get latest market data date
+    const { data: dateData } = await supabase
+      .from('market_data')
+      .select('date')
+      .order('date', { ascending: false })
+      .limit(1);
+
+    const latestDate = dateData?.[0]?.date;
+
     // Get watchlist symbols
-    const latestDate = db.prepare(`
-      SELECT MAX(date) as latest_date FROM market_data
-    `).get() as any;
+    const { data: watchlistSymbols } = latestDate 
+      ? await supabase
+          .from('market_data')
+          .select('symbol, name')
+          .eq('date', latestDate)
+          .order('symbol')
+          .limit(15)
+      : { data: [] };
 
-    const watchlistSymbols = db.prepare(`
-      SELECT DISTINCT symbol, name
-      FROM market_data
-      WHERE date = ?
-      ORDER BY symbol
-      LIMIT 15
-    `).all(latestDate?.latest_date || '') as any[];
-
-    const symbolList = watchlistSymbols.map((s: any) => s.symbol).join(', ');
+    const symbolList = (watchlistSymbols || []).map(s => s.symbol).join(', ');
 
     // Call Perplexity API for daily analysis
     const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
@@ -62,7 +66,7 @@ CORE INVESTMENT THESIS:
 ${latestThesis.summary}
 
 DETAILED THESIS ANALYSIS:
-${latestThesis.detailed_analysis}
+${JSON.stringify(latestThesis.detailed_analysis) || 'Not available'}
 
 CURRENT WATCHLIST: ${symbolList}
 
@@ -163,7 +167,7 @@ Today's date: ${today}`;
     return NextResponse.json({
       analysis: analysis || 'No analysis available',
       thesis: latestThesis,
-      watchlist: watchlistSymbols,
+      watchlist: watchlistSymbols || [],
       timestamp: new Date().toISOString(),
       source: 'Perplexity AI',
       model: 'sonar',

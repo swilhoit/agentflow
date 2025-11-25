@@ -91,6 +91,14 @@ export interface BotConfig {
   trelloBoardId?: string;
   trelloInboxListId?: string;
   trelloDoneListId?: string;
+  // Deployment tracking configuration
+  deploymentsChannelId?: string;
+  deploymentTrackingEnabled?: boolean;
+  vercelTrackingEnabled?: boolean;
+  githubTrackingEnabled?: boolean;
+  githubRepos?: string[];
+  githubWorkflowFilter?: string[];
+  deploymentCheckInterval?: string;
 }
 
 export interface TrelloTaskRequest {

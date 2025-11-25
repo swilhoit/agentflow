@@ -95,7 +95,17 @@ export default function Home() {
             </div>
 
             {/* Module Cards with Preview Data */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              {/* Diagnostics Card */}
+              <Link
+                href="/diagnostics"
+                className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors group"
+              >
+                <h2 className="text-lg font-bold font-mono uppercase mb-2 group-hover:text-accent transition-colors">🔍 DIAGNOSTICS</h2>
+                <div className="text-2xl font-bold font-mono mb-1 text-accent">SYSTEM OK</div>
+                <div className="text-xs text-muted-foreground font-mono">CHECK CONNECTIONS →</div>
+              </Link>
+
               {/* Income Tracker Card */}
               <Link
                 href="/finances/income"
@@ -197,28 +207,36 @@ export default function Home() {
         ) : null}
 
         {/* Additional Module Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Link
+            href="/agents"
+            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors group"
+          >
+            <h2 className="text-lg font-bold font-mono uppercase mb-2 group-hover:text-accent transition-colors">🤖 AGENTS</h2>
+            <p className="text-sm text-muted-foreground font-mono">Manage bots & tasks →</p>
+          </Link>
+
           <Link
             href="/investments"
-            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors"
+            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors group"
           >
-            <h2 className="text-lg font-bold font-mono uppercase mb-2">📈 INVESTMENTS</h2>
+            <h2 className="text-lg font-bold font-mono uppercase mb-2 group-hover:text-accent transition-colors">📈 INVESTMENTS</h2>
             <p className="text-sm text-muted-foreground font-mono">Market data & portfolio →</p>
           </Link>
 
           <Link
             href="/goals"
-            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors"
+            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors group"
           >
-            <h2 className="text-lg font-bold font-mono uppercase mb-2">🎯 GOALS</h2>
+            <h2 className="text-lg font-bold font-mono uppercase mb-2 group-hover:text-accent transition-colors">🎯 GOALS</h2>
             <p className="text-sm text-muted-foreground font-mono">Daily goals & productivity →</p>
           </Link>
 
           <Link
             href="/tasks"
-            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors"
+            className="border border-border bg-card p-6 hover:bg-muted/50 transition-colors group"
           >
-            <h2 className="text-lg font-bold font-mono uppercase mb-2">✅ TASKS</h2>
+            <h2 className="text-lg font-bold font-mono uppercase mb-2 group-hover:text-accent transition-colors">✅ TASKS</h2>
             <p className="text-sm text-muted-foreground font-mono">Trello & agent monitoring →</p>
           </Link>
         </div>

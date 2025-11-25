@@ -66,7 +66,15 @@ export function loadConfig(): BotConfig {
     // Trello configuration
     trelloBoardId: process.env.TRELLO_BOARD_ID,
     trelloInboxListId: process.env.TRELLO_INBOX_LIST_ID,
-    trelloDoneListId: process.env.TRELLO_DONE_LIST_ID
+    trelloDoneListId: process.env.TRELLO_DONE_LIST_ID,
+    // Deployment tracking configuration
+    deploymentsChannelId: process.env.DEPLOYMENTS_CHANNEL_ID,
+    deploymentTrackingEnabled: process.env.DEPLOYMENT_TRACKING_ENABLED !== 'false',
+    vercelTrackingEnabled: process.env.VERCEL_TRACKING_ENABLED !== 'false',
+    githubTrackingEnabled: process.env.GITHUB_TRACKING_ENABLED !== 'false',
+    githubRepos: process.env.GITHUB_REPOS?.split(',').filter(r => r.trim().length > 0) || [],
+    githubWorkflowFilter: process.env.GITHUB_WORKFLOW_FILTER?.split(',').filter(w => w.trim().length > 0) || [],
+    deploymentCheckInterval: process.env.DEPLOYMENT_CHECK_INTERVAL || '*/5 * * * *'
   };
 }
 

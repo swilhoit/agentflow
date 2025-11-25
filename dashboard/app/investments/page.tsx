@@ -4,6 +4,14 @@ import React, { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
+import type { PortfolioCategory } from '@/lib/portfolio-categories';
+
+interface Portfolio {
+  id: PortfolioCategory;
+  name: string;
+  description: string;
+  symbolCount: number;
+}
 
 interface InvestmentData {
   watchlist: Array<{
@@ -53,6 +61,8 @@ interface InvestmentData {
     topLoser: any;
   };
   lastUpdated: string;
+  category: PortfolioCategory;
+  portfolios: Portfolio[];
 }
 
 export default function InvestmentsPage() {
@@ -65,16 +75,20 @@ export default function InvestmentsPage() {
   const [stockHistory, setStockHistory] = useState<any>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedAnalysis, setExpandedAnalysis] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<PortfolioCategory>('all');
 
   useEffect(() => {
     fetchInvestments();
     fetchDailyAnalysis();
-  }, []);
+  }, [selectedCategory]);
 
   const fetchInvestments = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/investments');
+      const url = selectedCategory === 'all'
+        ? '/api/investments'
+        : `/api/investments?category=${selectedCategory}`;
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Failed to fetch investments');
       }
@@ -193,6 +207,36 @@ export default function InvestmentsPage() {
             {data.lastUpdated && ` • Last updated: ${formatDate(data.lastUpdated)}`}
           </p>
         </div>
+
+        {/* Portfolio Tabs */}
+        {data?.portfolios && (
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`px-4 py-2 font-mono text-xs uppercase whitespace-nowrap transition-colors ${
+                selectedCategory === 'all'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'bg-card border border-border hover:bg-muted'
+              }`}
+            >
+              ALL ({data.portfolios.reduce((sum, p) => sum + p.symbolCount, 0)})
+            </button>
+            {data.portfolios.map((portfolio) => (
+              <button
+                key={portfolio.id}
+                onClick={() => setSelectedCategory(portfolio.id)}
+                className={`px-4 py-2 font-mono text-xs uppercase whitespace-nowrap transition-colors ${
+                  selectedCategory === portfolio.id
+                    ? 'bg-accent text-accent-foreground'
+                    : 'bg-card border border-border hover:bg-muted'
+                }`}
+                title={portfolio.description}
+              >
+                {portfolio.name} ({portfolio.symbolCount})
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Portfolio Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

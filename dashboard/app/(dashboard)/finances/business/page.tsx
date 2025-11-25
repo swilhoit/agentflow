@@ -169,7 +169,7 @@ export default function BusinessExpensesPage() {
       <div className="p-8 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold"><� BUSINESS EXPENSES TRACKER</h1>
+        <h1 className="text-3xl font-bold">💼 BUSINESS EXPENSES TRACKER</h1>
         <p className="text-sm text-muted-foreground mt-2">
           Separate business spending for taxes (IRS-compliant categories)
         </p>
@@ -245,7 +245,7 @@ export default function BusinessExpensesPage() {
                 cx="50%"
                 cy="50%"
                 outerRadius={100}
-                label={({ percentage }) => `${percentage.toFixed(1)}%`}
+                label={({ percent }) => percent ? `${(percent * 100).toFixed(1)}%` : ''}
                 labelLine={{ stroke: 'var(--border)' }}
               >
                 {data.categoryBreakdown.map((entry, index) => (

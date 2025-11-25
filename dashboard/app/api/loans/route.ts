@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 export interface Loan {
-  id?: number;
+  id?: string;
   user_id: string;
   name: string;
   original_amount: number;
@@ -38,7 +38,6 @@ function calculateMonthsRemaining(balance: number, monthlyPayment: number, inter
   }
 
   // Using loan formula: n = -log(1 - r*P/A) / log(1 + r)
-  // where n = months, r = monthly rate, P = principal, A = monthly payment
   const months = -Math.log(1 - (monthlyRate * balance) / monthlyPayment) / Math.log(1 + monthlyRate);
   return Math.ceil(months);
 }
@@ -51,16 +50,37 @@ function calculateTotalInterest(balance: number, monthlyPayment: number, interes
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId') || 'default_user';
 
-    // Get all active loans for user
-    const loans = db.prepare(`
-      SELECT * FROM loans
-      WHERE user_id = ? AND status = 'active'
-      ORDER BY current_balance DESC
-    `).all(userId) as Loan[];
+    // Get all active loans for user from financial_goals table (type = debt)
+    const { data: goalsData, error } = await supabase
+      .from('financial_goals')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('goal_type', 'debt')
+      .eq('status', 'active')
+      .order('target_amount', { ascending: false });
+
+    if (error) throw error;
+
+    // Map financial_goals to loan format
+    const loans: Loan[] = (goalsData || []).map(goal => ({
+      id: goal.id,
+      user_id: goal.user_id,
+      name: goal.goal_name,
+      original_amount: Number(goal.target_amount),
+      current_balance: Number(goal.target_amount) - Number(goal.current_amount || 0),
+      interest_rate: 0, // Default rate
+      monthly_payment: Number(goal.target_amount) / 12, // Estimate
+      start_date: goal.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+      payoff_date: goal.target_date,
+      loan_type: 'other' as const,
+      status: 'active' as const,
+      created_at: goal.created_at,
+      updated_at: goal.updated_at
+    }));
 
     // Calculate summary statistics
     let totalOwed = 0;
@@ -119,7 +139,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const loan = await request.json() as Loan;
 
     // Validate required fields
@@ -148,29 +168,26 @@ export async function POST(request: Request) {
       loan.payoff_date = payoffDate.toISOString().split('T')[0];
     }
 
-    // Insert into database
-    const result = db.prepare(`
-      INSERT INTO loans (
-        user_id, name, original_amount, current_balance, interest_rate,
-        monthly_payment, start_date, payoff_date, loan_type, status
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      loan.user_id,
-      loan.name,
-      loan.original_amount,
-      loan.current_balance,
-      loan.interest_rate,
-      loan.monthly_payment,
-      loan.start_date,
-      loan.payoff_date,
-      loan.loan_type,
-      loan.status
-    );
+    // Insert as a financial_goal with type 'debt'
+    const { data, error } = await supabase
+      .from('financial_goals')
+      .insert({
+        user_id: loan.user_id,
+        goal_name: loan.name,
+        goal_type: 'debt',
+        target_amount: loan.original_amount,
+        current_amount: loan.original_amount - loan.current_balance,
+        target_date: loan.payoff_date,
+        status: 'active'
+      })
+      .select('id')
+      .single();
+
+    if (error) throw error;
 
     return NextResponse.json({
       success: true,
-      loanId: result.lastInsertRowid
+      loanId: data?.id
     });
 
   } catch (error: any) {
@@ -184,7 +201,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const { searchParams } = new URL(request.url);
     const loanId = searchParams.get('id');
 
@@ -195,7 +212,12 @@ export async function DELETE(request: Request) {
       );
     }
 
-    db.prepare('DELETE FROM loans WHERE id = ?').run(loanId);
+    const { error } = await supabase
+      .from('financial_goals')
+      .delete()
+      .eq('id', loanId);
+
+    if (error) throw error;
 
     return NextResponse.json({ success: true });
 

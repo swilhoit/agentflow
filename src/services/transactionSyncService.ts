@@ -117,15 +117,34 @@ export class TransactionSyncService {
     logger.info('🔄 Starting transaction sync...');
 
     try {
-      // Get all connected accounts
-      const accountsResult = await this.advisorTools.executeTool('get_accounts', {});
-
-      if (accountsResult.error) {
-        throw new Error(`Failed to fetch accounts: ${accountsResult.error}`);
+      // Get accounts from BOTH tokens (AmEx + Truist)
+      const allAccounts: any[] = [];
+      
+      // Token 1: Primary (Truist)
+      const accountsResult1 = await this.advisorTools.executeTool('get_accounts', {});
+      if (!accountsResult1.error && accountsResult1.accounts) {
+        allAccounts.push(...accountsResult1.accounts.map((a: any) => ({ ...a, tokenSource: 'primary' })));
+      }
+      
+      // Token 2: AmEx (if available)
+      const amexToken = process.env.TELLER_API_TOKEN_AMEX;
+      if (amexToken) {
+        const amexTools = new AdvisorTools();
+        // Temporarily override token
+        const originalToken = (amexTools as any).tellerToken;
+        (amexTools as any).tellerToken = amexToken;
+        
+        const accountsResult2 = await amexTools.executeTool('get_accounts', {});
+        if (!accountsResult2.error && accountsResult2.accounts) {
+          allAccounts.push(...accountsResult2.accounts.map((a: any) => ({ ...a, tokenSource: 'amex' })));
+        }
+        
+        // Restore original token
+        (amexTools as any).tellerToken = originalToken;
       }
 
-      const accounts = accountsResult.accounts || [];
-      logger.info(`Found ${accounts.length} account(s) to sync`);
+      const accounts = allAccounts;
+      logger.info(`Found ${accounts.length} account(s) to sync across all tokens`);
 
       let totalSynced = 0;
       let totalNew = 0;
@@ -134,11 +153,21 @@ export class TransactionSyncService {
 
       // Sync transactions for each account
       for (const account of accounts) {
-        logger.info(`Syncing account: ${account.name} (${account.id})`);
+        logger.info(`Syncing account: ${account.name} (${account.id}) [${account.tokenSource}]`);
 
         try {
+          // Use the correct token for this account
+          let toolsToUse = this.advisorTools;
+          if (account.tokenSource === 'amex') {
+            const amexToken = process.env.TELLER_API_TOKEN_AMEX;
+            if (amexToken) {
+              toolsToUse = new AdvisorTools();
+              (toolsToUse as any).tellerToken = amexToken;
+            }
+          }
+          
           // Fetch transactions (up to 500 for the past period)
-          const txnResult = await this.advisorTools.executeTool('get_transactions', {
+          const txnResult = await toolsToUse.executeTool('get_transactions', {
             account_id: account.id,
             count: 500
           });

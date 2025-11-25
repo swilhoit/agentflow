@@ -10,6 +10,9 @@ import { getCleanupManager } from './utils/cleanupManager';
 import { MarketUpdateScheduler, DEFAULT_SCHEDULE_CONFIG } from './services/marketUpdateScheduler';
 import { startCacheCleanup, globalCache } from './utils/smartCache';
 import { SupervisorService } from './services/supervisor';
+import { VercelIntegration } from './services/vercelIntegration';
+import { AgentManagerService } from './services/agentManager';
+import { DeploymentTracker, createDeploymentTrackerFromEnv } from './services/deploymentTracker';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -194,10 +197,106 @@ async function main() {
       );
       supervisorService.start();
 
+      // Initialize Agent Manager
+      const agentManager = new AgentManagerService((bot as DiscordBotRealtime).getClient());
+
+      // Register task executors for market scheduler and supervisor
+      if (marketScheduler) {
+        agentManager.registerTaskExecutor('market-scheduler', async (task) => {
+          const taskConfig = task.config ? JSON.parse(task.config) : {};
+          switch (taskConfig.type) {
+            case 'daily_update':
+              await marketScheduler.triggerDailyUpdate();
+              return { success: true, message: 'Daily market update completed' };
+            case 'market_close':
+              await marketScheduler.triggerMarketCloseSummary();
+              return { success: true, message: 'Market close summary completed' };
+            case 'news_check':
+              await marketScheduler.triggerNewsCheck();
+              return { success: true, message: 'News check completed' };
+            case 'weekly_analysis':
+              await marketScheduler.triggerWeeklyAnalysis();
+              return { success: true, message: 'Weekly analysis completed' };
+            default:
+              throw new Error(`Unknown market scheduler task type: ${taskConfig.type}`);
+          }
+        });
+      }
+
+      agentManager.registerTaskExecutor('supervisor', async (task) => {
+        const taskConfig = task.config ? JSON.parse(task.config) : {};
+        switch (taskConfig.type) {
+          case 'morning_briefing':
+            await supervisorService.runDailyBriefing('Morning Kickoff');
+            return { success: true, message: 'Morning briefing completed' };
+          case 'evening_wrapup':
+            await supervisorService.runDailyBriefing('Evening Wrap-up');
+            return { success: true, message: 'Evening wrap-up completed' };
+          case 'health_check':
+            return { success: true, message: 'Health check completed' };
+          default:
+            throw new Error(`Unknown supervisor task type: ${taskConfig.type}`);
+        }
+      });
+
+      // Start all enabled recurring tasks
+      agentManager.startAllTasks();
+      logger.info('✅ Agent Manager recurring tasks started');
+
+      // Initialize Vercel Integration (legacy - for VERCEL_ALERT_CHANNEL_ID)
+      let vercelIntegration: VercelIntegration | undefined;
+      if (process.env.VERCEL_API_TOKEN && process.env.VERCEL_ALERT_CHANNEL_ID) {
+        try {
+          vercelIntegration = new VercelIntegration(
+            (bot as DiscordBotRealtime).getClient(),
+            agentManager
+          );
+          await vercelIntegration.initialize();
+          logger.info('✅ Vercel monitoring integration initialized');
+        } catch (error) {
+          logger.error('Failed to initialize Vercel monitoring:', error);
+          logger.warn('Continuing without Vercel monitoring');
+        }
+      } else {
+        logger.info('Vercel alert channel not configured - legacy Vercel monitoring disabled');
+      }
+
+      // Initialize Deployment Tracker (unified Vercel + GitHub tracking)
+      let deploymentTracker: DeploymentTracker | null = null;
+      if (process.env.DEPLOYMENTS_CHANNEL_ID) {
+        try {
+          deploymentTracker = createDeploymentTrackerFromEnv();
+          if (deploymentTracker) {
+            deploymentTracker.setDiscordClient((bot as DiscordBotRealtime).getClient());
+            deploymentTracker.start();
+            logger.info('✅ Deployment Tracker initialized (Vercel + GitHub)');
+            
+            // Register with agent manager
+            agentManager.registerTaskExecutor('deployment-check', async () => {
+              if (!deploymentTracker) return;
+              await deploymentTracker.triggerCheck();
+            });
+            
+            agentManager.registerTaskExecutor('deployment-health', async () => {
+              if (!deploymentTracker) return;
+              await deploymentTracker.sendHealthSummary();
+            });
+          }
+        } catch (error) {
+          logger.error('Failed to initialize Deployment Tracker:', error);
+          logger.warn('Continuing without Deployment Tracker');
+        }
+      } else {
+        logger.info('DEPLOYMENTS_CHANNEL_ID not configured - unified deployment tracking disabled');
+      }
+
       // Graceful shutdown
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
         if (marketScheduler) marketScheduler.stop();
+        if (vercelIntegration) vercelIntegration.stop();
+        if (deploymentTracker) deploymentTracker.stop();
+        agentManager.stopAllTasks(); // Stop agent manager tasks
         supervisorService.stop(); // Stop supervisor
         await bot.stop();
         await orchestratorServer.stop();
@@ -209,6 +308,9 @@ async function main() {
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         if (marketScheduler) marketScheduler.stop();
+        if (vercelIntegration) vercelIntegration.stop();
+        if (deploymentTracker) deploymentTracker.stop();
+        agentManager.stopAllTasks(); // Stop agent manager tasks
         supervisorService.stop(); // Stop supervisor
         await bot.stop();
         await orchestratorServer.stop();

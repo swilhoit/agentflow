@@ -192,7 +192,7 @@ export default function IncomeTrackerPage() {
                 cx="50%"
                 cy="50%"
                 outerRadius={100}
-                label={({ percentage }) => `${percentage.toFixed(1)}%`}
+                label={({ percent }) => percent ? `${(percent * 100).toFixed(1)}%` : ''}
                 labelLine={{ stroke: 'var(--border)' }}
               >
                 {data.sources.map((entry, index) => (

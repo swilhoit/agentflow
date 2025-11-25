@@ -1,62 +1,93 @@
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { getSupabase } from '@/lib/supabase';
 
 export async function GET(request: Request) {
   try {
-    const db = getDatabase();
+    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
 
     const thisMonthStart = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
     const nextMonthStart = `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`;
-    const ytdStart = `${currentYear}-01-01`;
 
     // Get actual income this month
-    const actualIncome = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE amount > 0 AND date >= ? AND date < ?
-    `).get(thisMonthStart, nextMonthStart) as any;
+    const { data: incomeData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .gt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart);
+
+    const actualIncome = (incomeData || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
     // Get actual expenses this month
-    const actualExpenses = db.prepare(`
-      SELECT COALESCE(SUM(ABS(amount)), 0) as total
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ?
-    `).get(thisMonthStart, nextMonthStart) as any;
+    const { data: expenseData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .lt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart);
+
+    const actualExpenses = (expenseData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
 
     // Get spending by category this month
-    const categorySpending = db.prepare(`
-      SELECT
-        category,
-        COALESCE(SUM(ABS(amount)), 0) as spent
-      FROM financial_transactions
-      WHERE amount < 0 AND date >= ? AND date < ? AND category IS NOT NULL
-      GROUP BY category
-      ORDER BY spent DESC
-    `).all(thisMonthStart, nextMonthStart) as any[];
+    const { data: categoryData } = await supabase
+      .from('transactions')
+      .select('category, amount')
+      .lt('amount', 0)
+      .gte('date', thisMonthStart)
+      .lt('date', nextMonthStart)
+      .not('category', 'is', null);
+
+    const categorySpending = new Map<string, number>();
+    (categoryData || []).forEach(tx => {
+      const cat = tx.category || 'Uncategorized';
+      categorySpending.set(cat, (categorySpending.get(cat) || 0) + Math.abs(Number(tx.amount)));
+    });
 
     // Get monthly progress (last 6 months)
     const sixMonthsAgo = new Date(now);
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
 
-    const monthlyProgress = db.prepare(`
-      SELECT
-        strftime('%Y-%m', date) as month,
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) as expenses
-      FROM financial_transactions
-      WHERE date >= ?
-      GROUP BY month
-      ORDER BY month
-    `).all(sixMonthsAgo.toISOString().split('T')[0]) as any[];
+    const { data: monthlyData } = await supabase
+      .from('transactions')
+      .select('date, amount')
+      .gte('date', sixMonthsAgoStr)
+      .order('date');
+
+    // Group by month
+    const monthlyMap = new Map<string, { income: number; expenses: number }>();
+    (monthlyData || []).forEach(tx => {
+      const month = tx.date.substring(0, 7);
+      if (!monthlyMap.has(month)) {
+        monthlyMap.set(month, { income: 0, expenses: 0 });
+      }
+      const entry = monthlyMap.get(month)!;
+      const amount = Number(tx.amount);
+      if (amount > 0) {
+        entry.income += amount;
+      } else {
+        entry.expenses += Math.abs(amount);
+      }
+    });
+
+    const monthlyProgress = Array.from(monthlyMap.entries())
+      .map(([month, data]) => ({
+        month,
+        income: data.income,
+        expenses: data.expenses,
+        savings: data.income - data.expenses,
+        savingsRate: data.income > 0 ? ((data.income - data.expenses) / data.income) * 100 : 0
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
 
     // Calculate savings rate
-    const netSavings = actualIncome.total - actualExpenses.total;
-    const savingsRate = actualIncome.total > 0 ? (netSavings / actualIncome.total) * 100 : 0;
+    const netSavings = actualIncome - actualExpenses;
+    const savingsRate = actualIncome > 0 ? (netSavings / actualIncome) * 100 : 0;
 
-    // Hardcoded goals (these could come from a goals table in the future)
+    // Default goals (these could come from a goals table in the future)
     const goals = {
       monthlyIncome: 15000,
       monthlyExpenses: 8000,
@@ -69,12 +100,12 @@ export async function GET(request: Request) {
         'Utilities': 200,
         'Healthcare': 300,
         'Travel': 500
-      }
+      } as Record<string, number>
     };
 
     // Calculate category progress
     const categoryProgress = Object.entries(goals.categories).map(([category, target]) => {
-      const spent = categorySpending.find(c => c.category === category)?.spent || 0;
+      const spent = categorySpending.get(category) || 0;
       return {
         category,
         target,
@@ -88,14 +119,14 @@ export async function GET(request: Request) {
     return NextResponse.json({
       currentMonth: {
         income: {
-          actual: actualIncome.total,
+          actual: actualIncome,
           target: goals.monthlyIncome,
-          percentage: (actualIncome.total / goals.monthlyIncome) * 100
+          percentage: (actualIncome / goals.monthlyIncome) * 100
         },
         expenses: {
-          actual: actualExpenses.total,
+          actual: actualExpenses,
           target: goals.monthlyExpenses,
-          percentage: (actualExpenses.total / goals.monthlyExpenses) * 100
+          percentage: (actualExpenses / goals.monthlyExpenses) * 100
         },
         savingsRate: {
           actual: savingsRate,
@@ -104,13 +135,7 @@ export async function GET(request: Request) {
         }
       },
       categoryProgress,
-      monthlyProgress: monthlyProgress.map(m => ({
-        month: m.month,
-        income: m.income,
-        expenses: m.expenses,
-        savings: m.income - m.expenses,
-        savingsRate: m.income > 0 ? ((m.income - m.expenses) / m.income) * 100 : 0
-      })),
+      monthlyProgress,
       goals
     });
   } catch (error: any) {

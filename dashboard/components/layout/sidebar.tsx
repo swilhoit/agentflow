@@ -12,11 +12,20 @@ import {
   Target,
   CheckSquare,
   Settings,
-  BarChart3
+  BarChart3,
+  Bot,
+  Activity,
+  LogOut
 } from 'lucide-react';
 
 const navigation = [
   { name: 'DASHBOARD', href: '/', icon: Home },
+  { name: 'DIAGNOSTICS', href: '/diagnostics', icon: Activity },
+  { name: 'AGENTS', href: '/agents', icon: Bot, children: [
+    { name: 'Tasks', href: '/agents/tasks' },
+    { name: 'Executions', href: '/agents/executions' },
+    { name: 'Logs', href: '/agents/logs' },
+  ]},
   { name: 'FINANCES', href: '/finances', icon: DollarSign, children: [
     { name: 'Income', href: '/finances/income' },
     { name: 'Business', href: '/finances/business' },
@@ -31,6 +40,11 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  
+  const handleLogout = async () => {
+    await fetch('/api/auth', { method: 'DELETE' });
+    window.location.href = '/login';
+  };
 
   return (
     <div className="w-64 border-r border-border bg-card h-screen fixed left-0 top-0 flex flex-col">
@@ -82,9 +96,18 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-border flex items-center justify-between">
-        <div className="text-xs text-muted-foreground font-mono">v1.0.0</div>
-        <ThemeToggle />
+      <div className="p-4 border-t border-border">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs text-muted-foreground font-mono">v1.0.0</div>
+          <ThemeToggle />
+        </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 border border-border hover:border-destructive/30 transition-colors"
+        >
+          <LogOut className="h-3 w-3" />
+          <span>LOGOUT</span>
+        </button>
       </div>
     </div>
   );
