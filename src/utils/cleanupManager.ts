@@ -1,7 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from './logger';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { getSQLiteDatabase, isUsingSupabase } from '../services/databaseFactory';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -226,6 +226,12 @@ export class CleanupManager {
    */
   private async cleanStaleTasksInDB(): Promise<number> {
     try {
+      // Skip for Supabase mode
+      if (isUsingSupabase()) {
+        logger.debug('Skipping stale task cleanup in Supabase mode');
+        return 0;
+      }
+
       const dbService = getSQLiteDatabase();
       const db = dbService.getDb();
       
@@ -388,10 +394,14 @@ export class CleanupManager {
       const runningProcesses = parseInt(psOut.trim()) || 0;
 
       // Count database tasks
-      const dbService = getSQLiteDatabase();
-      const db = dbService.getDb();
-      const runningTasks = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
-        .get() as { count: number };
+      let runningTaskCount = 0;
+      if (!isUsingSupabase()) {
+        const dbService = getSQLiteDatabase();
+        const db = dbService.getDb();
+        const result = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
+          .get() as { count: number };
+        runningTaskCount = result?.count || 0;
+      }
 
       // Calculate temp file size
       let tempFileSize = 0;
@@ -405,7 +415,7 @@ export class CleanupManager {
       return {
         runningProcesses,
         activeAgents: 0, // Would need to query SubAgentManager
-        runningTasks: runningTasks.count,
+        runningTasks: runningTaskCount,
         tempFileSize
       };
 

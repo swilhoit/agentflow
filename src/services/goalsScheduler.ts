@@ -1,7 +1,8 @@
 import * as cron from 'node-cron';
 import { Client, TextChannel, EmbedBuilder, Colors, Message } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase, isUsingSupabase } from './databaseFactory';
+import { DatabaseService } from './database';
 
 export interface GoalsSchedulerConfig {
   goalsChannelId: string; // The channel ID where goals reminders should be sent
@@ -12,12 +13,19 @@ export interface GoalsSchedulerConfig {
 
 export class GoalsScheduler {
   private client: Client;
-  private db = getSQLiteDatabase();
+  private db: DatabaseService | null = null;
+  private useSupabase: boolean = false;
   private scheduledTasks: Map<string, any> = new Map();
   private pendingGoals: Map<string, { date: string; guildId: string; channelId: string }> = new Map();
 
   constructor(client: Client) {
     this.client = client;
+    this.useSupabase = isUsingSupabase();
+    if (!this.useSupabase) {
+      this.db = getSQLiteDatabase();
+    } else {
+      logger.info('GoalsScheduler: Using Supabase mode (goals feature limited)');
+    }
     this.setupMessageListener();
   }
 
@@ -34,6 +42,12 @@ export class GoalsScheduler {
       const pending = this.pendingGoals.get(pendingKey);
 
       if (pending && message.channelId === pending.channelId) {
+        // Skip if using Supabase (goals not yet implemented for Supabase)
+        if (!this.db) {
+          logger.warn('GoalsScheduler: Goals feature not available in Supabase mode');
+          return;
+        }
+
         // Get today's date in YYYY-MM-DD format
         const today = new Date().toISOString().split('T')[0];
 
@@ -124,6 +138,12 @@ export class GoalsScheduler {
     channelId: string,
     userId: string
   ): Promise<void> {
+    // Skip if no database (Supabase mode)
+    if (!this.db) {
+      logger.warn('GoalsScheduler: sendGoalsReminder skipped in Supabase mode');
+      return;
+    }
+
     try {
       const guild = await this.client.guilds.fetch(guildId);
       if (!guild) {
@@ -208,6 +228,10 @@ export class GoalsScheduler {
    * Get user's goals history
    */
   async getUserGoals(userId: string, limit: number = 30): Promise<any[]> {
+    if (!this.db) {
+      logger.warn('GoalsScheduler: getUserGoals not available in Supabase mode');
+      return [];
+    }
     return this.db.getUserGoalsHistory(userId, limit);
   }
 
@@ -215,6 +239,10 @@ export class GoalsScheduler {
    * Get all goals for a specific date in a guild
    */
   async getGuildGoalsForDate(guildId: string, date: string): Promise<any[]> {
+    if (!this.db) {
+      logger.warn('GoalsScheduler: getGuildGoalsForDate not available in Supabase mode');
+      return [];
+    }
     return this.db.getGuildGoalsForDate(guildId, date);
   }
 
