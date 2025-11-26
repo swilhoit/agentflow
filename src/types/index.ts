@@ -76,7 +76,7 @@ export interface BotConfig {
   finnhubApiKey?: string;
   finnhubWebhookSecret?: string;
   // Database configuration
-  databaseType?: 'sqlite' | 'cloudsql';
+  databaseType?: 'sqlite' | 'supabase' | 'cloudsql';
   cloudSqlInstanceConnectionName?: string;
   cloudSqlDatabase?: string;
   cloudSqlUser?: string;

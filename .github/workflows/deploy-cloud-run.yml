@@ -67,11 +67,14 @@ jobs:
             --set-env-vars TRELLO_API_KEY=${{ secrets.TRELLO_API_KEY }} \
             --set-env-vars TRELLO_API_TOKEN=${{ secrets.TRELLO_API_TOKEN }} \
             --set-env-vars GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }} \
+            --set-env-vars DATABASE_TYPE=supabase \
+            --set-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
             --memory 2Gi \
             --cpu 2 \
             --timeout 3600 \
             --max-instances 1 \
-            --min-instances 0 \
+            --min-instances 1 \
             --no-cpu-throttling
 
       - name: Show deployment URL

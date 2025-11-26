@@ -1,11 +1,16 @@
 import { DatabaseService } from './database';
 import { CloudDatabaseService } from './cloudDatabase';
+import { SupabaseDatabaseService } from './supabaseDatabase';
+import { UnifiedDatabaseService, getUnifiedDatabase } from './unifiedDatabase';
 import { logger } from '../utils/logger';
 
 /**
  * Database Factory - Returns the appropriate database service based on configuration
- * Supports hybrid mode: SQLite for local development, Cloud SQL for production
+ * Supports: Supabase (default for cloud), SQLite (local dev), Cloud SQL (legacy)
  */
+
+// Track which database type is in use
+let currentDatabaseType: 'supabase' | 'sqlite' | 'cloudsql' = 'supabase';
 
 export interface IDatabase {
   // Market data methods
@@ -123,34 +128,50 @@ let databaseInstance: IDatabase | null = null;
 
 /**
  * Get the appropriate database service based on DATABASE_TYPE environment variable
- * Default is now 'cloudsql' for cloud-first operation
+ * Default is now 'supabase' for unified cloud operation
  */
 export function getDatabase(): IDatabase {
   if (databaseInstance) {
     return databaseInstance;
   }
 
-  // Default to cloud database - only use SQLite if explicitly set
-  const databaseType = process.env.DATABASE_TYPE || 'cloudsql';
+  // Default to Supabase - only use SQLite if explicitly set
+  const databaseType = process.env.DATABASE_TYPE || 'supabase';
+  currentDatabaseType = databaseType as 'supabase' | 'sqlite' | 'cloudsql';
 
-  if (databaseType === 'cloudsql') {
-    // Check if Cloud SQL credentials are configured
+  if (databaseType === 'supabase') {
+    // Check if Supabase credentials are configured
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      logger.error('❌ Supabase credentials not configured!');
+      logger.error('   Required environment variables:');
+      logger.error('   - SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)');
+      logger.error('   - SUPABASE_SERVICE_ROLE_KEY');
+      logger.error('');
+      logger.error('   Set DATABASE_TYPE=sqlite for local development without cloud');
+      throw new Error('Supabase credentials not configured. Set DATABASE_TYPE=sqlite for local development.');
+    }
+
+    logger.info('☁️  Initializing Supabase (PostgreSQL) database...');
+    databaseInstance = new SupabaseDatabaseService({
+      url: supabaseUrl,
+      serviceRoleKey: supabaseServiceKey,
+    });
+    logger.info('✅ Supabase database initialized');
+    logger.info(`   URL: ${supabaseUrl}`);
+  } else if (databaseType === 'cloudsql') {
+    // Legacy Cloud SQL support
     if (!process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME ||
         !process.env.CLOUDSQL_DATABASE ||
         !process.env.CLOUDSQL_USER ||
         !process.env.CLOUDSQL_PASSWORD) {
       logger.error('❌ Cloud SQL credentials not configured!');
-      logger.error('   Required environment variables:');
-      logger.error('   - CLOUDSQL_INSTANCE_CONNECTION_NAME');
-      logger.error('   - CLOUDSQL_DATABASE');
-      logger.error('   - CLOUDSQL_USER');
-      logger.error('   - CLOUDSQL_PASSWORD');
-      logger.error('');
-      logger.error('   Set DATABASE_TYPE=sqlite for local development without cloud');
-      throw new Error('Cloud SQL credentials not configured. Set DATABASE_TYPE=sqlite for local development.');
+      throw new Error('Cloud SQL credentials not configured.');
     }
 
-    logger.info('☁️  Initializing Cloud SQL (PostgreSQL) database...');
+    logger.warn('⚠️  Using Cloud SQL (legacy) - consider migrating to Supabase');
     const config = {
       instanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,
       database: process.env.CLOUDSQL_DATABASE,
@@ -160,19 +181,30 @@ export function getDatabase(): IDatabase {
 
     databaseInstance = new CloudDatabaseService(config);
     logger.info('✅ Cloud SQL database initialized');
-    logger.info(`   Instance: ${config.instanceConnectionName}`);
-    logger.info(`   Database: ${config.database}`);
   } else if (databaseType === 'sqlite') {
     logger.warn('⚠️  Using SQLite database (local development mode)');
-    logger.warn('   For production, configure Cloud SQL credentials');
     const sqliteDb = new DatabaseService();
     databaseInstance = new SQLiteDatabaseWrapper(sqliteDb);
     logger.info('✅ SQLite database initialized');
   } else {
-    throw new Error(`Unknown DATABASE_TYPE: ${databaseType}. Valid options: 'cloudsql', 'sqlite'`);
+    throw new Error(`Unknown DATABASE_TYPE: ${databaseType}. Valid options: 'supabase', 'cloudsql', 'sqlite'`);
   }
 
   return databaseInstance;
+}
+
+/**
+ * Check if we're using Supabase
+ */
+export function isUsingSupabase(): boolean {
+  return currentDatabaseType === 'supabase';
+}
+
+/**
+ * Get the current database type
+ */
+export function getDatabaseType(): 'supabase' | 'sqlite' | 'cloudsql' {
+  return currentDatabaseType;
 }
 
 /**

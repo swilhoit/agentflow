@@ -561,7 +561,9 @@ export class MultiTenantDiscordBot {
         tokensUsed: 100,
       });
 
-      await message.channel.send(`✅ Task \`${taskId.slice(0, 8)}\` completed!`);
+      if ('send' in message.channel) {
+        await message.channel.send(`✅ Task \`${taskId.slice(0, 8)}\` completed!`);
+      }
 
     } catch (error: any) {
       await db.updateAgentTask(taskId, {
@@ -570,7 +572,9 @@ export class MultiTenantDiscordBot {
         error: error.message,
       });
 
-      await message.channel.send(`❌ Task \`${taskId.slice(0, 8)}\` failed: ${error.message}`);
+      if ('send' in message.channel) {
+        await message.channel.send(`❌ Task \`${taskId.slice(0, 8)}\` failed: ${error.message}`);
+      }
     }
   }
 
@@ -816,4 +820,7 @@ export class MultiTenantDiscordBot {
 export function createMultiTenantBot(): MultiTenantDiscordBot {
   return new MultiTenantDiscordBot();
 }
+
+
+
 

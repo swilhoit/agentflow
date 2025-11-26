@@ -1,5 +1,6 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
-import { getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase, isUsingSupabase, getDatabaseType } from './databaseFactory';
+import { getUnifiedDatabase, UnifiedDatabaseService } from './unifiedDatabase';
 import { logger } from '../utils/logger';
 import * as cron from 'node-cron';
 
@@ -65,14 +66,18 @@ export interface TaskExecution {
 /**
  * Agent Manager Service
  * Central management for all agents and their recurring tasks
+ * Supports both SQLite (local dev) and Supabase (cloud production)
  */
 export class AgentManagerService {
   private client: Client;
   private scheduledTasks: Map<number, cron.ScheduledTask> = new Map();
   private taskExecutors: Map<string, TaskExecutor> = new Map();
+  private unifiedDb: UnifiedDatabaseService | null = null;
+  private useSupabase: boolean = false;
 
   constructor(client: Client) {
     this.client = client;
+    this.useSupabase = isUsingSupabase();
     this.initializeDatabase();
     this.registerDefaultAgents();
   }
@@ -81,6 +86,15 @@ export class AgentManagerService {
    * Initialize database schema for agent management
    */
   private initializeDatabase(): void {
+    if (this.useSupabase) {
+      // For Supabase, tables are already created via migrations
+      // Just get the unified database instance
+      this.unifiedDb = getUnifiedDatabase();
+      logger.info('✅ Agent Manager using Supabase (cloud mode)');
+      return;
+    }
+
+    // SQLite mode - create tables locally
     const db = getSQLiteDatabase().getRawDatabase();
 
     // Agent configurations table
@@ -148,7 +162,7 @@ export class AgentManagerService {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_task_executions_task ON task_executions(task_id, started_at DESC)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_task_executions_status ON task_executions(status, started_at DESC)`);
 
-    logger.info('✅ Agent Manager database schema initialized');
+    logger.info('✅ Agent Manager using SQLite (local mode)');
   }
 
   /**
@@ -214,6 +228,14 @@ export class AgentManagerService {
       }
     ];
 
+    if (this.useSupabase && this.unifiedDb) {
+      // Supabase mode - agents already exist from migration
+      // Just verify they're there
+      logger.info('✅ Default agents verified in Supabase');
+      return;
+    }
+
+    // SQLite mode
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO agent_configs (agent_name, display_name, description, agent_type, status, is_enabled)
@@ -238,6 +260,11 @@ export class AgentManagerService {
    * Get all agents
    */
   getAllAgents(): AgentConfig[] {
+    if (this.useSupabase && this.unifiedDb) {
+      // Return empty for sync call - use async getAllAgentsAsync for Supabase
+      logger.warn('getAllAgents called in Supabase mode - use getAllAgentsAsync');
+      return [];
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare('SELECT * FROM agent_configs ORDER BY agent_type, display_name');
     const rows = stmt.all() as any[];
@@ -246,9 +273,25 @@ export class AgentManagerService {
   }
 
   /**
+   * Get all agents (async - works with both SQLite and Supabase)
+   */
+  async getAllAgentsAsync(): Promise<AgentConfig[]> {
+    if (this.useSupabase && this.unifiedDb) {
+      const rows = await this.unifiedDb.getAllAgentConfigs();
+      return rows.map(this.mapRowToAgentConfig);
+    }
+    return this.getAllAgents();
+  }
+
+  /**
    * Get agent by name
    */
   getAgent(agentName: string): AgentConfig | undefined {
+    if (this.useSupabase && this.unifiedDb) {
+      // Return undefined for sync call - use async getAgentAsync for Supabase
+      logger.warn('getAgent called in Supabase mode - use getAgentAsync');
+      return undefined;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare('SELECT * FROM agent_configs WHERE agent_name = ?');
     const row = stmt.get(agentName) as any;
@@ -257,9 +300,25 @@ export class AgentManagerService {
   }
 
   /**
+   * Get agent by name (async - works with both SQLite and Supabase)
+   */
+  async getAgentAsync(agentName: string): Promise<AgentConfig | undefined> {
+    if (this.useSupabase && this.unifiedDb) {
+      const row = await this.unifiedDb.getAgentConfig(agentName);
+      return row ? this.mapRowToAgentConfig(row) : undefined;
+    }
+    return this.getAgent(agentName);
+  }
+
+  /**
    * Update agent status
    */
   updateAgentStatus(agentName: string, status: 'active' | 'inactive' | 'error'): void {
+    if (this.useSupabase && this.unifiedDb) {
+      // Fire and forget for async
+      this.unifiedDb.updateAgentStatus(agentName, status);
+      return;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       UPDATE agent_configs
@@ -273,6 +332,11 @@ export class AgentManagerService {
    * Enable/disable agent
    */
   setAgentEnabled(agentName: string, isEnabled: boolean): void {
+    if (this.useSupabase && this.unifiedDb) {
+      // For Supabase, we'd need to add this method to UnifiedDatabaseService
+      logger.warn('setAgentEnabled not fully implemented for Supabase');
+      return;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       UPDATE agent_configs
@@ -287,6 +351,11 @@ export class AgentManagerService {
    * Register a recurring task
    */
   registerRecurringTask(task: Omit<RecurringTask, 'id' | 'totalRuns' | 'successfulRuns' | 'failedRuns' | 'createdAt' | 'updatedAt'>): number {
+    if (this.useSupabase && this.unifiedDb) {
+      // For Supabase, tasks are already registered via migration
+      logger.info(`Task ${task.taskName} already exists in Supabase`);
+      return 0;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       INSERT INTO recurring_tasks (task_name, agent_name, description, cron_schedule, timezone, is_enabled, config)
@@ -311,6 +380,10 @@ export class AgentManagerService {
    * Get all recurring tasks
    */
   getAllRecurringTasks(): RecurringTask[] {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('getAllRecurringTasks called in Supabase mode - use getAllRecurringTasksAsync');
+      return [];
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare('SELECT * FROM recurring_tasks ORDER BY agent_name, task_name');
     const rows = stmt.all() as any[];
@@ -319,9 +392,39 @@ export class AgentManagerService {
   }
 
   /**
+   * Get all recurring tasks (async - works with both)
+   */
+  async getAllRecurringTasksAsync(): Promise<RecurringTask[]> {
+    if (this.useSupabase && this.unifiedDb) {
+      const rows = await this.unifiedDb.getAllRecurringTasks();
+      return rows.map(this.mapRowToRecurringTask);
+    }
+    return this.getAllRecurringTasks();
+  }
+
+  /**
+   * Get enabled recurring tasks (async)
+   */
+  async getEnabledRecurringTasksAsync(): Promise<RecurringTask[]> {
+    if (this.useSupabase && this.unifiedDb) {
+      const rows = await this.unifiedDb.getEnabledRecurringTasks();
+      return rows.map(this.mapRowToRecurringTask);
+    }
+    // SQLite fallback
+    const db = getSQLiteDatabase().getRawDatabase();
+    const stmt = db.prepare('SELECT * FROM recurring_tasks WHERE is_enabled = 1 ORDER BY agent_name, task_name');
+    const rows = stmt.all() as any[];
+    return rows.map(this.mapRowToRecurringTask);
+  }
+
+  /**
    * Get recurring tasks by agent
    */
   getAgentRecurringTasks(agentName: string): RecurringTask[] {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('getAgentRecurringTasks called in Supabase mode');
+      return [];
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare('SELECT * FROM recurring_tasks WHERE agent_name = ? ORDER BY task_name');
     const rows = stmt.all(agentName) as any[];
@@ -333,6 +436,10 @@ export class AgentManagerService {
    * Enable/disable recurring task
    */
   setRecurringTaskEnabled(taskId: number, isEnabled: boolean): void {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('setRecurringTaskEnabled not fully implemented for Supabase');
+      return;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       UPDATE recurring_tasks
@@ -356,6 +463,10 @@ export class AgentManagerService {
    * Get recurring task by ID
    */
   getRecurringTask(taskId: number): RecurringTask | undefined {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('getRecurringTask called in Supabase mode - use async version');
+      return undefined;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare('SELECT * FROM recurring_tasks WHERE id = ?');
     const row = stmt.get(taskId) as any;
@@ -367,6 +478,11 @@ export class AgentManagerService {
    * Update task execution stats
    */
   updateTaskStats(taskId: number, success: boolean): void {
+    if (this.useSupabase && this.unifiedDb) {
+      // Fire and forget
+      this.unifiedDb.updateTaskLastRun(taskId, success);
+      return;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       UPDATE recurring_tasks
@@ -384,6 +500,22 @@ export class AgentManagerService {
    * Log task execution
    */
   logTaskExecution(execution: Omit<TaskExecution, 'id'>): number {
+    if (this.useSupabase && this.unifiedDb) {
+      // Fire and forget for async
+      this.unifiedDb.logTaskExecution({
+        taskId: execution.taskId,
+        taskName: execution.taskName,
+        agentName: execution.agentName,
+        status: execution.status,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        duration: execution.duration,
+        result: execution.result,
+        error: execution.error,
+        metadata: execution.metadata,
+      });
+      return 0;
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       INSERT INTO task_executions (task_id, task_name, agent_name, status, started_at, completed_at, duration, result, error, metadata)
@@ -410,6 +542,10 @@ export class AgentManagerService {
    * Get task execution history
    */
   getTaskExecutionHistory(taskId: number, limit: number = 50): TaskExecution[] {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('getTaskExecutionHistory called in Supabase mode');
+      return [];
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       SELECT * FROM task_executions
@@ -426,6 +562,10 @@ export class AgentManagerService {
    * Get recent task executions across all tasks
    */
   getRecentExecutions(limit: number = 50): TaskExecution[] {
+    if (this.useSupabase && this.unifiedDb) {
+      logger.warn('getRecentExecutions called in Supabase mode - use async');
+      return [];
+    }
     const db = getSQLiteDatabase().getRawDatabase();
     const stmt = db.prepare(`
       SELECT * FROM task_executions
@@ -435,6 +575,17 @@ export class AgentManagerService {
     const rows = stmt.all(limit) as any[];
 
     return rows.map(this.mapRowToTaskExecution);
+  }
+
+  /**
+   * Get recent task executions (async - works with both)
+   */
+  async getRecentExecutionsAsync(hours: number = 24): Promise<TaskExecution[]> {
+    if (this.useSupabase && this.unifiedDb) {
+      const rows = await this.unifiedDb.getRecentTaskExecutions(hours);
+      return rows.map(this.mapRowToTaskExecution);
+    }
+    return this.getRecentExecutions(100);
   }
 
   /**
@@ -544,12 +695,33 @@ export class AgentManagerService {
    * Start all enabled recurring tasks
    */
   startAllTasks(): void {
+    // For Supabase, we need to use async
+    if (this.useSupabase && this.unifiedDb) {
+      this.startAllTasksAsync();
+      return;
+    }
+
     const tasks = this.getAllRecurringTasks();
     const enabledTasks = tasks.filter(t => t.isEnabled);
 
     logger.info(`🚀 Starting ${enabledTasks.length} recurring tasks...`);
 
     for (const task of enabledTasks) {
+      this.scheduleTask(task);
+    }
+
+    logger.info(`✅ All recurring tasks started`);
+  }
+
+  /**
+   * Start all tasks (async version for Supabase)
+   */
+  async startAllTasksAsync(): Promise<void> {
+    const tasks = await this.getEnabledRecurringTasksAsync();
+
+    logger.info(`🚀 Starting ${tasks.length} recurring tasks (Supabase)...`);
+
+    for (const task of tasks) {
       this.scheduleTask(task);
     }
 

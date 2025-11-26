@@ -51,8 +51,8 @@ export function loadConfig(): BotConfig {
     // News monitoring
     finnhubApiKey: process.env.FINNHUB_API_KEY,
     finnhubWebhookSecret: process.env.FINNHUB_WEBHOOK_SECRET,
-    // Database configuration
-    databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'cloudsql') || 'sqlite',
+    // Database configuration - default to Supabase for cloud operation
+    databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'supabase' | 'cloudsql') || 'supabase',
     cloudSqlInstanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,
     cloudSqlDatabase: process.env.CLOUDSQL_DATABASE,
     cloudSqlUser: process.env.CLOUDSQL_USER,
