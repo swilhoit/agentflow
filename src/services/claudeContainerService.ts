@@ -410,6 +410,8 @@ export class ClaudeContainerService extends EventEmitter {
     await this.sshExec(`echo -e "${envFileContent}" > ${envFilePath} && chmod 600 ${envFilePath}`);
 
     // Docker run command with YOLO mode (credentials in env file, not command line)
+    // Note: The prompt is passed as a positional argument (not -p flag)
+    // The Dockerfile ENTRYPOINT already includes: --dangerously-skip-permissions --verbose --output-format stream-json --print
     const dockerCommand = `docker run -d --name ${containerId} \
       --rm \
       --env-file ${envFilePath} \
@@ -418,7 +420,7 @@ export class ClaudeContainerService extends EventEmitter {
       --memory 4g \
       --cpus 2 \
       ${this.IMAGE_NAME} \
-      -p '${escapedPrompt}' && rm -f ${envFilePath}`;
+      '${escapedPrompt}' && rm -f ${envFilePath}`;
 
     // Start container and return immediately with stream promise
     const streamPromise = this.executeAndStream(containerId, dockerCommand, timeout, options.notificationHandler);
@@ -481,11 +483,9 @@ export class ClaudeContainerService extends EventEmitter {
     let output = '';
 
     try {
-      // Notify start
+      // Emit event for listeners (toolBasedAgent handles notifications via event listener)
+      // NOTE: Don't send notification here - toolBasedAgent listens to agent:started event
       this.emit('agent:started', { containerId });
-      if (notificationHandler) {
-        await notificationHandler(`🚀 **Claude Agent Started**\nContainer: \`${containerId}\``);
-      }
 
       // Start the container
       logger.info(`Starting container on VPS: ${containerId}`);
@@ -576,8 +576,37 @@ export class ClaudeContainerService extends EventEmitter {
           this.activeContainers.delete(containerId);
 
           const duration = Date.now() - startTime;
+
+          // Detect known error patterns in output that indicate failure despite exit code 0
+          const errorPatterns = [
+            /Error: When using --print, --output-format=stream-json requires --verbose/i,
+            /Error: Missing required argument/i,
+            /Error: Invalid option/i,
+            /ANTHROPIC_API_KEY.*not set/i,
+            /authentication failed/i,
+            /rate limit exceeded/i,
+            /Error: spawn/i,
+            /ENOENT/i,
+          ];
+
+          let detectedError: string | undefined;
+          for (const pattern of errorPatterns) {
+            if (pattern.test(output)) {
+              const match = output.match(pattern);
+              detectedError = match ? match[0] : 'Unknown CLI error detected';
+              break;
+            }
+          }
+
+          // Also check if output is suspiciously short (likely a failure)
+          const outputLines = output.trim().split('\n').filter(l => l.trim());
+          const isSuspiciouslyShort = outputLines.length < 5 && duration < 10000; // Less than 5 lines in under 10 seconds
+
+          // Determine actual success
+          const actuallySucceeded = code === 0 && !detectedError && !isSuspiciouslyShort;
+
           const result: ClaudeTaskResult = {
-            success: code === 0,
+            success: actuallySucceeded,
             output,
             containerId,
             duration,
@@ -586,18 +615,17 @@ export class ClaudeContainerService extends EventEmitter {
 
           if (code !== 0) {
             result.error = `Container exited with code ${code}`;
+          } else if (detectedError) {
+            result.error = `Claude CLI error: ${detectedError}`;
+            logger.error(`Claude agent ${containerId} failed with CLI error: ${detectedError}`);
+          } else if (isSuspiciouslyShort) {
+            result.error = `Agent completed too quickly with minimal output - likely failed`;
+            logger.warn(`Claude agent ${containerId} may have failed: suspiciously short execution`);
           }
 
-          // Notify completion
+          // Emit completion event (toolBasedAgent handles notifications via event listener)
+          // NOTE: Don't send notification here - toolBasedAgent listens to agent:completed event
           this.emit('agent:completed', { containerId, result });
-          if (notificationHandler) {
-            const emoji = result.success ? '✅' : '❌';
-            await notificationHandler(
-              `${emoji} **Claude Agent ${result.success ? 'Completed' : 'Failed'}**\n` +
-              `Container: \`${containerId}\`\n` +
-              `Duration: ${(duration / 1000).toFixed(1)}s`
-            );
-          }
 
           resolve(result);
         });

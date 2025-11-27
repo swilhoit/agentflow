@@ -47,8 +47,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD claude --version || exit 1
 
 # Default entrypoint - runs Claude with YOLO mode
-# The actual prompt is passed via docker exec or as CMD override
-ENTRYPOINT ["claude", "--dangerously-skip-permissions", "--output-format", "stream-json"]
+# The actual prompt is passed as a positional argument
+# --verbose is required when using --output-format=stream-json with --print
+ENTRYPOINT ["claude", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json", "--print"]
 
 # Default command (can be overridden)
 CMD ["--help"]

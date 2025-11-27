@@ -1690,11 +1690,15 @@ export class ToolBasedAgent {
       if (!status.running) {
         // Container already finished, get logs
         const logs = await this.claudeContainer.getAgentLogs(containerId, 500);
+        const output = logs.join('\n');
+        const validationResult = this.validateClaudeAgentOutput(output);
+
         return {
-          success: true,
+          success: validationResult.success,
           containerId,
           status: 'completed',
-          output: logs.join('\n').substring(0, 5000)
+          output: output.substring(0, 5000),
+          error: validationResult.error
         };
       }
 
@@ -1706,12 +1710,16 @@ export class ToolBasedAgent {
 
         if (!currentStatus.running) {
           const logs = await this.claudeContainer.getAgentLogs(containerId, 500);
+          const output = logs.join('\n');
+          const validationResult = this.validateClaudeAgentOutput(output);
+
           return {
-            success: true,
+            success: validationResult.success,
             containerId,
             status: 'completed',
             duration: Date.now() - startTime,
-            output: logs.join('\n').substring(0, 5000)
+            output: output.substring(0, 5000),
+            error: validationResult.error
           };
         }
       }
@@ -1727,6 +1735,41 @@ export class ToolBasedAgent {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  /**
+   * Validate Claude agent output for known error patterns
+   * Returns success: false if known errors are detected in output
+   */
+  private validateClaudeAgentOutput(output: string): { success: boolean; error?: string } {
+    // Known error patterns that indicate failure despite exit code 0
+    const errorPatterns = [
+      { pattern: /Error: When using --print, --output-format=stream-json requires --verbose/i, message: 'CLI flag configuration error' },
+      { pattern: /Error: Missing required argument/i, message: 'Missing required argument' },
+      { pattern: /Error: Invalid option/i, message: 'Invalid CLI option' },
+      { pattern: /ANTHROPIC_API_KEY.*not set/i, message: 'API key not configured' },
+      { pattern: /authentication failed/i, message: 'Authentication failed' },
+      { pattern: /rate limit exceeded/i, message: 'API rate limit exceeded' },
+      { pattern: /Error: spawn/i, message: 'Process spawn error' },
+      { pattern: /ENOENT/i, message: 'File or directory not found' },
+      { pattern: /Error: Cannot find module/i, message: 'Module not found' },
+    ];
+
+    for (const { pattern, message } of errorPatterns) {
+      if (pattern.test(output)) {
+        logger.error(`Claude agent validation failed: ${message}`);
+        return { success: false, error: `Claude agent error: ${message}` };
+      }
+    }
+
+    // Check for suspiciously short output (likely a failure)
+    const outputLines = output.trim().split('\n').filter(l => l.trim());
+    if (outputLines.length < 3) {
+      logger.warn('Claude agent output suspiciously short - may have failed');
+      return { success: false, error: 'Agent produced minimal output - likely failed to execute task' };
+    }
+
+    return { success: true };
   }
 
   // ========================================

@@ -99,7 +99,8 @@ RUN useradd -m -u 1001 -s /bin/bash claude
 ENV CLAUDE_CODE_SKIP_PERMISSIONS=true
 
 # Entrypoint with YOLO mode flags
-ENTRYPOINT ["claude", "--dangerously-skip-permissions", "--output-format", "stream-json"]
+# --verbose is required when using --output-format=stream-json with --print
+ENTRYPOINT ["claude", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json", "--print"]
 ```
 
 ## Resource Limits
