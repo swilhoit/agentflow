@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { query } from '@/lib/postgres';
 
 export interface Loan {
   id?: string;
@@ -50,22 +50,19 @@ function calculateTotalInterest(balance: number, monthlyPayment: number, interes
 
 export async function GET(request: Request) {
   try {
-    const supabase = getSupabase();
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId') || 'default_user';
 
     // Get all active loans for user from loans table
-    const { data: loansData, error } = await supabase
-      .from('loans')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .order('current_balance', { ascending: false });
-
-    if (error) throw error;
+    const result = await query(
+      `SELECT * FROM loans
+       WHERE user_id = $1 AND status = 'active'
+       ORDER BY current_balance DESC`,
+      [userId]
+    );
 
     // Map database rows to loan format
-    const loans: Loan[] = (loansData || []).map(loan => ({
+    const loans: Loan[] = (result.rows || []).map((loan: any) => ({
       id: loan.id,
       user_id: loan.user_id,
       name: loan.name,
@@ -138,7 +135,6 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const supabase = getSupabase();
     const loan = await request.json() as Loan;
 
     // Validate required fields
@@ -168,28 +164,27 @@ export async function POST(request: Request) {
     }
 
     // Insert into loans table
-    const { data, error } = await supabase
-      .from('loans')
-      .insert({
-        user_id: loan.user_id,
-        name: loan.name,
-        original_amount: loan.original_amount,
-        current_balance: loan.current_balance,
-        interest_rate: loan.interest_rate || 0,
-        monthly_payment: loan.monthly_payment,
-        start_date: loan.start_date,
-        payoff_date: loan.payoff_date,
-        loan_type: loan.loan_type,
-        status: loan.status
-      })
-      .select('id')
-      .single();
-
-    if (error) throw error;
+    const result = await query(
+      `INSERT INTO loans (user_id, name, original_amount, current_balance, interest_rate, monthly_payment, start_date, payoff_date, loan_type, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        loan.user_id,
+        loan.name,
+        loan.original_amount,
+        loan.current_balance,
+        loan.interest_rate || 0,
+        loan.monthly_payment,
+        loan.start_date,
+        loan.payoff_date,
+        loan.loan_type,
+        loan.status
+      ]
+    );
 
     return NextResponse.json({
       success: true,
-      loanId: data?.id
+      loanId: result.rows[0]?.id
     });
 
   } catch (error: any) {
@@ -203,7 +198,6 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const supabase = getSupabase();
     const { searchParams } = new URL(request.url);
     const loanId = searchParams.get('id');
 
@@ -214,12 +208,7 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const { error } = await supabase
-      .from('loans')
-      .delete()
-      .eq('id', loanId);
-
-    if (error) throw error;
+    await query('DELETE FROM loans WHERE id = $1', [loanId]);
 
     return NextResponse.json({ success: true });
 
