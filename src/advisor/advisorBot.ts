@@ -7,7 +7,7 @@ import {
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../utils/logger';
 import { AdvisorTools } from './advisorTools';
-import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingPostgres, getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -166,16 +166,12 @@ Remember: I love money, and I want you to love (and keep) your money too! Let's 
     // Initialize tools
     this.tools = new AdvisorTools();
 
-    // Initialize database (only for SQLite - Supabase features handled separately)
-    if (!isUsingSupabase()) {
-      try {
-        this.db = getSQLiteDatabase();
-        logger.info('💰 Financial Advisor database initialized (SQLite)');
-      } catch (e) {
-        logger.warn('⚠️  Financial Advisor running without local database');
-      }
-    } else {
-      logger.info('💰 Financial Advisor using Supabase - local caching disabled');
+    // Initialize database (SQLite fallback for local caching)
+    try {
+      this.db = getSQLiteDatabase();
+      logger.info('💰 Financial Advisor database initialized');
+    } catch (e) {
+      logger.warn('⚠️  Financial Advisor running without local database');
     }
 
     // Set monitored channels

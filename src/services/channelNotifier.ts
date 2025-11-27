@@ -1,6 +1,6 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
 import { logger } from '../utils/logger';
-import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from './databaseFactory';
+import { isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from './databaseFactory';
 import { DatabaseService } from './database';
 import { PostgresDatabaseService } from './postgresDatabaseService';
 
@@ -45,7 +45,8 @@ export class ChannelNotifier {
     // Initialize database based on configuration
     if (isUsingPostgres()) {
       this.pgDb = getAgentFlowDatabase();
-    } else if (!isUsingSupabase()) {
+    } else {
+      // SQLite fallback
       try {
         this.db = getSQLiteDatabase();
       } catch (e) {

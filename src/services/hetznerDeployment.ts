@@ -67,7 +67,7 @@ export class HetznerDeploymentService {
    * Execute SSH command on Hetzner VPS
    */
   private async sshExec(command: string): Promise<{ stdout: string; stderr: string }> {
-    const sshCommand = `ssh -o StrictHostKeyChecking=no ${this.sshUser}@${this.serverIp} "${command.replace(/"/g, '\\"')}"`;
+    const sshCommand = `ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i /root/.ssh/id_ed25519 ${this.sshUser}@${this.serverIp} "${command.replace(/"/g, '\\"')}"`;
     return execAsync(sshCommand, { timeout: 300000 }); // 5 minute timeout
   }
 

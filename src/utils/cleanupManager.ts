@@ -1,7 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from './logger';
-import { getSQLiteDatabase, isUsingSupabase } from '../services/databaseFactory';
+import { getSQLiteDatabase, isUsingPostgres, getAgentFlowDatabase } from '../services/databaseFactory';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -226,12 +226,17 @@ export class CleanupManager {
    */
   private async cleanStaleTasksInDB(): Promise<number> {
     try {
-      // Skip for Supabase mode
-      if (isUsingSupabase()) {
-        logger.debug('Skipping stale task cleanup in Supabase mode');
-        return 0;
+      // Use PostgreSQL if available
+      if (isUsingPostgres()) {
+        const pgDb = getAgentFlowDatabase();
+        if (pgDb) {
+          // PostgreSQL handles its own stale task cleanup
+          logger.debug('Stale task cleanup managed by PostgreSQL');
+          return 0;
+        }
       }
 
+      // SQLite fallback
       const dbService = getSQLiteDatabase();
       const db = dbService.getDb();
       
@@ -395,12 +400,27 @@ export class CleanupManager {
 
       // Count database tasks
       let runningTaskCount = 0;
-      if (!isUsingSupabase()) {
-        const dbService = getSQLiteDatabase();
-        const db = dbService.getDb();
-        const result = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
-          .get() as { count: number };
-        runningTaskCount = result?.count || 0;
+      if (isUsingPostgres()) {
+        const pgDb = getAgentFlowDatabase();
+        if (pgDb) {
+          try {
+            const tasks = await pgDb.getAllActiveAgentTasks();
+            runningTaskCount = tasks.length;
+          } catch (e) {
+            logger.debug('Could not get running task count from PostgreSQL');
+          }
+        }
+      } else {
+        // SQLite fallback
+        try {
+          const dbService = getSQLiteDatabase();
+          const db = dbService.getDb();
+          const result = db.prepare("SELECT COUNT(*) as count FROM agent_tasks WHERE status = 'running'")
+            .get() as { count: number };
+          runningTaskCount = result?.count || 0;
+        } catch (e) {
+          logger.debug('Could not get running task count from SQLite');
+        }
       }
 
       // Calculate temp file size

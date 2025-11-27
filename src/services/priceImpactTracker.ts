@@ -1,5 +1,5 @@
 import YahooFinanceClass from 'yahoo-finance2';
-import { isUsingSupabase, getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase } from './databaseFactory';
 import { logger } from '../utils/logger';
 import { DatabaseService } from './database';
 
@@ -36,17 +36,13 @@ export class PriceImpactTracker {
   private enabled: boolean = false;
 
   constructor() {
-    if (!isUsingSupabase()) {
-      try {
-        this.db = getSQLiteDatabase();
-        this.initializeDatabase();
-        this.enabled = true;
-        logger.info('📊 PriceImpactTracker initialized (SQLite mode)');
-      } catch (e) {
-        logger.warn('⚠️  PriceImpactTracker: SQLite not available');
-      }
-    } else {
-      logger.info('📊 PriceImpactTracker disabled (Supabase mode - feature not yet implemented)');
+    try {
+      this.db = getSQLiteDatabase();
+      this.initializeDatabase();
+      this.enabled = true;
+      logger.info('📊 PriceImpactTracker initialized');
+    } catch (e) {
+      logger.warn('⚠️  PriceImpactTracker: Database not available');
     }
   }
 

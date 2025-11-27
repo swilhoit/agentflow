@@ -1,11 +1,11 @@
-import { SupabaseDatabaseService } from './supabaseDatabase';
 import { PostgresDatabaseService, getPostgresDatabase } from './postgresDatabaseService';
 import { DatabaseService } from './database';
 import { logger } from '../utils/logger';
 
 /**
- * Database Factory - Cloud-only PostgreSQL
+ * Database Factory - Hetzner PostgreSQL ONLY
  * All data is stored on the Hetzner VPS PostgreSQL instance
+ * NO SUPABASE - everything goes to our own database
  */
 
 export interface IDatabase {
@@ -69,43 +69,24 @@ let databaseInstance: IDatabase | null = null;
 let agentflowDbInstance: PostgresDatabaseService | null = null;
 
 /**
- * Get the database service - always uses cloud PostgreSQL
+ * Get the database service - Hetzner PostgreSQL ONLY
+ * NO SUPABASE - all data stored on our own VPS
  */
 export function getDatabase(): IDatabase {
   if (databaseInstance) {
     return databaseInstance;
   }
 
-  const databaseType = process.env.DATABASE_TYPE || 'postgres';
-
-  if (databaseType !== 'postgres') {
-    logger.warn(`⚠️ DATABASE_TYPE=${databaseType} is not supported. Using postgres.`);
-  }
-
-  logger.info('🐘 Initializing cloud PostgreSQL database...');
-
-  // Use Supabase for market data (shared with personal-finance)
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (supabaseUrl && supabaseServiceKey) {
-    databaseInstance = new SupabaseDatabaseService({
-      url: supabaseUrl,
-      serviceRoleKey: supabaseServiceKey,
-    });
-    logger.info('✅ Market data database (Supabase) initialized');
-  }
+  logger.info('🐘 Initializing Hetzner PostgreSQL database (NO SUPABASE)...');
 
   // Initialize AgentFlow's dedicated PostgreSQL on Hetzner VPS
   agentflowDbInstance = getPostgresDatabase();
   logger.info('✅ AgentFlow PostgreSQL database initialized');
   logger.info(`   Host: ${process.env.AGENTFLOW_DB_HOST || 'localhost'}`);
 
-  // If no Supabase, create wrapper that delegates to PostgreSQL
-  if (!databaseInstance) {
-    logger.info('📦 Using PostgreSQL for all data storage');
-    databaseInstance = createPostgresWrapper(agentflowDbInstance);
-  }
+  // Create wrapper that delegates to PostgreSQL
+  logger.info('📦 Using Hetzner PostgreSQL for ALL data storage');
+  databaseInstance = createPostgresWrapper(agentflowDbInstance);
 
   return databaseInstance;
 }
@@ -128,15 +109,15 @@ export function getAgentFlowDatabase(): PostgresDatabaseService | null {
 function createPostgresWrapper(db: PostgresDatabaseService): IDatabase {
   return {
     async saveMarketData(): Promise<number> {
-      logger.warn('Market data storage: use Supabase for market data');
+      logger.warn('Market data storage: implement in PostgresDatabaseService if needed');
       return 0;
     },
     async saveMarketNews(): Promise<number | null> {
-      logger.warn('Market news storage: use Supabase for market data');
+      logger.warn('Market news storage: implement in PostgresDatabaseService if needed');
       return null;
     },
     async saveWeeklyAnalysis(): Promise<number> {
-      logger.warn('Weekly analysis storage: use Supabase for market data');
+      logger.warn('Weekly analysis storage: implement in PostgresDatabaseService if needed');
       return 0;
     },
     async getMarketDataByDateRange(): Promise<any[]> {
@@ -170,12 +151,11 @@ export function isUsingPostgres(): boolean {
 }
 
 /**
- * Check if using Supabase for market data
+ * Check if using Supabase - ALWAYS FALSE
+ * We use Hetzner PostgreSQL for everything
  */
 export function isUsingSupabase(): boolean {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return !!(supabaseUrl && supabaseServiceKey);
+  return false; // NO SUPABASE - everything on Hetzner Postgres
 }
 
 /**

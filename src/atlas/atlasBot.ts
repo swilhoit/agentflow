@@ -9,7 +9,7 @@ import {
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../utils/logger';
 import { AtlasTools } from './atlasTools';
-import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
+import { getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -146,16 +146,12 @@ Stay sharp. Stay global. 🌏`;
       ]
     });
 
-    // Initialize database (only for SQLite - Supabase handled separately)
-    if (!isUsingSupabase()) {
-      try {
-        this.db = getSQLiteDatabase();
-        logger.info('🌍 Atlas database initialized (SQLite)');
-      } catch (e) {
-        logger.warn('⚠️  Atlas running without local database');
-      }
-    } else {
-      logger.info('🌍 Atlas using Supabase - message logging disabled');
+    // Initialize database for conversation history
+    try {
+      this.db = getSQLiteDatabase();
+      logger.info('🌍 Atlas database initialized');
+    } catch (e) {
+      logger.warn('⚠️  Atlas running without local database');
     }
 
     // Initialize Anthropic

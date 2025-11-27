@@ -1,7 +1,7 @@
 import { ToolBasedAgent, AgentTask, AgentResult } from '../agents/toolBasedAgent';
 import { TrelloService } from '../services/trello';
 import { logger } from '../utils/logger';
-import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
+import { isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
 import { PostgresDatabaseService } from '../services/postgresDatabaseService';
 
 export interface ManagedTask {
@@ -114,11 +114,11 @@ export class TaskManager {
       } catch (e) { 
         logger.error('Failed to save task to PostgreSQL', e); 
       }
-    } else if (!isUsingSupabase()) {
-      // Fallback to SQLite (local dev only)
+    } else {
+      // Fallback to SQLite (local dev only - when PostgreSQL is not available)
       try {
         const db = getSQLiteDatabase();
-        
+
         // Save user message
         db.saveMessage({
           guildId: task.context.guildId,
@@ -140,11 +140,11 @@ export class TaskManager {
           status: 'pending',
           startedAt: new Date()
         });
-        logger.info(`💾 Persisted task ${taskId} to database`);
+        logger.info(`💾 Persisted task ${taskId} to SQLite database`);
 
         // Load context (recent history)
         const history = db.getConversationContext(task.context.guildId, task.context.channelId, 10);
-        
+
         // Inject into task context
         task.context.conversationHistory = history;
         logger.info(`📜 Injected conversation history (${history.length} chars)`);
@@ -152,9 +152,6 @@ export class TaskManager {
         logger.error('Failed to persist message or load history:', error);
         // Continue without history if DB fails
       }
-    } else {
-      // Supabase mode - skip SQLite operations
-      logger.info(`💾 Task ${taskId} created (Supabase mode - using cloud storage)`);
     }
 
     // Create a new ToolBasedAgent instance for this task (full isolation!)
@@ -217,7 +214,8 @@ export class TaskManager {
         try {
           await this.pgDb.updateAgentTask(taskId, { status: 'running' });
         } catch (e) { logger.error('Failed to update task status in PostgreSQL', e); }
-      } else if (!isUsingSupabase() && !isUsingPostgres()) {
+      } else {
+        // SQLite fallback
         try {
           getSQLiteDatabase().updateAgentTask(taskId, { status: 'running' });
         } catch (e) { logger.error('Failed to update task status in SQLite', e); }
@@ -263,7 +261,8 @@ export class TaskManager {
         } catch (error) {
           logger.error('Failed to save agent response to PostgreSQL:', error);
         }
-      } else if (!isUsingSupabase() && !isUsingPostgres()) {
+      } else {
+        // SQLite fallback
         try {
           const db = getSQLiteDatabase();
           db.updateAgentTask(taskId, {
@@ -316,7 +315,8 @@ export class TaskManager {
             error: managedTask.error
           });
         } catch (e) { logger.error('Failed to update task error in PostgreSQL', e); }
-      } else if (!isUsingSupabase() && !isUsingPostgres()) {
+      } else {
+        // SQLite fallback
         try {
           getSQLiteDatabase().updateAgentTask(taskId, {
             status: 'failed',
@@ -483,10 +483,8 @@ export class TaskManager {
       }
     }
     
-    if (isUsingSupabase() || isUsingPostgres()) {
-      logger.info('🔄 Task restoration skipped (cloud mode - managed by PostgreSQL)');
-      return;
-    }
+    // If pgDb is initialized, we already handled restoration above
+    // This is the SQLite fallback path
     
     // SQLite fallback (local dev only)
     try {

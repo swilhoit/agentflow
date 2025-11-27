@@ -20,6 +20,7 @@ import { CategoryBudgetService } from './services/categoryBudgetService';
 import { WeeklyBudgetService } from './services/weeklyBudgetService';
 import { TransactionSyncService } from './services/transactionSyncService';
 import { getWatchdog, WatchdogService } from './services/watchdog';
+import { startTradingScheduler, TradingScheduler } from './services/tradingScheduler';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -467,6 +468,28 @@ async function main() {
         logger.info('HETZNER_SERVER_IP not configured - Server Monitor disabled');
       }
 
+      // Initialize Trading Agent Scheduler (Paper Trading with auto-execution)
+      let tradingScheduler: TradingScheduler | undefined;
+      if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
+        try {
+          tradingScheduler = startTradingScheduler(
+            (bot as DiscordBotRealtime).getClient(),
+            {
+              tradingChannelId: '1443627673501962300',
+              autoExecute: true // Enable auto paper trading
+            }
+          );
+          logger.info('📈 Trading Agent Scheduler started (paper trading, auto-execute enabled)');
+          logger.info('   Channel: 1443627673501962300');
+          logger.info('   Schedule: 9:00 AM, 12:30 PM, 4:30 PM ET (weekdays)');
+        } catch (error) {
+          logger.error('Failed to start Trading Agent Scheduler:', error);
+          logger.warn('Continuing without Trading Agent Scheduler');
+        }
+      } else {
+        logger.info('Alpaca credentials not configured - Trading Agent Scheduler disabled');
+      }
+
       // Initialize Watchdog Service for proactive health monitoring
       const watchdog = getWatchdog({
         checkIntervalMs: 60000, // Check every minute
@@ -495,6 +518,7 @@ async function main() {
       if (vercelIntegration) servicesInitialized.push('Vercel Integration');
       if (deploymentTracker) servicesInitialized.push('Deployment Tracker');
       if (serverMonitor) servicesInitialized.push('Server Monitor');
+      if (tradingScheduler) servicesInitialized.push('Trading Agent Scheduler');
 
       // Set Discord client for startup logger and log success
       startupLogger.setDiscordClient((bot as DiscordBotRealtime).getClient());
@@ -508,6 +532,7 @@ async function main() {
         watchdog.stop();
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
+        if (tradingScheduler) tradingScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
         agentManager.stopAllTasks(); // Stop agent manager tasks
@@ -525,6 +550,7 @@ async function main() {
         watchdog.stop();
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
+        if (tradingScheduler) tradingScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
         agentManager.stopAllTasks(); // Stop agent manager tasks

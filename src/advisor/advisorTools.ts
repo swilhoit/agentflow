@@ -1,7 +1,7 @@
 import { logger } from '../utils/logger';
 import * as https from 'https';
 import * as fs from 'fs';
-import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
+import { getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -24,19 +24,16 @@ export class AdvisorTools {
     this.tellerTokenAmex = process.env.TELLER_API_TOKEN_AMEX || '';
     this.certPath = process.env.TELLER_CERT_PATH || '';
     this.keyPath = process.env.TELLER_KEY_PATH || '';
-    this.useCache = useCache && !isUsingSupabase();
+    this.useCache = useCache;
 
-    // Only use SQLite database when not using Supabase
-    if (!isUsingSupabase()) {
+    // Initialize database for caching
+    if (useCache) {
       try {
         this.db = getSQLiteDatabase();
       } catch (e) {
-        logger.warn('⚠️  AdvisorTools: SQLite database not available, caching disabled');
+        logger.warn('⚠️  AdvisorTools: Database not available, caching disabled');
         this.useCache = false;
       }
-    } else {
-      logger.info('💰 AdvisorTools: Using Teller API directly (Supabase mode)');
-      this.useCache = false;
     }
 
     if (!this.tellerToken) {

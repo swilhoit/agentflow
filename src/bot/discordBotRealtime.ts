@@ -17,11 +17,13 @@ import { RealtimeVoiceReceiver } from './realtimeVoiceReceiver';
 import { HetznerDeploymentService } from '../services/hetznerDeployment';
 import { ClaudeContainerService } from '../services/claudeContainerService';
 import { SubAgentManager } from '../agents/subAgentManager';
-import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
+import { isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
 import { DatabaseService } from '../services/database';
 import { PostgresDatabaseService } from '../services/postgresDatabaseService';
 import { ChannelNotifier } from '../services/channelNotifier';
 import { DirectCommandExecutor } from '../services/directCommandExecutor';
+import { getAlpacaService, initializeAlpacaService } from '../services/alpacaTrading';
+import { getTradingAgent } from '../services/tradingAgent';
 
 /**
  * Discord Bot with ElevenLabs Conversational AI Integration
@@ -84,16 +86,14 @@ export class DiscordBotRealtime {
       } catch (e) {
         logger.error('❌ DiscordBotRealtime: PostgreSQL not available!', e);
       }
-    } else if (!isUsingSupabase()) {
-      // Local SQLite for development
+    } else {
+      // SQLite fallback for local development
       try {
         this.db = getSQLiteDatabase();
-        logger.info('📦 DiscordBotRealtime: SQLite database initialized');
+        logger.info('📦 DiscordBotRealtime: SQLite database initialized (fallback)');
       } catch (e) {
         logger.warn('⚠️  DiscordBotRealtime: SQLite not available, conversation history disabled');
       }
-    } else {
-      logger.info('📦 DiscordBotRealtime: Running in Supabase mode (local conversation history disabled)');
     }
 
     this.client = new Client({
@@ -259,6 +259,18 @@ export class DiscordBotRealtime {
         await this.handleCancelTaskCommand(message);
       } else if (message.content.startsWith('!help')) {
         await this.handleHelpCommand(message);
+      } else if (message.content.startsWith('!portfolio')) {
+        await this.handlePortfolioCommand(message);
+      } else if (message.content.startsWith('!positions')) {
+        await this.handlePositionsCommand(message);
+      } else if (message.content.startsWith('!orders')) {
+        await this.handleOrdersCommand(message);
+      } else if (message.content.startsWith('!market')) {
+        await this.handleMarketCommand(message);
+      } else if (message.content.startsWith('!quote')) {
+        await this.handleQuoteCommand(message);
+      } else if (message.content.startsWith('!analyze') || message.content.startsWith('!trading')) {
+        await this.handleTradingAnalysisCommand(message);
       } else if (!message.content.startsWith('!')) {
         // Handle general text messages (not commands)
         // But ONLY if bot is tagged/mentioned OR message is in orchestrator's channels
@@ -382,6 +394,15 @@ export class DiscordBotRealtime {
 \`!task-status <taskId>\` - Get detailed status of a specific task
 \`!cancel-task <taskId>\` - Cancel a running task
 
+**Trading (Alpaca):**
+\`!portfolio\` - View portfolio summary & value
+\`!positions\` - List current positions
+\`!orders\` - List open orders
+\`!market\` - Check if market is open
+\`!quote <SYMBOL>\` - Get stock quote
+\`!analyze\` - Run AI trading analysis (recommendations only)
+\`!analyze --execute\` - Run analysis AND execute trades
+
 **System:**
 \`!status\` - Show bot connection status
 \`!resources\` - Show system resource usage
@@ -391,12 +412,255 @@ export class DiscordBotRealtime {
 
 **Natural Language:**
 Just type your request without \`!\` and the AI will help you!
+For trading: "buy 10 shares of AAPL", "sell my TSLA position", etc.
 
 **Multi-Agent Support:**
 You can have multiple agents working on different tasks across different channels simultaneously. Each task is fully isolated with its own agent.
     `.trim();
 
     await message.reply(helpText);
+  }
+
+  // ==================== TRADING COMMANDS ====================
+
+  private getAlpaca() {
+    // Try to get existing service or initialize
+    let alpaca = getAlpacaService();
+    if (!alpaca) {
+      const apiKey = process.env.ALPACA_API_KEY;
+      const secretKey = process.env.ALPACA_SECRET_KEY;
+      if (apiKey && secretKey) {
+        alpaca = initializeAlpacaService({
+          apiKey,
+          secretKey,
+          paper: process.env.ALPACA_PAPER !== 'false'
+        });
+      }
+    }
+    return alpaca;
+  }
+
+  private async handlePortfolioCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      const summary = await alpaca.getPortfolioSummary();
+      const { account, positions, openOrders, totalValue, totalUnrealizedPL, dailyChange, dailyChangePercent } = summary;
+
+      const plEmoji = totalUnrealizedPL >= 0 ? '📈' : '📉';
+      const dayEmoji = dailyChange >= 0 ? '🟢' : '🔴';
+      const modeEmoji = alpaca.isPaperTrading() ? '📄' : '💰';
+
+      let response = `${modeEmoji} **Portfolio Summary** ${alpaca.isPaperTrading() ? '(Paper)' : '(Live)'}\n\n`;
+      response += `💵 **Cash:** $${account.cash.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n`;
+      response += `💼 **Portfolio Value:** $${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n`;
+      response += `🛒 **Buying Power:** $${account.buyingPower.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n\n`;
+      response += `${plEmoji} **Unrealized P/L:** $${totalUnrealizedPL >= 0 ? '+' : ''}${totalUnrealizedPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n`;
+      response += `${dayEmoji} **Today:** $${dailyChange >= 0 ? '+' : ''}${dailyChange.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${dailyChangePercent >= 0 ? '+' : ''}${dailyChangePercent.toFixed(2)}%)\n\n`;
+      response += `📊 **Positions:** ${positions.length} | **Open Orders:** ${openOrders.length}`;
+
+      await message.reply(response);
+    } catch (error: any) {
+      logger.error('Portfolio command error:', error);
+      await message.reply(`❌ Error fetching portfolio: ${error.message}`);
+    }
+  }
+
+  private async handlePositionsCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      const positions = await alpaca.getPositions();
+
+      if (positions.length === 0) {
+        await message.reply('📭 No open positions.');
+        return;
+      }
+
+      let response = `📊 **Open Positions** (${positions.length})\n\n`;
+
+      for (const pos of positions.slice(0, 10)) { // Limit to 10 for Discord
+        const plEmoji = pos.unrealizedPL >= 0 ? '🟢' : '🔴';
+        const plSign = pos.unrealizedPL >= 0 ? '+' : '';
+        response += `**${pos.symbol}** | ${pos.qty} shares @ $${pos.avgEntryPrice.toFixed(2)}\n`;
+        response += `  ${plEmoji} P/L: ${plSign}$${pos.unrealizedPL.toFixed(2)} (${plSign}${pos.unrealizedPLPercent.toFixed(2)}%)\n`;
+        response += `  📍 Current: $${pos.currentPrice.toFixed(2)} | Value: $${pos.marketValue.toFixed(2)}\n\n`;
+      }
+
+      if (positions.length > 10) {
+        response += `_...and ${positions.length - 10} more positions_`;
+      }
+
+      await message.reply(response);
+    } catch (error: any) {
+      logger.error('Positions command error:', error);
+      await message.reply(`❌ Error fetching positions: ${error.message}`);
+    }
+  }
+
+  private async handleOrdersCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      const orders = await alpaca.getOrders({ status: 'open' });
+
+      if (orders.length === 0) {
+        await message.reply('📭 No open orders.');
+        return;
+      }
+
+      let response = `📋 **Open Orders** (${orders.length})\n\n`;
+
+      for (const order of orders.slice(0, 10)) {
+        const typeEmoji = order.side === 'buy' ? '🟢' : '🔴';
+        response += `${typeEmoji} **${order.symbol}** | ${order.side.toUpperCase()} ${order.qty} shares\n`;
+        response += `  Type: ${order.type} | Status: ${order.status}\n`;
+        if (order.limitPrice) response += `  Limit: $${order.limitPrice.toFixed(2)}\n`;
+        if (order.stopPrice) response += `  Stop: $${order.stopPrice.toFixed(2)}\n`;
+        response += `  ID: \`${order.id.substring(0, 8)}...\`\n\n`;
+      }
+
+      if (orders.length > 10) {
+        response += `_...and ${orders.length - 10} more orders_`;
+      }
+
+      await message.reply(response);
+    } catch (error: any) {
+      logger.error('Orders command error:', error);
+      await message.reply(`❌ Error fetching orders: ${error.message}`);
+    }
+  }
+
+  private async handleMarketCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      const clock = await alpaca.getClock();
+      const statusEmoji = clock.isOpen ? '🟢' : '🔴';
+
+      let response = `${statusEmoji} **Market Status:** ${clock.isOpen ? 'OPEN' : 'CLOSED'}\n\n`;
+      response += `🕐 Current Time: ${clock.timestamp.toLocaleString()}\n`;
+
+      if (clock.isOpen) {
+        response += `🔔 Closes: ${clock.nextClose.toLocaleString()}`;
+      } else {
+        response += `🔔 Opens: ${clock.nextOpen.toLocaleString()}`;
+      }
+
+      await message.reply(response);
+    } catch (error: any) {
+      logger.error('Market command error:', error);
+      await message.reply(`❌ Error fetching market status: ${error.message}`);
+    }
+  }
+
+  private async handleQuoteCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      // Parse symbol from command: !quote AAPL
+      const parts = message.content.trim().split(/\s+/);
+      if (parts.length < 2) {
+        await message.reply('Usage: `!quote <SYMBOL>` (e.g., `!quote AAPL`)');
+        return;
+      }
+
+      const symbol = parts[1].toUpperCase();
+
+      const snapshot = await alpaca.getSnapshot(symbol);
+
+      let response = `📊 **${symbol} Quote**\n\n`;
+      response += `💵 **Last Price:** $${snapshot.latestTrade.price.toFixed(2)}\n`;
+      response += `📗 **Bid:** $${snapshot.latestQuote.bidPrice.toFixed(2)} x ${snapshot.latestQuote.bidSize}\n`;
+      response += `📕 **Ask:** $${snapshot.latestQuote.askPrice.toFixed(2)} x ${snapshot.latestQuote.askSize}\n`;
+
+      if (snapshot.dailyBar) {
+        const change = snapshot.dailyBar.close - snapshot.dailyBar.open;
+        const changePercent = (change / snapshot.dailyBar.open) * 100;
+        const changeEmoji = change >= 0 ? '🟢' : '🔴';
+
+        response += `\n📈 **Today:**\n`;
+        response += `  Open: $${snapshot.dailyBar.open.toFixed(2)}\n`;
+        response += `  High: $${snapshot.dailyBar.high.toFixed(2)}\n`;
+        response += `  Low: $${snapshot.dailyBar.low.toFixed(2)}\n`;
+        response += `  ${changeEmoji} Change: ${change >= 0 ? '+' : ''}$${change.toFixed(2)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)\n`;
+        response += `  📦 Volume: ${snapshot.dailyBar.volume.toLocaleString()}`;
+      }
+
+      await message.reply(response);
+    } catch (error: any) {
+      logger.error('Quote command error:', error);
+      await message.reply(`❌ Error fetching quote: ${error.message}`);
+    }
+  }
+
+  private async handleTradingAnalysisCommand(message: Message): Promise<void> {
+    try {
+      const alpaca = this.getAlpaca();
+      if (!alpaca) {
+        await message.reply('⚠️ Trading not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.');
+        return;
+      }
+
+      // Check for execute flag
+      const shouldExecute = message.content.includes('--execute') || message.content.includes('-x');
+
+      await message.reply('🤖 Starting trading analysis... This may take a minute.');
+
+      const tradingAgent = getTradingAgent();
+      tradingAgent.setDiscordClient(this.client, message.channelId);
+
+      const result = await tradingAgent.runDailyAnalysis({
+        execute: shouldExecute,
+        notify: true
+      });
+
+      // Send a summary in the channel where command was issued
+      const recsCount = result.plan.recommendations.filter(r => r.action !== 'HOLD').length;
+      const holdCount = result.plan.recommendations.filter(r => r.action === 'HOLD').length;
+
+      let summaryMsg = `✅ **Trading Analysis Complete**\n\n`;
+      summaryMsg += `📊 **Market Sentiment:** ${result.intelligence.portfolioData.overallSentiment}\n`;
+      summaryMsg += `📰 **News Sentiment:** ${result.intelligence.newsAnalysis.overallNewsSentiment}\n`;
+      summaryMsg += `💼 **Portfolio Value:** $${result.intelligence.accountStatus.portfolioValue.toLocaleString()}\n`;
+      summaryMsg += `💵 **Buying Power:** $${result.intelligence.accountStatus.buyingPower.toLocaleString()}\n\n`;
+      summaryMsg += `📋 **Recommendations:** ${recsCount} trades, ${holdCount} holds\n`;
+
+      if (result.executions && result.executions.length > 0) {
+        const executed = result.executions.filter(e => e.executed).length;
+        const failed = result.executions.filter(e => !e.executed && e.error).length;
+        summaryMsg += `\n⚡ **Executed:** ${executed} trades`;
+        if (failed > 0) summaryMsg += `, ${failed} failed`;
+      } else if (recsCount > 0 && !shouldExecute) {
+        summaryMsg += `\n_Use \`!analyze --execute\` to execute trades_`;
+      }
+
+      await message.reply(summaryMsg);
+
+    } catch (error: any) {
+      logger.error('Trading analysis command error:', error);
+      await message.reply(`❌ Error running trading analysis: ${error.message}`);
+    }
   }
 
   private async handleAgentsCommand(message: Message): Promise<void> {

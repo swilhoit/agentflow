@@ -77,8 +77,8 @@ export interface BotConfig {
   finnhubWebhookSecret?: string;
   // Perplexity API for AI-powered news analysis
   perplexityApiKey?: string;
-  // Database configuration
-  databaseType?: 'sqlite' | 'supabase' | 'cloudsql';
+  // Database configuration (postgres = Hetzner PostgreSQL, sqlite = local dev fallback)
+  databaseType?: 'sqlite' | 'postgres';
   cloudSqlInstanceConnectionName?: string;
   cloudSqlDatabase?: string;
   cloudSqlUser?: string;
@@ -103,6 +103,10 @@ export interface BotConfig {
   githubRepos?: string[];
   githubWorkflowFilter?: string[];
   deploymentCheckInterval?: string;
+  // Alpaca Trading configuration
+  alpacaApiKey?: string;
+  alpacaSecretKey?: string;
+  alpacaPaper?: boolean; // Default true for safety
 }
 
 export interface TrelloTaskRequest {

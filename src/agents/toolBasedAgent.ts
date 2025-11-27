@@ -18,6 +18,7 @@ import { ExecutionPlanner, createQuickPlan, PlanTracker } from '../utils/executi
 import { ToolAwarePlanner, createToolAwarePlanner, ToolAwarePlan } from '../utils/toolAwarePlanner';
 import { CognitiveToolExecutor, createCognitiveToolExecutor } from './cognitiveToolExecutor';
 import { SmartModelRouter, createModelRouter, analyzeTaskComplexity } from '../utils/modelSelector';
+import { getTradingToolDefinitions, getTradingToolExecutor, TradingToolExecutor } from './tradingTools';
 
 const execAsync = promisify(exec);
 
@@ -82,6 +83,9 @@ export class ToolBasedAgent {
   // Track active Claude Code container tasks
   private activeClaudeTasks: Map<string, Promise<ClaudeTaskResult>> = new Map();
 
+  // TRADING - Alpaca trading service executor
+  private tradingExecutor: TradingToolExecutor;
+
   constructor(apiKey: string, trelloService?: TrelloService) {
     this.client = new Anthropic({ apiKey });
     this.trelloService = trelloService;
@@ -118,6 +122,9 @@ export class ToolBasedAgent {
 
     // Set up event listeners for Claude container events
     this.setupClaudeContainerEvents();
+
+    // Initialize Trading Executor for Alpaca API
+    this.tradingExecutor = getTradingToolExecutor();
 
     logger.info('🧠 ToolBasedAgent: Cognitive mode enabled');
   }
@@ -555,11 +562,12 @@ export class ToolBasedAgent {
       );
     }
 
-    // Add Hetzner deployment tools (always available)
+    // Add Hetzner deployment tools (only use when EXPLICITLY requested by user)
+    // IMPORTANT: Do NOT use these tools unless the user explicitly asks for deployment
     tools.push(
       {
         name: 'deploy_to_hetzner',
-        description: 'Deploy a Docker container to Hetzner VPS. Syncs code, builds image, and starts container.',
+        description: 'Deploy a Docker container to Hetzner VPS. ⚠️ ONLY use this tool when the user EXPLICITLY requests deployment with words like "deploy", "launch to server", "push to production". Do NOT use for local development, testing, or when the user just wants to build/run something locally. Requires explicit user confirmation for deployment.',
         input_schema: {
           type: 'object',
           properties: {
@@ -583,9 +591,13 @@ export class ToolBasedAgent {
               type: 'object',
               description: 'Environment variables to set in the container',
               additionalProperties: { type: 'string' }
+            },
+            user_confirmed: {
+              type: 'boolean',
+              description: 'REQUIRED: Set to true only if the user explicitly asked for deployment. If the user did not explicitly request deployment, do NOT call this tool.'
             }
           },
-          required: ['service_name']
+          required: ['service_name', 'user_confirmed']
         }
       },
       {
@@ -932,6 +944,10 @@ export class ToolBasedAgent {
       }
     );
 
+    // Add Trading tools (Alpaca API for paper/live trading)
+    // Always available - the executor will check if API keys are configured
+    tools.push(...getTradingToolDefinitions());
+
     return tools;
   }
 
@@ -1057,6 +1073,15 @@ export class ToolBasedAgent {
 
       // Hetzner deployment tools
       case 'deploy_to_hetzner':
+        // SAFETY CHECK: Only deploy if user explicitly confirmed
+        if (!toolInput.user_confirmed) {
+          return {
+            success: false,
+            error: 'Deployment blocked: user_confirmed must be true. Only deploy when the user explicitly requests deployment.',
+            hint: 'The user must explicitly ask for deployment with words like "deploy", "launch to server", "push to production".'
+          };
+        }
+        await this.notify('⚠️ **Deployment Requested** - Starting deployment to Hetzner VPS...');
         return await this.hetznerDeployToVPS(toolInput);
 
       case 'list_containers':
@@ -1120,6 +1145,10 @@ export class ToolBasedAgent {
         return await this.vercelLink(toolInput);
 
       default:
+        // Check if it's a trading tool
+        if (TradingToolExecutor.isTradingTool(toolName)) {
+          return await this.tradingExecutor.execute(toolName, toolInput);
+        }
         throw new Error(`Unknown tool: ${toolName}`);
     }
   }

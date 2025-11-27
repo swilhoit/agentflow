@@ -53,8 +53,8 @@ export function loadConfig(): BotConfig {
     finnhubWebhookSecret: process.env.FINNHUB_WEBHOOK_SECRET,
     // Perplexity API for AI-powered news analysis
     perplexityApiKey: process.env.PERPLEXITY_API_KEY,
-    // Database configuration - default to Supabase for cloud operation
-    databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'supabase' | 'cloudsql') || 'supabase',
+    // Database configuration - default to PostgreSQL (Hetzner VPS)
+    databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'postgres') || 'postgres',
     cloudSqlInstanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,
     cloudSqlDatabase: process.env.CLOUDSQL_DATABASE,
     cloudSqlUser: process.env.CLOUDSQL_USER,
@@ -78,7 +78,11 @@ export function loadConfig(): BotConfig {
     githubTrackingEnabled: process.env.GITHUB_TRACKING_ENABLED !== 'false',
     githubRepos: process.env.GITHUB_REPOS?.split(',').filter(r => r.trim().length > 0) || [],
     githubWorkflowFilter: process.env.GITHUB_WORKFLOW_FILTER?.split(',').filter(w => w.trim().length > 0) || [],
-    deploymentCheckInterval: process.env.DEPLOYMENT_CHECK_INTERVAL || '*/5 * * * *'
+    deploymentCheckInterval: process.env.DEPLOYMENT_CHECK_INTERVAL || '*/5 * * * *',
+    // Alpaca Trading configuration
+    alpacaApiKey: process.env.ALPACA_API_KEY,
+    alpacaSecretKey: process.env.ALPACA_SECRET_KEY,
+    alpacaPaper: process.env.ALPACA_PAPER !== 'false' // Default to paper trading for safety
   };
 }
 

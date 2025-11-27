@@ -167,3 +167,5 @@ INSERT INTO startup_logs (event_type, message, details, timestamp)
 VALUES ('startup_success', 'AgentFlow PostgreSQL database initialized', 'All tables and indexes created successfully', NOW());
 
 
+
+

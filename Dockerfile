@@ -21,8 +21,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install SSH client for server monitoring
-RUN apk add --no-cache openssh-client
+# Install tools needed for agent operations
+# - git: for creating repos, pushing code
+# - rsync: for file sync operations
+# - openssh-client: for SSH connections
+# - curl: for HTTP requests
+RUN apk add --no-cache git rsync openssh-client curl
 
 # Install only production dependencies
 COPY package*.json ./
