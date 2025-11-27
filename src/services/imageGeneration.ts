@@ -78,13 +78,12 @@ export class ImageGenerationService {
     try {
       logger.info(`🎨 Generating image: "${prompt.substring(0, 50)}..."`);
 
-      // Use Gemini's image generation model
-      // Note: As of late 2024, Gemini 2.0 Flash has image generation via "imagen-3.0-generate-002"
+      // Use Nano Banana (Gemini 2.5 Flash Image) for image generation
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini-2.5-flash-image',
         generationConfig: {
           // @ts-ignore - responseModalities is valid for image generation
-          responseModalities: ['Text', 'Image']
+          responseModalities: ['TEXT', 'IMAGE']
         }
       });
 
@@ -162,7 +161,7 @@ export class ImageGenerationService {
   }
 
   /**
-   * Fallback: Generate using Imagen model directly
+   * Fallback: Generate using Nano Banana Pro (Gemini 3 Pro Image)
    */
   private async generateWithImagen(
     prompt: string,
@@ -181,9 +180,13 @@ export class ImageGenerationService {
     }
 
     try {
-      // Try Imagen 3 model
+      // Try Nano Banana Pro (Gemini 3 Pro Image) as fallback
       const model = this.genAI.getGenerativeModel({
-        model: 'imagen-3.0-generate-002'
+        model: 'gemini-3-pro-image-preview',
+        generationConfig: {
+          // @ts-ignore
+          responseModalities: ['TEXT', 'IMAGE']
+        }
       });
 
       const result = await model.generateContent(prompt);
