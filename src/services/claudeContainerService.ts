@@ -412,10 +412,13 @@ export class ClaudeContainerService extends EventEmitter {
     // Docker run command with YOLO mode (credentials in env file, not command line)
     // Note: The prompt is passed as a positional argument (not -p flag)
     // The Dockerfile ENTRYPOINT already includes: --dangerously-skip-permissions --verbose --output-format stream-json --print
+    // Mount SSH keys so the container can deploy to VPS and other servers
     const dockerCommand = `docker run -d --name ${containerId} \
       --rm \
       --env-file ${envFilePath} \
       -v ${workspacePath}:/workspace \
+      -v /root/.ssh:/root/.ssh:ro \
+      -v /opt/agentflow:/opt/agentflow:rw \
       --pids-limit 200 \
       --memory 4g \
       --cpus 2 \
