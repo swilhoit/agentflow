@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect American Express</title>
+    <script src="https://cdn.teller.io/connect/connect.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #006fcf 0%, #0051a8 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        h1 { color: #333; margin-bottom: 10px; font-size: 28px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .connect-button {
+            background: linear-gradient(135deg, #006fcf 0%, #0051a8 100%);
+            color: white;
+            border: none;
+            padding: 18px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 15px;
+        }
+        .connect-button:hover { opacity: 0.9; }
+        .info { background: #f0f9ff; border-radius: 8px; padding: 15px; margin-top: 20px; font-size: 14px; color: #0369a1; text-align: left; }
+        .success { background: #d1fae5; border-radius: 12px; padding: 20px; margin-top: 20px; display: none; }
+        .success h3 { color: #065f46; }
+        #token-display { background: #1f2937; color: #10b981; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 11px; word-break: break-all; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💳 Connect American Express</h1>
+        <p class="subtitle">Create a fresh connection to your AmEx cards</p>
+
+        <button class="connect-button" onclick="connectAmex()">
+            Connect American Express
+        </button>
+
+        <div class="info">
+            <strong>This will:</strong><br>
+            1. Open Teller Connect<br>
+            2. You select American Express<br>
+            3. Log in with your AmEx credentials<br>
+            4. Complete MFA verification<br>
+            5. Get a NEW access token for your cards
+        </div>
+
+        <div class="success" id="successMessage">
+            <h3>✅ Connected!</h3>
+            <p>Save this token - update TELLER_API_TOKEN_AMEX in .env:</p>
+            <div id="token-display"></div>
+        </div>
+    </div>
+
+    <script>
+        function connectAmex() {
+            console.log('Opening Teller Connect for new AmEx enrollment...');
+
+            const tellerConnect = TellerConnect.setup({
+                applicationId: 'app_pl4slji71hgpim9f3q000',
+                products: ['transactions', 'balance'],
+                onSuccess: function(enrollment) {
+                    console.log('✅ Success!', enrollment);
+                    document.getElementById('successMessage').style.display = 'block';
+                    document.getElementById('token-display').textContent = enrollment.accessToken;
+
+                    // Copy to clipboard
+                    navigator.clipboard.writeText(enrollment.accessToken);
+                    alert('✅ AmEx connected!\n\nNew token (copied to clipboard):\n' + enrollment.accessToken + '\n\nUpdate .env with this token!');
+                },
+                onExit: function() {
+                    console.log('User exited');
+                },
+                onFailure: function(error) {
+                    console.error('❌ Error:', error);
+                    alert('Error: ' + JSON.stringify(error, null, 2));
+                }
+            });
+
+            tellerConnect.open();
+        }
+    </script>
+</body>
+</html>

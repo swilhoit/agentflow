@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repair AmEx Connection</title>
+    <script src="https://cdn.teller.io/connect/connect.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        h1 { color: #333; margin-bottom: 10px; font-size: 28px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .error-box {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+        .error-box h3 { color: #dc2626; margin-bottom: 8px; }
+        .error-box code {
+            background: #fee2e2;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .repair-button {
+            background: linear-gradient(135deg, #006fcf 0%, #0051a8 100%);
+            color: white;
+            border: none;
+            padding: 18px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(0, 111, 207, 0.4);
+        }
+        .repair-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 111, 207, 0.6);
+        }
+        .info {
+            background: #f0f9ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #0369a1;
+        }
+        .success {
+            background: #d1fae5;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+        .success h3 { color: #065f46; }
+        #token-display {
+            background: #1f2937;
+            color: #10b981;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            margin-top: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Repair AmEx Connection</h1>
+        <p class="subtitle">Re-authenticate your American Express accounts</p>
+
+        <div class="error-box">
+            <h3>⚠️ MFA Required</h3>
+            <p>Your AmEx enrollment needs re-authentication.</p>
+            <p style="margin-top: 8px;"><code>enrollment.disconnected.user_action.mfa_required</code></p>
+        </div>
+
+        <button class="repair-button" onclick="repairAmex()">
+            🔗 Reconnect American Express
+        </button>
+
+        <div class="info">
+            <strong>What happens:</strong><br>
+            1. Teller Connect will open<br>
+            2. Select American Express<br>
+            3. Log in with your AmEx credentials<br>
+            4. Complete MFA verification<br>
+            5. Your 4 cards will be reconnected!
+        </div>
+
+        <div class="success" id="successMessage">
+            <h3>✅ Success!</h3>
+            <p>Your AmEx accounts are reconnected!</p>
+            <div id="token-display"></div>
+        </div>
+    </div>
+
+    <script>
+        function repairAmex() {
+            console.log('Starting Teller Connect in update mode...');
+            console.log('Enrollment ID: enr_pl4snqa7g7u803egte000');
+
+            const tellerConnect = TellerConnect.setup({
+                applicationId: 'app_pl4slji71hgpim9f3q000',
+                enrollmentId: 'enr_pl4snqa7g7u803egte000',
+                onInit: function() {
+                    console.log('Teller Connect initialized');
+                },
+                onSuccess: function(enrollment) {
+                    console.log('✅ Success!', enrollment);
+                    document.getElementById('successMessage').style.display = 'block';
+
+                    const tokenDisplay = document.getElementById('token-display');
+                    tokenDisplay.style.display = 'block';
+                    tokenDisplay.textContent = 'Access Token: ' + enrollment.accessToken;
+
+                    alert('✅ AmEx reconnected!\n\nAccess Token:\n' + enrollment.accessToken);
+                },
+                onExit: function() {
+                    console.log('User exited Teller Connect');
+                },
+                onFailure: function(error) {
+                    console.error('❌ Failure:', error);
+                    alert('Error: ' + JSON.stringify(error, null, 2));
+                },
+                onEvent: function(name, data) {
+                    console.log('Event:', name, data);
+                }
+            });
+
+            tellerConnect.open();
+        }
+    </script>
+</body>
+</html>
