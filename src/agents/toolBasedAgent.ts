@@ -13,6 +13,11 @@ import { buildSystemPrompt } from '../prompts/agentPrompts';
 import { IntentClassifier } from '../utils/intentClassifier';
 import { PostgresDatabaseService } from '../services/postgresDatabaseService';
 import { isUsingPostgres, getAgentFlowDatabase } from '../services/databaseFactory';
+import { AdaptiveExecutor, createExecutorForTask, ContinuationDecision } from '../utils/adaptiveExecutor';
+import { ExecutionPlanner, createQuickPlan, PlanTracker } from '../utils/executionPlanner';
+import { ToolAwarePlanner, createToolAwarePlanner, ToolAwarePlan } from '../utils/toolAwarePlanner';
+import { CognitiveToolExecutor, createCognitiveToolExecutor } from './cognitiveToolExecutor';
+import { SmartModelRouter, createModelRouter, analyzeTaskComplexity } from '../utils/modelSelector';
 
 const execAsync = promisify(exec);
 
@@ -58,7 +63,14 @@ export class ToolBasedAgent {
   private notificationHandler?: (message: string) => Promise<void>;
   private maxIterations = 15;
   private taskDecomposer: TaskDecomposer;
-  
+
+  // COGNITIVE SYSTEM - Enables strategic planning and self-awareness
+  private cognitiveExecutor: CognitiveToolExecutor;
+  private useCognitiveMode = true;  // Enable by default
+
+  // SMART MODEL ROUTER - Selects optimal model based on task complexity
+  private modelRouter: SmartModelRouter;
+
   // PostgreSQL database for logging (optional)
   private pgDb: PostgresDatabaseService | null = null;
   private currentTaskId: string | null = null;
@@ -73,6 +85,15 @@ export class ToolBasedAgent {
     this.client = new Anthropic({ apiKey });
     this.trelloService = trelloService;
     this.taskDecomposer = new TaskDecomposer(apiKey);
+
+    // Initialize COGNITIVE EXECUTOR with tool execution capability
+    this.cognitiveExecutor = createCognitiveToolExecutor(
+      apiKey,
+      async (toolName: string, input: any) => this.executeTool(toolName, input)
+    );
+
+    // Initialize SMART MODEL ROUTER for fallback execution mode
+    this.modelRouter = createModelRouter();
 
     // Initialize PostgreSQL database if configured
     if (isUsingPostgres()) {
@@ -95,6 +116,16 @@ export class ToolBasedAgent {
 
     // Set up event listeners for Claude container events
     this.setupClaudeContainerEvents();
+
+    logger.info('🧠 ToolBasedAgent: Cognitive mode enabled');
+  }
+
+  /**
+   * Enable or disable cognitive mode
+   */
+  setCognitiveMode(enabled: boolean): void {
+    this.useCognitiveMode = enabled;
+    logger.info(`🧠 Cognitive mode: ${enabled ? 'ENABLED' : 'DISABLED'}`);
   }
 
   /**
@@ -1823,23 +1854,21 @@ export class ToolBasedAgent {
   }
 
   /**
-   * Execute task with iterative tool calling
-   */
-  /**
-   * Enhanced executeTask with automatic task decomposition and intent classification
+   * Enhanced executeTask with COGNITIVE EXECUTION
+   * Uses strategic planning, context awareness, and self-monitoring
    */
   async executeTask(task: AgentTask): Promise<AgentResult> {
     // Step 0: INTENT CLASSIFICATION - Check if this is conversational or an actual task
     const intentResult = IntentClassifier.classify(task.command);
     logger.info(`🎯 Intent Classification: ${IntentClassifier.getClassificationSummary(task.command)}`);
-    
+
     // Handle conversational messages IMMEDIATELY without task execution
     if (!intentResult.shouldExecuteTask) {
       logger.info(`💬 Conversational message detected (${intentResult.intent}) - responding directly`);
-      
+
       const response = intentResult.suggestedResponse || "What can I help you with?";
       await this.notify(response);
-      
+
       return {
         success: true,
         message: response,
@@ -1847,22 +1876,126 @@ export class ToolBasedAgent {
         toolCalls: 0
       };
     }
-    
-    // Step 1: Quick heuristic check (fast, no AI call needed for simple tasks)
-    const taskType = (task as any).context?.taskType;
-    const quickEstimate = SmartIterationCalculator.calculate(task.command, taskType);
-    
-    logger.info(`⚡ Quick Analysis: ${SmartIterationCalculator.getSummary(quickEstimate)}`);
-    logger.info(`   Confidence: ${quickEstimate.confidence}, Recommended: ${quickEstimate.recommended} iterations`);
-    
-    // Step 2: ALWAYS use the fast path - deep analysis was causing memory crashes
-    // The heuristic-based quick estimate is reliable enough for most tasks
-    const iterationLimit = Math.min(quickEstimate.recommended, this.maxIterations);
-    
-    logger.info(`⚡ Fast path: Using ${iterationLimit} iterations (heuristic estimate)`);
-    await this.notify(`🚀 **Starting Task** (${iterationLimit} iterations max)\n${quickEstimate.reasoning}`);
-    
-    return await this.executeSimpleTask(task, iterationLimit);
+
+    // COGNITIVE MODE: Use full strategic planning and self-monitoring
+    if (this.useCognitiveMode) {
+      return await this.executeCognitive(task);
+    }
+
+    // FALLBACK: Use adaptive execution (simpler, faster for basic tasks)
+    const taskAnalysis = AdaptiveExecutor.analyzeTaskComplexity(task.command);
+
+    logger.info(`🧠 Adaptive Analysis: ${taskAnalysis.reasoning}`);
+    logger.info(`   Needs exploration: ${taskAnalysis.needsExploration}`);
+    logger.info(`   Needs planning: ${taskAnalysis.needsPlanning}`);
+
+    await this.notify(
+      `🚀 **Starting Task**\n` +
+      `**Mode:** Adaptive (progress-based)\n` +
+      `**Analysis:** ${taskAnalysis.reasoning}`
+    );
+
+    return await this.executeSimpleTask(task);
+  }
+
+  /**
+   * Execute task using the COGNITIVE SYSTEM
+   * Full strategic planning, context awareness, tool orchestration, and self-monitoring
+   */
+  private async executeCognitive(task: AgentTask): Promise<AgentResult> {
+    logger.info(`\n${'═'.repeat(70)}`);
+    logger.info(`🧠 COGNITIVE EXECUTION MODE`);
+    logger.info(`${'═'.repeat(70)}`);
+
+    // Set up notification handler for cognitive executor
+    this.cognitiveExecutor.setNotificationHandler(async (msg) => this.notify(msg));
+
+    // Set task context for logging
+    const taskId = `cognitive_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setTaskContext(taskId, task.context.guildId, task.context.channelId);
+
+    // Log task start
+    await this.logActivity('info', `Cognitive task started: ${task.command.substring(0, 100)}`, {
+      command: task.command,
+      executionMode: 'cognitive',
+      userId: task.context.userId
+    });
+
+    try {
+      // Execute with cognitive system
+      const result = await this.cognitiveExecutor.execute(
+        task.command,
+        this.getToolsAsAnthropicFormat(),
+        {
+          hasTrello: !!this.trelloService,
+          conversationHistory: task.context.conversationHistory
+        }
+      );
+
+      // Log completion
+      await this.logActivity(
+        result.success ? 'success' : 'warning',
+        result.success ? 'Cognitive task completed' : 'Cognitive task incomplete',
+        {
+          iterations: result.iterations,
+          toolCalls: result.toolCalls,
+          phasesCompleted: result.phasesCompleted,
+          totalPhases: result.totalPhases,
+          approach: result.approach,
+          confidence: result.confidence,
+          discoveries: result.discoveries.length
+        }
+      );
+
+      // Final notification
+      if (result.success) {
+        await this.notify(
+          `🏁 **Task Complete**\n` +
+          `**Approach:** ${result.approach}\n` +
+          `**Phases:** ${result.phasesCompleted}/${result.totalPhases}\n` +
+          `**Iterations:** ${result.iterations}\n` +
+          `**Tool Calls:** ${result.toolCalls}\n` +
+          (result.discoveries.length > 0 ? `**Discoveries:** ${result.discoveries.slice(0, 3).join(', ')}` : '')
+        );
+      }
+
+      return {
+        success: result.success,
+        message: result.message,
+        iterations: result.iterations,
+        toolCalls: result.toolCalls
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`🚨 Cognitive execution failed: ${errorMessage}`);
+
+      await this.logActivity('error', `Cognitive execution failed: ${errorMessage}`, {
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+
+      await this.notify(`❌ **Cognitive Execution Failed**\n${errorMessage}`);
+
+      return {
+        success: false,
+        message: errorMessage,
+        iterations: 0,
+        toolCalls: 0,
+        error: errorMessage
+      };
+    }
+  }
+
+  /**
+   * Convert tools to Anthropic format for cognitive executor
+   */
+  private getToolsAsAnthropicFormat(): Anthropic.Tool[] {
+    return this.getTools().map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input_schema as Anthropic.Tool['input_schema']
+    }));
   }
 
   /**
@@ -1951,22 +2084,53 @@ export class ToolBasedAgent {
 
   /**
    * Execute a simple task without decomposition
+   * NOW USES ADAPTIVE EXECUTOR + TOOL-AWARE PLANNING!
    */
   private async executeSimpleTask(task: AgentTask, iterationLimit?: number): Promise<AgentResult> {
-    const maxIter = iterationLimit || this.maxIterations;
+    // Create adaptive executor configured for this task
+    const executor = createExecutorForTask(task.command);
     const conversationHistory: Anthropic.MessageParam[] = [];
-    let iterations = 0;
     let toolCalls = 0;
     let continueLoop = true;
+
+    // Create TOOL-AWARE execution plan that knows about available tools
+    const toolPlanner = createToolAwarePlanner({
+      hasTrello: !!this.trelloService,
+      hasHetzner: true,  // Always have Hetzner
+      hasClaudeContainers: true  // Always have Claude containers
+    });
+
+    const toolAwarePlan = toolPlanner.createPlan(task.command);
+    const planTracker = new PlanTracker(toolAwarePlan);
+    executor.setPlan(toolAwarePlan);
+
+    logger.info(`📋 Tool-Aware Plan: ${toolAwarePlan.complexity} - ${toolAwarePlan.milestones.length} milestones`);
+    logger.info(`🔧 Required tools: ${toolAwarePlan.toolsRequired.join(', ')}`);
+    if (toolAwarePlan.delegationOpportunities.length > 0) {
+      logger.info(`🤖 Delegation opportunities: ${toolAwarePlan.delegationOpportunities.join(', ')}`);
+    }
 
     // Set task context for logging
     const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     this.setTaskContext(taskId, task.context.guildId, task.context.channelId);
 
+    // SMART MODEL SELECTION - Choose optimal model based on task complexity
+    this.modelRouter = createModelRouter();  // Reset for fresh task
+    const taskComplexity = analyzeTaskComplexity(task.command);
+    const selectedModel = this.modelRouter.getModelForTask(task.command);
+
+    logger.info(`🎯 Model Selection: ${selectedModel.name} (complexity: ${taskComplexity.complexity}, score: ${taskComplexity.score})`);
+
     // Log task start
     await this.logActivity('info', `Task started: ${task.command.substring(0, 100)}`, {
       command: task.command,
-      maxIterations: maxIter,
+      executionMode: 'adaptive-tool-aware',
+      complexity: toolAwarePlan.complexity,
+      taskComplexityScore: taskComplexity.score,
+      taskComplexityLevel: taskComplexity.complexity,
+      selectedModel: selectedModel.name,
+      toolsRequired: toolAwarePlan.toolsRequired,
+      milestones: toolAwarePlan.milestones.length,
       userId: task.context.userId
     });
 
@@ -1980,29 +2144,64 @@ export class ToolBasedAgent {
       })
     });
 
+    // Build tool-aware notification
+    const toolInfo = toolAwarePlan.toolsRequired.length > 0
+      ? `**Tools:** ${toolAwarePlan.toolsRequired.slice(0, 4).join(', ')}${toolAwarePlan.toolsRequired.length > 4 ? '...' : ''}`
+      : '';
+
+    const delegationInfo = toolAwarePlan.delegationOpportunities.length > 0
+      ? `\n🤖 **Can delegate:** ${toolAwarePlan.delegationOpportunities[0]}`
+      : '';
+
     await this.notify(
       `🤖 **Agent Started**\n` +
       `**Task ID:** \`${taskId}\`\n` +
-      `**Max Iterations:** ${maxIter}\n` +
-      `**Command:**\n\`\`\`\n${task.command.substring(0, 500)}${task.command.length > 500 ? '...' : ''}\n\`\`\`\n` +
-      `_I'll keep you updated on progress. If you don't see updates, something may have gone wrong._`
+      `**Complexity:** ${toolAwarePlan.complexity} (${taskComplexity.score}/100)\n` +
+      `**Model:** ${selectedModel.name}\n` +
+      `**Plan:** ${toolAwarePlan.milestones.length} milestones\n` +
+      `${toolInfo}${delegationInfo}\n` +
+      `**Command:**\n\`\`\`\n${task.command.substring(0, 400)}${task.command.length > 400 ? '...' : ''}\n\`\`\`\n` +
+      `_Adaptive execution with smart model selection._`
     );
 
     try {
-      while (continueLoop && iterations < maxIter) {
-        iterations++;
-        logger.info(`🔄 Iteration ${iterations}/${maxIter}`);
-        await this.notify(`🔄 **Iteration ${iterations}/${maxIter}**\nProcessing...`);
-        
-        // Log iteration start
-        await this.logActivity('step', `Iteration ${iterations}/${maxIter} started`, { iteration: iterations, maxIterations: maxIter });
+      // ADAPTIVE LOOP - continues based on progress, not arbitrary limits
+      let decision: ContinuationDecision;
 
-        // Call Claude with tools (WITH TIMEOUT!)
+      do {
+        executor.recordIteration();
+        const iterations = executor.getState().iterations;
+
+        logger.info(`🔄 Iteration ${iterations} (adaptive mode)`);
+
+        // Check if we should continue BEFORE processing
+        decision = executor.shouldContinue();
+        if (!decision.shouldContinue) {
+          logger.info(`⏹️ Stopping: ${decision.reason}`);
+          break;
+        }
+
+        // Show progress with plan status if available
+        const progressMsg = planTracker
+          ? `🔄 **Iteration ${iterations}**\n${planTracker.getProgressString()}`
+          : `🔄 **Iteration ${iterations}** (progress markers: ${executor.getState().progressMarkers.size})`;
+        await this.notify(progressMsg);
+
+        // Log iteration start
+        await this.logActivity('step', `Iteration ${iterations} started (adaptive)`, {
+          iteration: iterations,
+          progressMarkers: executor.getState().progressMarkers.size
+        });
+
+        // Call Claude with tools (WITH TIMEOUT AND SMART MODEL!)
         const TIMEOUT_MS = 60000; // 60 second timeout per iteration
+        const currentModel = this.modelRouter.getCurrentModel();
+        const maxTokens = currentModel.tier === 'powerful' ? 8192 : 4096;
+
         const response = await Promise.race([
           this.client.messages.create({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 4096,
+            model: currentModel.id,
+            max_tokens: maxTokens,
             tools: this.getTools(),
             messages: conversationHistory
           }),
@@ -2017,7 +2216,7 @@ export class ToolBasedAgent {
           content: response.content
         });
 
-        // OPTIMIZATION: Early completion detection
+        // ADAPTIVE: Detect completion signals from response text
         const textContent = response.content
           .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
           .map(block => block.text)
@@ -2031,11 +2230,17 @@ export class ToolBasedAgent {
         ];
 
         const hasCompletionPhrase = completionPhrases.some(phrase => textContent.includes(phrase));
-        
+
+        // Record completion signal if detected
+        if (hasCompletionPhrase) {
+          executor.recordCompletionSignal();
+        }
+
         // If task appears complete and we've made at least one tool call, stop early
         if (hasCompletionPhrase && toolCalls > 0 && response.stop_reason !== 'tool_use') {
-          logger.info(`✅ Early completion detected at iteration ${iterations}/${maxIter} - stopping!`);
-          await this.notify(`✅ **Task Complete** (early stop at iteration ${iterations}/${maxIter})`);
+          const iterations = executor.getState().iterations;
+          logger.info(`✅ Completion detected at iteration ${iterations} - stopping!`);
+          await this.notify(`✅ **Task Complete** (iteration ${iterations})`);
           continueLoop = false;
           break;
         }
@@ -2062,7 +2267,11 @@ export class ToolBasedAgent {
           const toolExecutionPromises = toolUses.map(async (toolUse) => {
             toolCalls++;
             const result = await this.executeTool(toolUse.name, toolUse.input);
-            
+            const success = !result.error && !result.failed;
+
+            // ADAPTIVE: Record tool call for progress tracking
+            executor.recordToolCall(toolUse.name, toolUse.input, result, success);
+
             // Send result notification (non-blocking)
             const resultPreview = JSON.stringify(result).substring(0, 300);
             this.notify(
@@ -2088,6 +2297,8 @@ export class ToolBasedAgent {
         } else if (response.stop_reason === 'end_turn') {
           // Claude is done
           continueLoop = false;
+          executor.recordCompletionSignal();
+          const iterations = executor.getState().iterations;
           logger.info('✅ Task complete - Claude ended turn');
 
           // Extract final message
@@ -2096,14 +2307,21 @@ export class ToolBasedAgent {
           );
           const finalMessage = textBlocks.map(b => b.text).join('\n');
 
-          await this.notify(`🏁 **Task Complete**\n${finalMessage}`);
+          // Show final plan status if available
+          const completionMsg = planTracker
+            ? `🏁 **Task Complete**\n${planTracker.getProgressString()}\n\n${finalMessage}`
+            : `🏁 **Task Complete**\n${finalMessage}`;
+          await this.notify(completionMsg);
 
           // Log successful completion
           await this.logActivity('success', `Task completed successfully`, {
             iterations,
             toolCalls,
+            progressMarkers: executor.getState().progressMarkers.size,
             finalMessagePreview: finalMessage.substring(0, 200)
           });
+
+          logger.info(executor.getSummary());
 
           return {
             success: true,
@@ -2112,6 +2330,7 @@ export class ToolBasedAgent {
             toolCalls
           };
         } else if (response.stop_reason === 'max_tokens') {
+          const iterations = executor.getState().iterations;
           logger.warn('⚠️ Hit max tokens limit');
           continueLoop = false;
 
@@ -2120,8 +2339,9 @@ export class ToolBasedAgent {
             `⚠️ **Token Limit Reached**\n\n` +
             `The response was cut off due to the token limit.\n\n` +
             `**Progress:**\n` +
-            `• Iteration: ${iterations}/${maxIter}\n` +
-            `• Tool calls: ${toolCalls}\n\n` +
+            `• Iterations: ${iterations}\n` +
+            `• Tool calls: ${toolCalls}\n` +
+            `• Progress markers: ${executor.getState().progressMarkers.size}\n\n` +
             `_The task may need to be simpler or broken into parts._`
           );
 
@@ -2136,66 +2356,107 @@ export class ToolBasedAgent {
             error: 'max_tokens'
           };
         }
-      }
 
-      // Hit max iterations
-      if (iterations >= maxIter) {
-        logger.warn(`⚠️ Hit max iterations (${maxIter})`);
-        await this.notify(
-          `⚠️ **Max Iterations Reached**\n\n` +
-          `The task ran for ${iterations} iterations but didn't complete.\n\n` +
-          `**Progress:**\n` +
-          `• Iterations: ${iterations}/${maxIter}\n` +
-          `• Tool calls: ${toolCalls}\n\n` +
-          `_The task may be too complex. Try breaking it into smaller steps or being more specific._`
-        );
+        // Check continuation decision at end of each iteration
+        decision = executor.shouldContinue();
+        if (decision.warning) {
+          await this.notify(`⚠️ ${decision.warning}`);
+        }
+      } while (decision.shouldContinue && continueLoop);
 
-        // Log max iterations warning
-        await this.logActivity('warning', `Task incomplete - reached max iterations (${maxIter})`, { iterations, toolCalls });
+      // ADAPTIVE: Handle the reason we stopped
+      const finalState = executor.getState();
+      const iterations = finalState.iterations;
+
+      if (decision.suggestedAction === 'complete' || executor.detectCompletion()) {
+        // Task completed successfully via adaptive detection
+        logger.info('✅ Task completed (adaptive detection)');
+        logger.info(executor.getSummary());
 
         return {
-          success: false,
-          message: `Task incomplete - reached max iterations (${maxIter})`,
+          success: true,
+          message: `Task completed after ${iterations} iterations with ${toolCalls} tool calls`,
           iterations,
-          toolCalls,
-          error: 'max_iterations'
+          toolCalls
         };
       }
 
-      // Shouldn't reach here
-      await this.logActivity('warning', 'Task ended unexpectedly', { iterations, toolCalls });
-      
-      return {
-        success: false,
-        message: 'Task ended unexpectedly',
+      // Handle stall or other stop reasons
+      const stopReason = decision.reason;
+      logger.warn(`⚠️ Task stopped: ${stopReason}`);
+
+      await this.notify(
+        `⚠️ **Execution Stopped**\n\n` +
+        `**Reason:** ${stopReason}\n\n` +
+        `**Progress:**\n` +
+        `• Iterations: ${iterations}\n` +
+        `• Tool calls: ${toolCalls}\n` +
+        `• Progress markers: ${finalState.progressMarkers.size}\n` +
+        `• Last progress at: iteration ${finalState.lastMeaningfulProgress}\n\n` +
+        (planTracker ? planTracker.getDetailedStatus() + '\n\n' : '') +
+        `_${decision.suggestedAction === 'ask_user' ? 'The task may need clarification or a different approach.' : 'Try breaking the task into smaller steps.'}_`
+      );
+
+      // Log stop reason
+      await this.logActivity('warning', `Task stopped: ${stopReason}`, {
         iterations,
         toolCalls,
-        error: 'unexpected_end'
+        progressMarkers: finalState.progressMarkers.size,
+        lastMeaningfulProgress: finalState.lastMeaningfulProgress,
+        suggestedAction: decision.suggestedAction
+      });
+
+      return {
+        success: false,
+        message: `Task incomplete - ${stopReason}`,
+        iterations,
+        toolCalls,
+        error: decision.suggestedAction || 'adaptive_stop'
       };
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : '';
+      const iterations = executor.getState().iterations;
       logger.error('❌ Agent execution failed', error);
+
+      // Try to escalate model before giving up
+      const escalatedModel = this.modelRouter.reportFailure();
+      if (escalatedModel) {
+        logger.info(`⬆️ Model escalated to ${escalatedModel.name} - consider retrying`);
+        await this.notify(
+          `⚠️ **Execution Error - Model Escalated**\n\n` +
+          `**Error:** ${errorMessage}\n\n` +
+          `**Model escalated:** ${escalatedModel.name}\n` +
+          `_Task may succeed with the more powerful model. Try again!_`
+        );
+      }
 
       // Send detailed error notification to Discord
       await this.notify(
         `❌ **Agent Failed**\n\n` +
         `**Error:** ${errorMessage}\n\n` +
+        `**Model used:** ${this.modelRouter.getCurrentModel().name}\n` +
         `**Progress at failure:**\n` +
-        `• Iterations completed: ${iterations}/${maxIter}\n` +
-        `• Tool calls made: ${toolCalls}\n\n` +
+        `• Iterations completed: ${iterations}\n` +
+        `• Tool calls made: ${toolCalls}\n` +
+        `• Progress markers: ${executor.getState().progressMarkers.size}\n\n` +
         `**Stack trace:**\n\`\`\`\n${errorStack || 'No stack trace available'}\n\`\`\`\n\n` +
         `_Please try again or simplify your request._`
       );
 
       // Log error to PostgreSQL
-      await this.logActivity('error', `Agent execution failed: ${errorMessage}`, { 
-        iterations, 
+      await this.logActivity('error', `Agent execution failed: ${errorMessage}`, {
+        iterations,
         toolCalls,
+        progressMarkers: executor.getState().progressMarkers.size,
+        modelUsed: this.modelRouter.getCurrentModel().name,
+        modelEscalated: escalatedModel?.name || null,
         error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined
       });
+
+      logger.info(executor.getSummary());
 
       return {
         success: false,
