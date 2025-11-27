@@ -616,6 +616,109 @@ export class PostgresDatabaseService {
   }
 
   /**
+   * Get formatted agent action history for context injection
+   * This is the KEY method for giving the agent memory of its past actions
+   */
+  async getAgentActionHistory(guildId: string, channelId: string, options?: {
+    maxTurns?: number;
+    maxChars?: number;
+    includeToolResults?: boolean;
+    taskId?: string;  // If provided, only get history for this task
+  }): Promise<string> {
+    const maxTurns = options?.maxTurns || 30;
+    const maxChars = options?.maxChars || 8000;
+    const includeToolResults = options?.includeToolResults ?? true;
+
+    let query: string;
+    let params: any[];
+
+    if (options?.taskId) {
+      // Get history for a specific task
+      query = `
+        SELECT turn_number, role, content, content_type, tool_name, timestamp
+        FROM conversation_turns
+        WHERE task_id = $1
+        ORDER BY turn_number ASC, timestamp ASC
+        LIMIT $2
+      `;
+      params = [options.taskId, maxTurns];
+    } else {
+      // Get recent history across all tasks in this channel
+      query = `
+        SELECT ct.task_id, ct.turn_number, ct.role, ct.content, ct.content_type, ct.tool_name, ct.timestamp
+        FROM conversation_turns ct
+        WHERE ct.guild_id = $1 AND ct.channel_id = $2
+        ORDER BY ct.timestamp DESC
+        LIMIT $3
+      `;
+      params = [guildId, channelId, maxTurns];
+    }
+
+    const result = await this.pool.query(query, params);
+    const turns = options?.taskId ? result.rows : result.rows.reverse();
+
+    if (turns.length === 0) {
+      return '';
+    }
+
+    // Format turns into a readable history
+    const formattedTurns: string[] = [];
+    let totalChars = 0;
+
+    for (const turn of turns) {
+      let turnText = '';
+
+      switch (turn.content_type) {
+        case 'text':
+          if (turn.role === 'user') {
+            turnText = `[USER] ${turn.content}`;
+          } else {
+            turnText = `[ASSISTANT] ${turn.content}`;
+          }
+          break;
+
+        case 'tool_use':
+          turnText = `[TOOL CALL] ${turn.tool_name}`;
+          break;
+
+        case 'tool_result':
+          if (includeToolResults) {
+            // Truncate long tool results
+            const content = turn.content?.substring(0, 500) || '';
+            turnText = `[TOOL RESULT] ${turn.tool_name}: ${content}${turn.content?.length > 500 ? '...' : ''}`;
+          }
+          break;
+
+        case 'planning':
+          turnText = `[PLANNING] ${turn.content?.substring(0, 300) || ''}`;
+          break;
+
+        case 'reasoning':
+          // Include key reasoning, but truncate
+          const reasoning = turn.content?.substring(0, 400) || '';
+          turnText = `[REASONING] ${reasoning}${turn.content?.length > 400 ? '...' : ''}`;
+          break;
+
+        default:
+          turnText = `[${turn.role?.toUpperCase()}] ${turn.content?.substring(0, 300) || ''}`;
+      }
+
+      if (turnText && (totalChars + turnText.length) <= maxChars) {
+        formattedTurns.push(turnText);
+        totalChars += turnText.length;
+      } else if (totalChars >= maxChars) {
+        break;  // Hit character limit
+      }
+    }
+
+    if (formattedTurns.length === 0) {
+      return '';
+    }
+
+    return `## Recent Agent Actions (${formattedTurns.length} turns)\n${formattedTurns.join('\n\n')}`;
+  }
+
+  /**
    * Get conversation summary for a task
    */
   async getTaskConversationSummary(taskId: string): Promise<{

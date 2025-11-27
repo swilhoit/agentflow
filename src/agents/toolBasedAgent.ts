@@ -2025,21 +2025,49 @@ export class ToolBasedAgent {
 
     await this.notify(`⚡ **Direct Mode**\nProcessing your query...`);
 
+    // GET AGENT'S ACTION HISTORY FROM POSTGRESQL (even for direct mode)
+    let agentActionHistory = '';
+    if (this.pgDb) {
+      try {
+        agentActionHistory = await this.pgDb.getAgentActionHistory(
+          task.context.guildId,
+          task.context.channelId,
+          {
+            maxTurns: 15,  // Fewer turns for direct mode
+            maxChars: 3000,
+            includeToolResults: false  // Skip tool results for speed
+          }
+        );
+      } catch (error) {
+        logger.warn('Failed to load agent action history:', error);
+      }
+    }
+
     // Log task start
     await this.logActivity('info', `Direct mode task: ${task.command.substring(0, 100)}`, {
       command: task.command,
       executionMode: 'direct',
-      userId: task.context.userId
+      userId: task.context.userId,
+      hasActionHistory: !!agentActionHistory
     });
 
     const conversationHistory: Anthropic.MessageParam[] = [];
     let toolCalls = 0;
     let iterations = 0;
 
+    // Build context with action history
+    let contextSection = '';
+    if (agentActionHistory) {
+      contextSection += `${agentActionHistory}\n\n`;
+    }
+    if (task.context.conversationHistory) {
+      contextSection += `## Recent Messages\n${task.context.conversationHistory}\n\n`;
+    }
+
     // Build a simpler, faster system prompt
     const systemPrompt = `You are a helpful AI assistant. Answer the user's question directly and concisely.
 
-${task.context.conversationHistory ? `## Previous Context\n${task.context.conversationHistory}\n\n` : ''}
+${contextSection ? `## Context\n${contextSection}` : ''}
 
 ## User's Request
 ${task.command}
@@ -2183,11 +2211,40 @@ Respond directly to the user's question. If you need to use tools, use them effi
     // Reset turn counter for new task
     this.turnCounter = 0;
 
+    // GET AGENT'S ACTION HISTORY FROM POSTGRESQL
+    // This gives the agent memory of what it has done before
+    let agentActionHistory = '';
+    if (this.pgDb) {
+      try {
+        agentActionHistory = await this.pgDb.getAgentActionHistory(
+          task.context.guildId,
+          task.context.channelId,
+          {
+            maxTurns: 30,
+            maxChars: 6000,
+            includeToolResults: true
+          }
+        );
+        if (agentActionHistory) {
+          logger.info(`📚 Loaded ${agentActionHistory.length} chars of agent action history`);
+        }
+      } catch (error) {
+        logger.warn('Failed to load agent action history:', error);
+      }
+    }
+
+    // Combine Discord message context with agent action history
+    let fullContext = task.context.conversationHistory || '';
+    if (agentActionHistory) {
+      fullContext = `${agentActionHistory}\n\n${fullContext}`;
+    }
+
     // Log task start
     await this.logActivity('info', `Cognitive task started: ${task.command.substring(0, 100)}`, {
       command: task.command,
       executionMode: 'cognitive',
-      userId: task.context.userId
+      userId: task.context.userId,
+      hasActionHistory: !!agentActionHistory
     });
 
     // LOG USER PROMPT - Full conversational context starts here
@@ -2195,7 +2252,8 @@ Respond directly to the user's question. If you need to use tools, use them effi
       contentType: 'text',
       metadata: {
         userId: task.context.userId,
-        hasConversationHistory: !!task.context.conversationHistory
+        hasConversationHistory: !!task.context.conversationHistory,
+        hasActionHistory: !!agentActionHistory
       }
     });
 
@@ -2213,13 +2271,13 @@ Respond directly to the user's question. If you need to use tools, use them effi
     });
 
     try {
-      // Execute with cognitive system
+      // Execute with cognitive system - pass FULL context including action history
       const result = await this.cognitiveExecutor.execute(
         task.command,
         this.getToolsAsAnthropicFormat(),
         {
           hasTrello: !!this.trelloService,
-          conversationHistory: task.context.conversationHistory
+          conversationHistory: fullContext  // Includes agent action history + Discord messages
         }
       );
 
