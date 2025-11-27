@@ -14,10 +14,13 @@ export interface GeneratedImage {
 }
 
 /**
- * Image Generation Service using Google Gemini
+ * Image Generation Service using Google Gemini "Nano Banana"
  *
- * Generates images using Gemini's Imagen model and saves them
- * to the workspace for use in web projects.
+ * Nano Banana is the codename for Google's Gemini image generation models:
+ * - Nano Banana = Gemini 2.5 Flash Image (gemini-2.0-flash-exp with image output)
+ * - Nano Banana Pro = Gemini 3 Pro Image (coming soon)
+ *
+ * Generates images from text prompts and saves them to the workspace.
  */
 export class ImageGenerationService {
   private genAI: GoogleGenerativeAI | null = null;

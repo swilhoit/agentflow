@@ -949,10 +949,10 @@ export class ToolBasedAgent {
     // Always available - the executor will check if API keys are configured
     tools.push(...getTradingToolDefinitions());
 
-    // Add Image Generation tool (Gemini/Imagen)
+    // Add Image Generation tool (Nano Banana / Gemini)
     tools.push({
       name: 'generate_image',
-      description: 'Generate an image using Google Gemini/Imagen AI. Use this when you need to create images for websites, apps, or any visual content. Returns the local file path and public URL of the generated image.',
+      description: 'Generate an image using Nano Banana (Google Gemini 2.5 Flash Image model). Use this for ANY images needed in websites, apps, or visual content. NEVER make up fake URLs - always use this tool. Returns the local file path and public URL of the generated image.',
       input_schema: {
         type: 'object',
         properties: {
@@ -978,10 +978,10 @@ export class ToolBasedAgent {
       }
     });
 
-    // Add Batch Image Generation tool
+    // Add Batch Image Generation tool (Nano Banana)
     tools.push({
       name: 'generate_images_batch',
-      description: 'Generate multiple images at once. Useful when creating a set of images for a website (hero images, service icons, team photos, etc.).',
+      description: 'Generate multiple images at once using Nano Banana. REQUIRED when building websites - generate ALL needed images (hero, services, team, backgrounds, icons). Never use placeholder URLs.',
       input_schema: {
         type: 'object',
         properties: {

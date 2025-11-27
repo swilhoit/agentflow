@@ -89,27 +89,29 @@ TASK: ${context.command}
 
   prompt += `
 
-🎨 IMAGE GENERATION (Gemini/Imagen):
+🎨 IMAGE GENERATION (Nano Banana / Gemini):
 
-You have access to AI image generation via Google Gemini. Use it for ANY images needed in websites/apps:
+You have access to **Nano Banana** - Google's Gemini image generation model (Gemini 2.5 Flash Image).
+"Nano Banana" is the CODENAME for the model, NOT a banana image. Use it for ANY images needed:
 
-- **generate_image**: Create a single image from a text description
+- **generate_image**: Create a single image using Nano Banana
 - **generate_images_batch**: Create multiple images at once (for websites with many images)
 
 ⚠️ CRITICAL IMAGE RULES:
 1. NEVER make up fake image URLs (like "example.com/image.png" or "placeholder.com")
 2. NEVER use placeholder services or dummy images
-3. ALWAYS use generate_image tool when you need ANY image for a project
-4. If user mentions "nano banana" - generate a fun banana-themed test image using the tool
-5. For websites, generate ALL needed images: hero images, service icons, team photos, etc.
+3. ALWAYS use generate_image tool (Nano Banana) when you need ANY image for a project
+4. "Nano Banana" = the image generation MODEL, use it to generate real images
+5. For websites, generate ALL needed images: hero images, service icons, team photos, backgrounds, etc.
 
-Example - Creating images for a website:
+Example - Creating images for a drone photography website:
   Tool: generate_images_batch
   Params: {
     images: [
-      { prompt: "Professional drone flying over construction site, aerial photography, sunny day", filename: "hero-drone" },
-      { prompt: "3D mapping visualization of terrain, topographic, digital art style", filename: "service-mapping" },
-      { prompt: "Nano banana - cute cartoon banana character, fun mascot, yellow and happy", filename: "nano-banana" }
+      { prompt: "Professional drone flying over construction site capturing aerial photography, dramatic lighting, high quality", filename: "hero-drone" },
+      { prompt: "3D topographic map visualization showing terrain elevation data, modern digital design", filename: "service-mapping" },
+      { prompt: "Aerial view of suburban neighborhood from drone perspective, real estate photography style", filename: "aerial-residential" },
+      { prompt: "Drone operator with DJI drone in field, professional photographer, sunny day", filename: "about-team" }
     ],
     style: "photorealistic",
     output_dir: "/workspace/public/images"
