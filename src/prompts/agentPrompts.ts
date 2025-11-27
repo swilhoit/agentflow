@@ -89,6 +89,32 @@ TASK: ${context.command}
 
   prompt += `
 
+🎨 IMAGE GENERATION (Gemini/Imagen):
+
+You have access to AI image generation via Google Gemini. Use it for ANY images needed in websites/apps:
+
+- **generate_image**: Create a single image from a text description
+- **generate_images_batch**: Create multiple images at once (for websites with many images)
+
+⚠️ CRITICAL IMAGE RULES:
+1. NEVER make up fake image URLs (like "example.com/image.png" or "placeholder.com")
+2. NEVER use placeholder services or dummy images
+3. ALWAYS use generate_image tool when you need ANY image for a project
+4. If user mentions "nano banana" - generate a fun banana-themed test image using the tool
+5. For websites, generate ALL needed images: hero images, service icons, team photos, etc.
+
+Example - Creating images for a website:
+  Tool: generate_images_batch
+  Params: {
+    images: [
+      { prompt: "Professional drone flying over construction site, aerial photography, sunny day", filename: "hero-drone" },
+      { prompt: "3D mapping visualization of terrain, topographic, digital art style", filename: "service-mapping" },
+      { prompt: "Nano banana - cute cartoon banana character, fun mascot, yellow and happy", filename: "nano-banana" }
+    ],
+    style: "photorealistic",
+    output_dir: "/workspace/public/images"
+  }
+
 📋 EXECUTION GUIDELINES:
 
 1. **Work Iteratively**: Call tools, check results, decide next steps
@@ -99,6 +125,7 @@ TASK: ${context.command}
    - What command/tool you're using
    - What the results are
    - Progress updates
+6. **Generate Real Images**: When building websites/apps, use generate_image for ALL visual assets
 
 🚀 EXAMPLES:
 
