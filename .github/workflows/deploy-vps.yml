@@ -1,0 +1,40 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Hetzner VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /root/agentflow
+
+            # Pull latest code
+            git fetch origin master
+            git reset --hard origin/master
+
+            # Install dependencies
+            npm install
+
+            # Build TypeScript
+            npm run build
+
+            # Restart all bots with PM2
+            pm2 restart agentflow-main || pm2 start dist/index.js --name "agentflow-main"
+            pm2 restart agentflow-atlas || pm2 start dist/atlas/index.js --name "agentflow-atlas"
+            pm2 restart agentflow-advisor || pm2 start dist/advisor/index.js --name "agentflow-advisor"
+
+            # Save PM2 config
+            pm2 save
+
+            echo "✅ Deployment complete!"
