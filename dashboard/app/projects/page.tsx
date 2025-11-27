@@ -6,18 +6,23 @@ import { BoardView } from '@/components/projects/board-view';
 import { CalendarView } from '@/components/projects/calendar-view';
 import { TableView } from '@/components/projects/table-view';
 import { CardDetailModal } from '@/components/projects/card-detail-modal';
+import { PageHeader } from '@/components/ui/page-header';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton, SkeletonCard } from '@/components/ui/skeleton';
 import {
   Kanban,
   Calendar,
   Table,
   Plus,
-  Settings,
   RefreshCw,
   ChevronDown,
   FolderKanban,
-  BarChart3,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 import { ProjectCard, ProjectColumn, Project } from '@/lib/database-projects';
+import { cn } from '@/lib/utils';
 
 type ViewMode = 'board' | 'calendar' | 'table';
 
@@ -62,7 +67,6 @@ export default function ProjectsPage() {
       const data = await response.json();
       setProjects(data.projects || []);
 
-      // Select first project if none selected
       if (!selectedProjectId && data.projects?.length > 0) {
         setSelectedProjectId(data.projects[0].id);
       }
@@ -136,10 +140,9 @@ export default function ProjectsPage() {
     }
   };
 
-  // Add card
+  // Card/Column handlers
   const handleAddCard = async (columnId: string, title: string, dueDate?: string) => {
     if (!selectedProjectId) return;
-
     try {
       const response = await fetch(`/api/projects/${selectedProjectId}/cards`, {
         method: 'POST',
@@ -151,16 +154,13 @@ export default function ProjectsPage() {
           position: projectData?.columns.find((c) => c.id === columnId)?.cards.length || 0,
         }),
       });
-
       if (!response.ok) throw new Error('Failed to create card');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error creating card:', e);
     }
   };
 
-  // Update card
   const handleUpdateCard = async (cardId: string, updates: Partial<ProjectCard>) => {
     try {
       const response = await fetch(`/api/projects/cards/${cardId}`, {
@@ -168,31 +168,23 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-
       if (!response.ok) throw new Error('Failed to update card');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error updating card:', e);
     }
   };
 
-  // Delete card
   const handleDeleteCard = async (cardId: string) => {
     try {
-      const response = await fetch(`/api/projects/cards/${cardId}`, {
-        method: 'DELETE',
-      });
-
+      const response = await fetch(`/api/projects/cards/${cardId}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete card');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error deleting card:', e);
     }
   };
 
-  // Move card
   const handleMoveCard = async (cardId: string, targetColumnId: string, position: number) => {
     try {
       const response = await fetch(`/api/projects/cards/${cardId}/move`, {
@@ -200,38 +192,28 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ column_id: targetColumnId, position }),
       });
-
       if (!response.ok) throw new Error('Failed to move card');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error moving card:', e);
     }
   };
 
-  // Add column
   const handleAddColumn = async (name: string) => {
     if (!selectedProjectId) return;
-
     try {
       const response = await fetch(`/api/projects/${selectedProjectId}/columns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          position: projectData?.columns.length || 0,
-        }),
+        body: JSON.stringify({ name, position: projectData?.columns.length || 0 }),
       });
-
       if (!response.ok) throw new Error('Failed to create column');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error creating column:', e);
     }
   };
 
-  // Update column
   const handleUpdateColumn = async (columnId: string, updates: Partial<ProjectColumn>) => {
     try {
       const response = await fetch(`/api/projects/columns/${columnId}`, {
@@ -239,26 +221,18 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-
       if (!response.ok) throw new Error('Failed to update column');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error updating column:', e);
     }
   };
 
-  // Delete column
   const handleDeleteColumn = async (columnId: string) => {
     if (!confirm('Are you sure? This will delete all cards in this column.')) return;
-
     try {
-      const response = await fetch(`/api/projects/columns/${columnId}`, {
-        method: 'DELETE',
-      });
-
+      const response = await fetch(`/api/projects/columns/${columnId}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete column');
-
       await fetchProjectData();
     } catch (e: any) {
       console.error('Error deleting column:', e);
@@ -276,10 +250,20 @@ export default function ProjectsPage() {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground font-mono flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              LOADING PROJECTS...
+          <div className="max-w-6xl mx-auto">
+            <Skeleton className="h-8 w-48 mb-2" />
+            <Skeleton className="h-4 w-64 mb-8" />
+            <div className="flex gap-6">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="w-80 flex-shrink-0">
+                  <Skeleton className="h-10 w-full mb-4 rounded-xl" />
+                  <div className="space-y-3">
+                    <Skeleton className="h-24 w-full rounded-lg" />
+                    <Skeleton className="h-20 w-full rounded-lg" />
+                    <Skeleton className="h-16 w-full rounded-lg" />
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -289,245 +273,238 @@ export default function ProjectsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <FolderKanban className="w-8 h-8" />
-            <div>
-              <div className="relative">
-                <button
-                  onClick={() => setShowProjectMenu(!showProjectMenu)}
-                  className="flex items-center gap-2 text-2xl font-bold font-mono uppercase hover:text-accent"
-                >
-                  {projectData?.project?.name || 'SELECT PROJECT'}
-                  <ChevronDown className="w-5 h-5" />
-                </button>
+      <div className="p-8">
+        <div className="max-w-full">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-primary/10">
+                <FolderKanban className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                {/* Project Selector */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowProjectMenu(!showProjectMenu)}
+                    className="flex items-center gap-2 text-title-lg hover:text-primary transition-colors"
+                  >
+                    {projectData?.project?.name || 'Select Project'}
+                    <ChevronDown className={cn('w-5 h-5 transition-transform', showProjectMenu && 'rotate-180')} />
+                  </button>
 
-                {/* Project Dropdown */}
-                {showProjectMenu && (
-                  <div className="absolute top-full left-0 mt-2 w-64 bg-card border border-border shadow-lg z-50">
-                    <div className="p-2 border-b border-border">
-                      {creatingProject ? (
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={newProjectName}
-                            onChange={(e) => setNewProjectName(e.target.value)}
-                            className="flex-1 bg-background border border-border px-2 py-1 font-mono text-xs"
-                            placeholder="Project name..."
-                            autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleCreateProject();
-                              if (e.key === 'Escape') setCreatingProject(false);
-                            }}
-                          />
+                  {/* Dropdown */}
+                  {showProjectMenu && (
+                    <div className="absolute top-full left-0 mt-2 w-72 bg-background border border-border rounded-lg shadow-lg z-50 overflow-hidden">
+                      <div className="p-2 border-b border-border">
+                        {creatingProject ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newProjectName}
+                              onChange={(e) => setNewProjectName(e.target.value)}
+                              className="flex-1 bg-background border border-border px-3 py-2 rounded-md text-sm"
+                              placeholder="Project name..."
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleCreateProject();
+                                if (e.key === 'Escape') setCreatingProject(false);
+                              }}
+                            />
+                            <Button size="sm" onClick={handleCreateProject}>Add</Button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={handleCreateProject}
-                            className="px-2 py-1 bg-accent text-accent-foreground font-mono text-xs"
+                            onClick={() => setCreatingProject(true)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
                           >
-                            ADD
+                            <Plus className="w-4 h-4" />
+                            New Project
                           </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setCreatingProject(true)}
-                          className="w-full flex items-center gap-2 px-3 py-2 font-mono text-xs uppercase hover:bg-muted"
-                        >
-                          <Plus className="w-4 h-4" />
-                          NEW PROJECT
-                        </button>
-                      )}
+                        )}
+                      </div>
+                      <div className="max-h-60 overflow-y-auto py-1">
+                        {projects.map((project) => (
+                          <button
+                            key={project.id}
+                            onClick={() => {
+                              setSelectedProjectId(project.id!);
+                              setShowProjectMenu(false);
+                            }}
+                            className={cn(
+                              'w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center justify-between',
+                              selectedProjectId === project.id && 'bg-primary/10 text-primary'
+                            )}
+                          >
+                            {project.name}
+                            {selectedProjectId === project.id && <Check className="w-4 h-4" />}
+                          </button>
+                        ))}
+                        {projects.length === 0 && (
+                          <div className="px-3 py-6 text-center text-muted-foreground text-sm">
+                            No projects yet
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="max-h-60 overflow-y-auto">
-                      {projects.map((project) => (
-                        <button
-                          key={project.id}
-                          onClick={() => {
-                            setSelectedProjectId(project.id!);
-                            setShowProjectMenu(false);
-                          }}
-                          className={`w-full text-left px-3 py-2 font-mono text-sm hover:bg-muted ${
-                            selectedProjectId === project.id ? 'bg-accent/10 text-accent' : ''
-                          }`}
-                        >
-                          {project.name}
-                        </button>
-                      ))}
-                      {projects.length === 0 && (
-                        <div className="px-3 py-4 text-center text-muted-foreground font-mono text-xs">
-                          No projects yet
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  )}
+                </div>
+
+                {projectData?.project?.description && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {projectData.project.description}
+                  </p>
                 )}
               </div>
-              {projectData?.project?.description && (
-                <p className="text-sm text-muted-foreground font-mono mt-1">
-                  {projectData.project.description}
-                </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-3">
+              {/* Stats */}
+              {stats && (
+                <div className="flex items-center gap-4 mr-2 pr-4 border-r border-border">
+                  <div className="text-center">
+                    <div className="text-lg font-semibold tabular-nums">{stats.totalCards}</div>
+                    <div className="text-xs text-muted-foreground">Total</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold tabular-nums text-success">{stats.completedCards}</div>
+                    <div className="text-xs text-muted-foreground">Done</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold tabular-nums text-primary">{stats.completionRate}%</div>
+                    <div className="text-xs text-muted-foreground">Complete</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Refresh */}
+              <Button variant="outline" size="icon" onClick={fetchProjectData} title="Refresh">
+                <RefreshCw className="w-4 h-4" />
+              </Button>
+
+              {/* View Toggle */}
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                <button
+                  onClick={() => setViewMode('board')}
+                  className={cn(
+                    'p-2 transition-colors',
+                    viewMode === 'board' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  )}
+                  title="Board View"
+                >
+                  <Kanban className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('calendar')}
+                  className={cn(
+                    'p-2 transition-colors border-l border-border',
+                    viewMode === 'calendar' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  )}
+                  title="Calendar View"
+                >
+                  <Calendar className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={cn(
+                    'p-2 transition-colors border-l border-border',
+                    viewMode === 'table' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  )}
+                  title="Table View"
+                >
+                  <Table className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="flex items-center gap-3 p-4 mb-6 rounded-lg bg-destructive/10 text-destructive border border-destructive/20">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <span className="text-sm">{error}</span>
+            </div>
+          )}
+
+          {/* No Project Selected */}
+          {!selectedProjectId && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="p-4 rounded-full bg-muted mb-4">
+                <FolderKanban className="w-10 h-10 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold mb-2">No Project Selected</h3>
+              <p className="text-muted-foreground text-sm mb-6 max-w-md">
+                Create a new project or select an existing one to get started with your tasks.
+              </p>
+              <Button
+                onClick={() => {
+                  setShowProjectMenu(true);
+                  setCreatingProject(true);
+                }}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Create Project
+              </Button>
+            </div>
+          )}
+
+          {/* Views */}
+          {selectedProjectId && projectData && (
+            <div className="animate-fade-in">
+              {viewMode === 'board' && (
+                <BoardView
+                  columns={projectData.columns}
+                  onAddCard={handleAddCard}
+                  onUpdateCard={handleUpdateCard}
+                  onDeleteCard={handleDeleteCard}
+                  onMoveCard={handleMoveCard}
+                  onAddColumn={handleAddColumn}
+                  onUpdateColumn={handleUpdateColumn}
+                  onDeleteColumn={handleDeleteColumn}
+                  onCardClick={handleCardClick}
+                />
+              )}
+
+              {viewMode === 'calendar' && (
+                <CalendarView
+                  cards={allCards}
+                  columns={projectData.columns}
+                  onCardClick={handleCardClick}
+                  onAddCard={handleAddCard}
+                  onUpdateCard={handleUpdateCard}
+                />
+              )}
+
+              {viewMode === 'table' && (
+                <TableView
+                  cards={allCards}
+                  columns={projectData.columns}
+                  onCardClick={handleCardClick}
+                  onUpdateCard={handleUpdateCard}
+                  onDeleteCard={handleDeleteCard}
+                />
               )}
             </div>
-          </div>
+          )}
 
-          <div className="flex items-center gap-4">
-            {/* Stats */}
-            {stats && (
-              <div className="flex items-center gap-4 mr-4">
-                <div className="text-center">
-                  <div className="text-lg font-bold font-mono">{stats.totalCards}</div>
-                  <div className="text-[10px] text-muted-foreground font-mono">TOTAL</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold font-mono text-green-500">
-                    {stats.completedCards}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground font-mono">DONE</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold font-mono text-accent">
-                    {stats.completionRate}%
-                  </div>
-                  <div className="text-[10px] text-muted-foreground font-mono">COMPLETE</div>
-                </div>
-              </div>
-            )}
-
-            {/* Refresh */}
-            <button
-              onClick={fetchProjectData}
-              className="p-2 border border-border hover:bg-muted transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-
-            {/* View Toggle */}
-            <div className="flex border border-border">
-              <button
-                onClick={() => setViewMode('board')}
-                className={`p-2 transition-colors ${
-                  viewMode === 'board'
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-muted'
-                }`}
-                title="Board View"
-              >
-                <Kanban className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('calendar')}
-                className={`p-2 transition-colors ${
-                  viewMode === 'calendar'
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-muted'
-                }`}
-                title="Calendar View"
-              >
-                <Calendar className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('table')}
-                className={`p-2 transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-muted'
-                }`}
-                title="Table View"
-              >
-                <Table className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+          {/* Card Detail Modal */}
+          <CardDetailModal
+            card={selectedCard}
+            columns={projectData?.columns || []}
+            isOpen={isModalOpen}
+            onClose={() => {
+              setIsModalOpen(false);
+              setSelectedCard(null);
+            }}
+            onUpdate={handleUpdateCard}
+            onDelete={handleDeleteCard}
+          />
         </div>
-
-        {/* Error */}
-        {error && (
-          <div className="border border-destructive bg-destructive/10 p-4 text-destructive font-mono text-sm">
-            Error: {error}
-          </div>
-        )}
-
-        {/* No Project Selected */}
-        {!selectedProjectId && (
-          <div className="border border-dashed border-border p-12 text-center">
-            <FolderKanban className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="font-mono text-lg uppercase mb-2">No Project Selected</h3>
-            <p className="text-muted-foreground font-mono text-sm mb-4">
-              Create a new project or select an existing one to get started
-            </p>
-            <button
-              onClick={() => {
-                setShowProjectMenu(true);
-                setCreatingProject(true);
-              }}
-              className="px-4 py-2 bg-accent text-accent-foreground font-mono text-xs uppercase"
-            >
-              CREATE PROJECT
-            </button>
-          </div>
-        )}
-
-        {/* Views */}
-        {selectedProjectId && projectData && (
-          <>
-            {viewMode === 'board' && (
-              <BoardView
-                columns={projectData.columns}
-                onAddCard={handleAddCard}
-                onUpdateCard={handleUpdateCard}
-                onDeleteCard={handleDeleteCard}
-                onMoveCard={handleMoveCard}
-                onAddColumn={handleAddColumn}
-                onUpdateColumn={handleUpdateColumn}
-                onDeleteColumn={handleDeleteColumn}
-                onCardClick={handleCardClick}
-              />
-            )}
-
-            {viewMode === 'calendar' && (
-              <CalendarView
-                cards={allCards}
-                columns={projectData.columns}
-                onCardClick={handleCardClick}
-                onAddCard={handleAddCard}
-                onUpdateCard={handleUpdateCard}
-              />
-            )}
-
-            {viewMode === 'table' && (
-              <TableView
-                cards={allCards}
-                columns={projectData.columns}
-                onCardClick={handleCardClick}
-                onUpdateCard={handleUpdateCard}
-                onDeleteCard={handleDeleteCard}
-              />
-            )}
-          </>
-        )}
-
-        {/* Card Detail Modal */}
-        <CardDetailModal
-          card={selectedCard}
-          columns={projectData?.columns || []}
-          isOpen={isModalOpen}
-          onClose={() => {
-            setIsModalOpen(false);
-            setSelectedCard(null);
-          }}
-          onUpdate={handleUpdateCard}
-          onDelete={handleDeleteCard}
-        />
       </div>
 
       {/* Click outside to close dropdown */}
       {showProjectMenu && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShowProjectMenu(false)}
-        />
+        <div className="fixed inset-0 z-40" onClick={() => setShowProjectMenu(false)} />
       )}
     </DashboardLayout>
   );

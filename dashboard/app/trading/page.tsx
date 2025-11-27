@@ -2,81 +2,27 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
-  DollarSign, Briefcase,
-  Activity, RefreshCw, AlertTriangle, CheckCircle,
-  Clock, XCircle, ArrowUpRight, ArrowDownRight,
-  FileText, Zap
+  LineChart, Briefcase, RefreshCw, AlertTriangle, CheckCircle,
+  Clock, XCircle, ArrowUpRight, ArrowDownRight, FileText, Zap,
+  TrendingUp, TrendingDown, DollarSign, BarChart3
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface TradingData {
-  account: {
-    id: string;
-    accountNumber: string;
-    status: string;
-    cash: number;
-    portfolioValue: number;
-    buyingPower: number;
-    equity: number;
-    lastEquity: number;
-    daytradeCount: number;
-    patternDayTrader: boolean;
-    tradingBlocked: boolean;
-  };
-  positions: Array<{
-    symbol: string;
-    exchange: string;
-    assetClass: string;
-    avgEntryPrice: number;
-    qty: number;
-    side: string;
-    marketValue: number;
-    costBasis: number;
-    unrealizedPL: number;
-    unrealizedPLPercent: number;
-    currentPrice: number;
-    lastdayPrice: number;
-    changeToday: number;
-  }>;
-  openOrders: Array<{
-    id: string;
-    symbol: string;
-    qty: number;
-    filledQty: number;
-    filledAvgPrice: number | null;
-    orderType: string;
-    side: string;
-    status: string;
-    limitPrice: number | null;
-    stopPrice: number | null;
-    createdAt: string;
-    filledAt: string | null;
-  }>;
-  closedOrders: Array<{
-    id: string;
-    symbol: string;
-    qty: number;
-    filledQty: number;
-    filledAvgPrice: number | null;
-    orderType: string;
-    side: string;
-    status: string;
-    limitPrice: number | null;
-    stopPrice: number | null;
-    createdAt: string;
-    filledAt: string | null;
-  }>;
-  portfolioHistory: Array<{
-    timestamp: number;
-    date: string;
-    equity: number;
-    profitLoss: number;
-    profitLossPct: number;
-  }>;
+  account: any;
+  positions: Array<any>;
+  openOrders: Array<any>;
+  closedOrders: Array<any>;
+  portfolioHistory: Array<any>;
   metrics: {
     totalEquity: number;
     portfolioValue: number;
@@ -99,138 +45,17 @@ interface TradingData {
 type HistoryPeriod = '1D' | '1W' | '1M' | '3M' | '1A' | 'all';
 type TradingMode = 'paper' | 'live';
 
-// Account Summary Card Component
-function AccountSummary({
-  data,
-  isPaper,
-  loading,
-  error,
-  onRefresh
-}: {
-  data: TradingData | null;
-  isPaper: boolean;
-  loading: boolean;
-  error: string | null;
-  onRefresh: () => void;
-}) {
-  const formatCurrency = (amount: number | null | undefined) => {
-    if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(amount);
-  };
-
-  const formatPercent = (value: number | null | undefined) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.00%';
-    const sign = value >= 0 ? '+' : '';
-    return `${sign}${value.toFixed(2)}%`;
-  };
-
-  if (loading) {
-    return (
-      <div className="border border-border bg-card p-6 flex items-center justify-center h-48">
-        <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="border border-destructive bg-destructive/10 p-6">
-        <div className="flex items-center gap-2 text-destructive mb-2">
-          <AlertTriangle className="w-4 h-4" />
-          <span className="font-mono text-sm">Error loading {isPaper ? 'paper' : 'live'} data</span>
-        </div>
-        <p className="text-xs text-muted-foreground font-mono mb-3">{error}</p>
-        <button onClick={onRefresh} className="text-xs font-mono underline">Retry</button>
-      </div>
-    );
-  }
-
-  if (!data) {
-    return (
-      <div className="border border-border bg-card p-6 text-center">
-        <p className="text-muted-foreground font-mono text-sm">No data available</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="border border-border bg-card">
-      {/* Header */}
-      <div className={`px-4 py-3 border-b border-border flex items-center justify-between ${isPaper ? 'bg-blue-500/10' : 'bg-green-500/10'}`}>
-        <div className="flex items-center gap-2">
-          {isPaper ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-green-500" />}
-          <span className={`font-mono text-sm font-bold ${isPaper ? 'text-blue-500' : 'text-green-500'}`}>
-            {isPaper ? 'PAPER TRADING' : 'LIVE TRADING'}
-          </span>
-        </div>
-        <button onClick={onRefresh} className="p-1 hover:bg-muted rounded">
-          <RefreshCw className="w-3 h-3" />
-        </button>
-      </div>
-
-      {/* Metrics Grid */}
-      <div className="p-4 grid grid-cols-2 gap-4">
-        <div>
-          <div className="text-xs text-muted-foreground font-mono">EQUITY</div>
-          <div className="text-xl font-bold font-mono">{formatCurrency(data.metrics.totalEquity)}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground font-mono">CASH</div>
-          <div className="text-xl font-bold font-mono">{formatCurrency(data.metrics.cash)}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground font-mono">DAILY P&L</div>
-          <div className={`text-lg font-bold font-mono flex items-center gap-1 ${data.metrics.dailyChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-            {data.metrics.dailyChange >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-            {formatCurrency(Math.abs(data.metrics.dailyChange))}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground font-mono">UNREALIZED</div>
-          <div className={`text-lg font-bold font-mono ${data.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-            {formatCurrency(data.metrics.totalUnrealizedPL)}
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Stats */}
-      <div className="px-4 pb-4 grid grid-cols-3 gap-2">
-        <div className="bg-muted/30 p-2 text-center rounded">
-          <div className="text-lg font-bold font-mono">{data.metrics.positionsCount}</div>
-          <div className="text-xs text-muted-foreground font-mono">Positions</div>
-        </div>
-        <div className="bg-muted/30 p-2 text-center rounded">
-          <div className="text-lg font-bold font-mono">{data.metrics.openOrdersCount}</div>
-          <div className="text-xs text-muted-foreground font-mono">Open Orders</div>
-        </div>
-        <div className="bg-muted/30 p-2 text-center rounded">
-          <div className="text-lg font-bold font-mono">{data.metrics.totalTrades}</div>
-          <div className="text-xs text-muted-foreground font-mono">Trades</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function TradingPage() {
-  // Paper trading state
   const [paperData, setPaperData] = useState<TradingData | null>(null);
   const [paperLoading, setPaperLoading] = useState(true);
   const [paperError, setPaperError] = useState<string | null>(null);
   const [paperHistory, setPaperHistory] = useState<any>(null);
 
-  // Live trading state
   const [liveData, setLiveData] = useState<TradingData | null>(null);
   const [liveLoading, setLiveLoading] = useState(true);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveHistory, setLiveHistory] = useState<any>(null);
 
-  // UI state
   const [activeMode, setActiveMode] = useState<TradingMode>('paper');
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('1M');
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'history'>('positions');
@@ -269,13 +94,11 @@ export default function TradingPage() {
     }
   }, [historyPeriod]);
 
-  // Initial load - fetch both
   useEffect(() => {
-    fetchTradingData(true);  // Paper
-    fetchTradingData(false); // Live
+    fetchTradingData(true);
+    fetchTradingData(false);
   }, [fetchTradingData]);
 
-  // Fetch history when period changes
   useEffect(() => {
     fetchHistoryData(true);
     fetchHistoryData(false);
@@ -284,10 +107,8 @@ export default function TradingPage() {
   const formatCurrency = (amount: number | null | undefined) => {
     if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
     return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+      style: 'currency', currency: 'USD',
+      minimumFractionDigits: 2, maximumFractionDigits: 2
     }).format(amount);
   };
 
@@ -299,450 +120,488 @@ export default function TradingPage() {
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
   };
 
-  const formatShortDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'filled': return 'text-green-500';
-      case 'canceled': return 'text-red-500';
-      case 'new':
-      case 'accepted':
-      case 'pending_new': return 'text-yellow-500';
-      default: return 'text-muted-foreground';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'filled': return <CheckCircle className="w-4 h-4 text-green-500" />;
-      case 'canceled': return <XCircle className="w-4 h-4 text-red-500" />;
-      case 'new':
-      case 'accepted':
-      case 'pending_new': return <Clock className="w-4 h-4 text-yellow-500" />;
-      default: return <AlertTriangle className="w-4 h-4 text-muted-foreground" />;
-    }
-  };
-
-  // Get active data based on mode
   const activeData = activeMode === 'paper' ? paperData : liveData;
   const activeHistory = activeMode === 'paper' ? paperHistory : liveHistory;
   const activeLoading = activeMode === 'paper' ? paperLoading : liveLoading;
-  const activeError = activeMode === 'paper' ? paperError : liveError;
-
   const chartData = activeHistory?.history || activeData?.portfolioHistory;
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold font-mono uppercase flex items-center gap-3">
-              <Activity className="w-8 h-8" />
-              TRADING DASHBOARD
-            </h1>
-            <p className="text-sm text-muted-foreground font-mono mt-2">
-              Paper & Live Trading Accounts
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              fetchTradingData(true);
-              fetchTradingData(false);
-            }}
-            className="p-2 border border-border hover:bg-muted transition-colors flex items-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span className="font-mono text-xs">REFRESH ALL</span>
-          </button>
-        </div>
-
-        {/* Account Summary Cards - Side by Side */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <AccountSummary
-            data={paperData}
-            isPaper={true}
-            loading={paperLoading}
-            error={paperError}
-            onRefresh={() => fetchTradingData(true)}
-          />
-          <AccountSummary
-            data={liveData}
-            isPaper={false}
-            loading={liveLoading}
-            error={liveError}
-            onRefresh={() => fetchTradingData(false)}
-          />
-        </div>
-
-        {/* Mode Toggle for Detailed View */}
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-mono text-muted-foreground">DETAILED VIEW:</span>
-          <div className="flex border border-border">
-            <button
-              onClick={() => setActiveMode('paper')}
-              className={`px-4 py-2 font-mono text-xs uppercase transition-colors flex items-center gap-2 ${
-                activeMode === 'paper'
-                  ? 'bg-blue-500 text-white'
-                  : 'hover:bg-muted'
-              }`}
-            >
-              <FileText className="w-3 h-3" />
-              PAPER
-            </button>
-            <button
-              onClick={() => setActiveMode('live')}
-              className={`px-4 py-2 font-mono text-xs uppercase transition-colors flex items-center gap-2 ${
-                activeMode === 'live'
-                  ? 'bg-green-500 text-white'
-                  : 'hover:bg-muted'
-              }`}
-            >
-              <Zap className="w-3 h-3" />
-              LIVE
-            </button>
-          </div>
-          {activeMode === 'live' && (
-            <div className="flex items-center gap-2 text-yellow-500">
-              <AlertTriangle className="w-4 h-4" />
-              <span className="font-mono text-xs">REAL MONEY</span>
-            </div>
-          )}
-        </div>
-
-        {/* Portfolio Chart */}
-        <div className="border border-border bg-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground flex items-center gap-2">
-              {activeMode === 'paper' ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-green-500" />}
-              {activeMode === 'paper' ? 'PAPER' : 'LIVE'} PORTFOLIO PERFORMANCE
-            </h3>
-            <div className="flex gap-1">
-              {(['1D', '1W', '1M', '3M', '1A', 'all'] as HistoryPeriod[]).map((period) => (
-                <button
-                  key={period}
-                  onClick={() => setHistoryPeriod(period)}
-                  className={`px-3 py-1 font-mono text-xs transition-colors ${
-                    historyPeriod === period
-                      ? 'bg-accent text-accent-foreground'
-                      : 'hover:bg-muted border border-border'
-                  }`}
-                >
-                  {period === 'all' ? 'ALL' : period}
-                </button>
-              ))}
-            </div>
-          </div>
-          {activeLoading ? (
-            <div className="flex items-center justify-center h-[300px]">
-              <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
-            </div>
-          ) : chartData && chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={activeMode === 'paper' ? '#3b82f6' : '#22c55e'} stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor={activeMode === 'paper' ? '#3b82f6' : '#22c55e'} stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                  tickFormatter={formatShortDate}
-                />
-                <YAxis
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                  domain={['dataMin', 'dataMax']}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    fontFamily: 'monospace',
-                    fontSize: 12
-                  }}
-                  formatter={(value: any, name: string) => {
-                    if (name === 'equity') return [formatCurrency(value), 'Equity'];
-                    return [value, name];
-                  }}
-                  labelFormatter={(value) => formatDate(value)}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="equity"
-                  stroke={activeMode === 'paper' ? '#3b82f6' : '#22c55e'}
-                  fill="url(#equityGradient)"
-                  strokeWidth={2}
-                  name="equity"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground font-mono text-sm">
-              No portfolio history available
-            </div>
-          )}
-          {activeHistory?.stats && (
-            <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-border">
-              <div className="text-center">
-                <div className="text-xs text-muted-foreground font-mono">START</div>
-                <div className="font-mono font-bold">{formatCurrency(activeHistory.stats.startEquity)}</div>
+      <div className="p-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-8">
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-primary/10">
+                <LineChart className="w-6 h-6 text-primary" />
               </div>
-              <div className="text-center">
-                <div className="text-xs text-muted-foreground font-mono">CURRENT</div>
-                <div className="font-mono font-bold">{formatCurrency(activeHistory.stats.endEquity)}</div>
+              <div>
+                <h1 className="text-title-lg">Trading</h1>
+                <p className="text-body-sm text-muted-foreground mt-1">
+                  Paper & Live Trading Accounts
+                </p>
               </div>
-              <div className="text-center">
-                <div className="text-xs text-muted-foreground font-mono">TOTAL RETURN</div>
-                <div className={`font-mono font-bold ${activeHistory.stats.totalReturn >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatCurrency(activeHistory.stats.totalReturn)}
+            </div>
+            <Button variant="outline" onClick={() => { fetchTradingData(true); fetchTradingData(false); }}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh All
+            </Button>
+          </div>
+
+          {/* Account Summary Cards */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <AccountCard
+              data={paperData}
+              isPaper={true}
+              loading={paperLoading}
+              error={paperError}
+              onRefresh={() => fetchTradingData(true)}
+              formatCurrency={formatCurrency}
+            />
+            <AccountCard
+              data={liveData}
+              isPaper={false}
+              loading={liveLoading}
+              error={liveError}
+              onRefresh={() => fetchTradingData(false)}
+              formatCurrency={formatCurrency}
+            />
+          </div>
+
+          {/* Mode Toggle */}
+          <div className="flex items-center gap-4 mb-6">
+            <span className="text-sm text-muted-foreground">Detailed View:</span>
+            <div className="flex rounded-lg border border-border overflow-hidden">
+              <button
+                onClick={() => setActiveMode('paper')}
+                className={cn(
+                  'px-4 py-2 text-sm flex items-center gap-2 transition-colors',
+                  activeMode === 'paper' ? 'bg-blue-500 text-white' : 'hover:bg-muted'
+                )}
+              >
+                <FileText className="w-4 h-4" />
+                Paper
+              </button>
+              <button
+                onClick={() => setActiveMode('live')}
+                className={cn(
+                  'px-4 py-2 text-sm flex items-center gap-2 transition-colors border-l border-border',
+                  activeMode === 'live' ? 'bg-success text-white' : 'hover:bg-muted'
+                )}
+              >
+                <Zap className="w-4 h-4" />
+                Live
+              </button>
+            </div>
+            {activeMode === 'live' && (
+              <Badge variant="warning" className="flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Real Money
+              </Badge>
+            )}
+          </div>
+
+          {/* Portfolio Chart */}
+          <Card className="mb-6">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                {activeMode === 'paper' ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-success" />}
+                {activeMode === 'paper' ? 'Paper' : 'Live'} Portfolio Performance
+              </CardTitle>
+              <div className="flex gap-1">
+                {(['1D', '1W', '1M', '3M', '1A', 'all'] as HistoryPeriod[]).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setHistoryPeriod(period)}
+                    className={cn(
+                      'px-3 py-1 text-xs rounded-md transition-colors',
+                      historyPeriod === period ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                    )}
+                  >
+                    {period === 'all' ? 'All' : period}
+                  </button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {activeLoading ? (
+                <div className="h-[280px] flex items-center justify-center">
+                  <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
                 </div>
-              </div>
-              <div className="text-center">
-                <div className="text-xs text-muted-foreground font-mono">RETURN %</div>
-                <div className={`font-mono font-bold ${activeHistory.stats.totalReturnPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatPercent(activeHistory.stats.totalReturnPct)}
+              ) : chartData && chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={activeMode === 'paper' ? '#3b82f6' : 'hsl(var(--success))'} stopOpacity={0.2} />
+                        <stop offset="95%" stopColor={activeMode === 'paper' ? '#3b82f6' : 'hsl(var(--success))'} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                      tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                      tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      axisLine={false}
+                      tickLine={false}
+                      width={60}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--card))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '6px',
+                        fontSize: 12
+                      }}
+                      formatter={(value: any) => [formatCurrency(value), 'Equity']}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="equity"
+                      stroke={activeMode === 'paper' ? '#3b82f6' : 'hsl(var(--success))'}
+                      fill="url(#equityGradient)"
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">
+                  No portfolio history available
                 </div>
-              </div>
-            </div>
-          )}
+              )}
+              {activeHistory?.stats && (
+                <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-border">
+                  <StatItem label="Start" value={formatCurrency(activeHistory.stats.startEquity)} />
+                  <StatItem label="Current" value={formatCurrency(activeHistory.stats.endEquity)} />
+                  <StatItem
+                    label="Total Return"
+                    value={formatCurrency(activeHistory.stats.totalReturn)}
+                    variant={activeHistory.stats.totalReturn >= 0 ? 'success' : 'destructive'}
+                  />
+                  <StatItem
+                    label="Return %"
+                    value={formatPercent(activeHistory.stats.totalReturnPct)}
+                    variant={activeHistory.stats.totalReturnPct >= 0 ? 'success' : 'destructive'}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Tabs */}
+          <div className="flex gap-1 border-b border-border mb-6">
+            {[
+              { key: 'positions', label: 'Positions', count: activeData?.positions.length || 0 },
+              { key: 'orders', label: 'Open Orders', count: activeData?.openOrders.length || 0 },
+              { key: 'history', label: 'Trade History', count: activeData?.closedOrders.length || 0 },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key as any)}
+                className={cn(
+                  'px-4 py-2.5 text-sm transition-colors border-b-2 -mb-px',
+                  activeTab === tab.key
+                    ? 'border-primary text-primary font-medium'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {tab.label}
+                <span className="ml-2 text-xs text-muted-foreground">({tab.count})</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Tables */}
+          <Card>
+            <CardContent className="p-0">
+              {activeTab === 'positions' && (
+                <PositionsTable
+                  positions={activeData?.positions || []}
+                  formatCurrency={formatCurrency}
+                  formatPercent={formatPercent}
+                  activeMode={activeMode}
+                />
+              )}
+              {activeTab === 'orders' && (
+                <OrdersTable
+                  orders={activeData?.openOrders || []}
+                  formatCurrency={formatCurrency}
+                  formatDate={formatDate}
+                  activeMode={activeMode}
+                />
+              )}
+              {activeTab === 'history' && (
+                <TradeHistoryTable
+                  orders={activeData?.closedOrders || []}
+                  formatCurrency={formatCurrency}
+                  formatDate={formatDate}
+                  activeMode={activeMode}
+                />
+              )}
+            </CardContent>
+          </Card>
         </div>
-
-        {/* Tabs */}
-        <div className="flex gap-2 border-b border-border">
-          <button
-            onClick={() => setActiveTab('positions')}
-            className={`px-4 py-2 font-mono text-sm uppercase transition-colors border-b-2 ${
-              activeTab === 'positions'
-                ? 'border-accent text-accent'
-                : 'border-transparent hover:text-accent'
-            }`}
-          >
-            POSITIONS ({activeData?.positions.length || 0})
-          </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`px-4 py-2 font-mono text-sm uppercase transition-colors border-b-2 ${
-              activeTab === 'orders'
-                ? 'border-accent text-accent'
-                : 'border-transparent hover:text-accent'
-            }`}
-          >
-            OPEN ORDERS ({activeData?.openOrders.length || 0})
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 font-mono text-sm uppercase transition-colors border-b-2 ${
-              activeTab === 'history'
-                ? 'border-accent text-accent'
-                : 'border-transparent hover:text-accent'
-            }`}
-          >
-            TRADE HISTORY ({activeData?.closedOrders.length || 0})
-          </button>
-        </div>
-
-        {/* Positions Table */}
-        {activeTab === 'positions' && (
-          <div className="border border-border bg-card">
-            {!activeData || activeData.positions.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground font-mono">
-                No open positions in {activeMode === 'paper' ? 'paper' : 'live'} account
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SYMBOL</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">QTY</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">AVG ENTRY</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">CURRENT</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">MKT VALUE</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">P&L</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">P&L %</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">TODAY</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeData.positions.map((position) => (
-                      <tr key={position.symbol} className="border-t border-border hover:bg-muted/30">
-                        <td className="py-3 px-4">
-                          <div className="font-mono font-bold">{position.symbol}</div>
-                          <div className="text-xs text-muted-foreground font-mono">{position.side.toUpperCase()}</div>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono">{position.qty.toFixed(4)}</td>
-                        <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.avgEntryPrice)}</td>
-                        <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.currentPrice)}</td>
-                        <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.marketValue)}</td>
-                        <td className={`py-3 px-4 text-right font-mono font-bold ${position.unrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {formatCurrency(position.unrealizedPL)}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-mono ${position.unrealizedPLPercent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {formatPercent(position.unrealizedPLPercent)}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-mono ${position.changeToday >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {formatPercent(position.changeToday)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  {activeData.positions.length > 0 && (
-                    <tfoot className="bg-muted/30 border-t border-border">
-                      <tr>
-                        <td colSpan={4} className="py-3 px-4 font-mono font-bold">TOTAL</td>
-                        <td className="py-3 px-4 text-right font-mono font-bold">
-                          {formatCurrency(activeData.positions.reduce((sum, p) => sum + p.marketValue, 0))}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-mono font-bold ${activeData.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {formatCurrency(activeData.metrics.totalUnrealizedPL)}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-mono ${activeData.metrics.totalUnrealizedPLPercent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {formatPercent(activeData.metrics.totalUnrealizedPLPercent)}
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Open Orders Table */}
-        {activeTab === 'orders' && (
-          <div className="border border-border bg-card">
-            {!activeData || activeData.openOrders.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground font-mono">
-                No open orders in {activeMode === 'paper' ? 'paper' : 'live'} account
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SYMBOL</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SIDE</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">TYPE</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">QTY</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">LIMIT</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">STOP</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">STATUS</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">CREATED</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeData.openOrders.map((order) => (
-                      <tr key={order.id} className="border-t border-border hover:bg-muted/30">
-                        <td className="py-3 px-4 font-mono font-bold">{order.symbol}</td>
-                        <td className={`py-3 px-4 font-mono ${order.side === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
-                          {order.side.toUpperCase()}
-                        </td>
-                        <td className="py-3 px-4 font-mono text-muted-foreground">{order.orderType?.toUpperCase()}</td>
-                        <td className="py-3 px-4 text-right font-mono">{order.qty}</td>
-                        <td className="py-3 px-4 text-right font-mono">
-                          {order.limitPrice ? formatCurrency(order.limitPrice) : '-'}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono">
-                          {order.stopPrice ? formatCurrency(order.stopPrice) : '-'}
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            {getStatusIcon(order.status)}
-                            <span className={`font-mono text-xs ${getStatusColor(order.status)}`}>
-                              {order.status.toUpperCase()}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
-                          {formatDate(order.createdAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Trade History Table */}
-        {activeTab === 'history' && (
-          <div className="border border-border bg-card">
-            {!activeData || activeData.closedOrders.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground font-mono">
-                No trade history in {activeMode === 'paper' ? 'paper' : 'live'} account
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SYMBOL</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SIDE</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">TYPE</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">QTY</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">FILLED</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">AVG PRICE</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">TOTAL</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">STATUS</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">DATE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeData.closedOrders.map((order) => (
-                      <tr key={order.id} className="border-t border-border hover:bg-muted/30">
-                        <td className="py-3 px-4 font-mono font-bold">{order.symbol}</td>
-                        <td className={`py-3 px-4 font-mono ${order.side === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
-                          {order.side.toUpperCase()}
-                        </td>
-                        <td className="py-3 px-4 font-mono text-muted-foreground">{order.orderType?.toUpperCase()}</td>
-                        <td className="py-3 px-4 text-right font-mono">{order.qty}</td>
-                        <td className="py-3 px-4 text-right font-mono">{order.filledQty}</td>
-                        <td className="py-3 px-4 text-right font-mono">
-                          {order.filledAvgPrice ? formatCurrency(order.filledAvgPrice) : '-'}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono">
-                          {order.filledAvgPrice && order.filledQty
-                            ? formatCurrency(order.filledAvgPrice * order.filledQty)
-                            : '-'}
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            {getStatusIcon(order.status)}
-                            <span className={`font-mono text-xs ${getStatusColor(order.status)}`}>
-                              {order.status.toUpperCase()}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
-                          {order.filledAt ? formatDate(order.filledAt) : formatDate(order.createdAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </DashboardLayout>
+  );
+}
+
+// Account Card Component
+function AccountCard({ data, isPaper, loading, error, onRefresh, formatCurrency }: any) {
+  if (loading) {
+    return (
+      <Card className={cn(isPaper ? 'border-blue-500/20' : 'border-success/20')}>
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-8 w-32" />
+            <div className="grid grid-cols-2 gap-4">
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="border-destructive/50 bg-destructive/5">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 text-destructive mb-2">
+            <AlertTriangle className="w-4 h-4" />
+            <span className="text-sm font-medium">Error loading {isPaper ? 'paper' : 'live'} data</span>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">{error}</p>
+          <Button variant="outline" size="sm" onClick={onRefresh}>Retry</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data) return null;
+
+  const change = data.metrics.dailyChange;
+  const isPositive = change >= 0;
+
+  return (
+    <Card className={cn(isPaper ? 'border-blue-500/20' : 'border-success/20')}>
+      <CardHeader className={cn('pb-3', isPaper ? 'bg-blue-500/5' : 'bg-success/5')}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {isPaper ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-success" />}
+            <span className={cn('text-sm font-semibold', isPaper ? 'text-blue-500' : 'text-success')}>
+              {isPaper ? 'Paper Trading' : 'Live Trading'}
+            </span>
+          </div>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRefresh}>
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Equity</div>
+            <div className="text-xl font-semibold tabular-nums">{formatCurrency(data.metrics.totalEquity)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Cash</div>
+            <div className="text-xl font-semibold tabular-nums">{formatCurrency(data.metrics.cash)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Daily P&L</div>
+            <div className={cn('text-lg font-semibold tabular-nums flex items-center gap-1', isPositive ? 'text-success' : 'text-destructive')}>
+              {isPositive ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+              {formatCurrency(Math.abs(change))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Unrealized</div>
+            <div className={cn('text-lg font-semibold tabular-nums', data.metrics.totalUnrealizedPL >= 0 ? 'text-success' : 'text-destructive')}>
+              {formatCurrency(data.metrics.totalUnrealizedPL)}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { label: 'Positions', value: data.metrics.positionsCount },
+            { label: 'Open Orders', value: data.metrics.openOrdersCount },
+            { label: 'Trades', value: data.metrics.totalTrades },
+          ].map((item) => (
+            <div key={item.label} className="bg-muted/30 p-2.5 rounded-lg text-center">
+              <div className="text-lg font-semibold tabular-nums">{item.value}</div>
+              <div className="text-xs text-muted-foreground">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Stat Item Component
+function StatItem({ label, value, variant }: { label: string; value: string; variant?: 'success' | 'destructive' }) {
+  return (
+    <div className="text-center">
+      <div className="text-xs text-muted-foreground mb-1">{label}</div>
+      <div className={cn('font-semibold tabular-nums', variant === 'success' && 'text-success', variant === 'destructive' && 'text-destructive')}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+// Positions Table
+function PositionsTable({ positions, formatCurrency, formatPercent, activeMode }: any) {
+  if (positions.length === 0) {
+    return (
+      <div className="p-12 text-center text-muted-foreground">
+        No open positions in {activeMode} account
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-border bg-muted/30">
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Symbol</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Qty</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Avg Entry</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Current</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Mkt Value</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">P&L</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">P&L %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {positions.map((p: any) => (
+            <tr key={p.symbol} className="border-b border-border/50 hover:bg-muted/20">
+              <td className="py-3 px-4">
+                <div className="font-medium">{p.symbol}</div>
+                <div className="text-xs text-muted-foreground">{p.side}</div>
+              </td>
+              <td className="py-3 px-4 text-right tabular-nums">{p.qty.toFixed(4)}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.avgEntryPrice)}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.currentPrice)}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.marketValue)}</td>
+              <td className={cn('py-3 px-4 text-right tabular-nums font-medium', p.unrealizedPL >= 0 ? 'text-success' : 'text-destructive')}>
+                {formatCurrency(p.unrealizedPL)}
+              </td>
+              <td className={cn('py-3 px-4 text-right tabular-nums', p.unrealizedPLPercent >= 0 ? 'text-success' : 'text-destructive')}>
+                {formatPercent(p.unrealizedPLPercent)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Orders Table
+function OrdersTable({ orders, formatCurrency, formatDate, activeMode }: any) {
+  if (orders.length === 0) {
+    return (
+      <div className="p-12 text-center text-muted-foreground">
+        No open orders in {activeMode} account
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-border bg-muted/30">
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Symbol</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Side</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Type</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Qty</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Limit</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Status</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o: any) => (
+            <tr key={o.id} className="border-b border-border/50 hover:bg-muted/20">
+              <td className="py-3 px-4 font-medium">{o.symbol}</td>
+              <td className={cn('py-3 px-4', o.side === 'buy' ? 'text-success' : 'text-destructive')}>{o.side}</td>
+              <td className="py-3 px-4 text-muted-foreground">{o.orderType}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{o.qty}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{o.limitPrice ? formatCurrency(o.limitPrice) : '-'}</td>
+              <td className="py-3 px-4">
+                <Badge variant={o.status === 'filled' ? 'success' : o.status === 'canceled' ? 'destructive' : 'default'}>
+                  {o.status}
+                </Badge>
+              </td>
+              <td className="py-3 px-4 text-xs text-muted-foreground">{formatDate(o.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Trade History Table
+function TradeHistoryTable({ orders, formatCurrency, formatDate, activeMode }: any) {
+  if (orders.length === 0) {
+    return (
+      <div className="p-12 text-center text-muted-foreground">
+        No trade history in {activeMode} account
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-border bg-muted/30">
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Symbol</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Side</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Qty</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Avg Price</th>
+            <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Total</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Status</th>
+            <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o: any) => (
+            <tr key={o.id} className="border-b border-border/50 hover:bg-muted/20">
+              <td className="py-3 px-4 font-medium">{o.symbol}</td>
+              <td className={cn('py-3 px-4', o.side === 'buy' ? 'text-success' : 'text-destructive')}>{o.side}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{o.filledQty}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{o.filledAvgPrice ? formatCurrency(o.filledAvgPrice) : '-'}</td>
+              <td className="py-3 px-4 text-right tabular-nums">
+                {o.filledAvgPrice && o.filledQty ? formatCurrency(o.filledAvgPrice * o.filledQty) : '-'}
+              </td>
+              <td className="py-3 px-4">
+                <Badge variant={o.status === 'filled' ? 'success' : o.status === 'canceled' ? 'destructive' : 'default'}>
+                  {o.status}
+                </Badge>
+              </td>
+              <td className="py-3 px-4 text-xs text-muted-foreground">{o.filledAt ? formatDate(o.filledAt) : formatDate(o.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
