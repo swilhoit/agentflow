@@ -2,8 +2,13 @@
 
 import React, { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { TrendingUp, TrendingDown, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Briefcase, BarChart3 } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import type { PortfolioCategory } from '@/lib/portfolio-categories';
 
 interface Portfolio {
@@ -63,6 +68,60 @@ interface InvestmentData {
   lastUpdated: string;
   category: PortfolioCategory;
   portfolios: Portfolio[];
+}
+
+function InvestmentsPageSkeleton() {
+  return (
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
+        {/* Header skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+
+        {/* Tabs skeleton */}
+        <div className="flex gap-2">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-9 w-24 rounded-lg" />
+          ))}
+        </div>
+
+        {/* Stats skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <Skeleton className="h-4 w-20 mb-2" />
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-3 w-24 mt-2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Table skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-5 w-32" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-4 w-20 ml-auto" />
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
+  );
 }
 
 export default function InvestmentsPage() {
@@ -162,25 +221,25 @@ export default function InvestmentsPage() {
     });
   };
 
+  const formatPercent = (value: number | null | undefined, showSign = true) => {
+    if (value === null || value === undefined || isNaN(value)) return '—';
+    const sign = showSign && value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)}%`;
+  };
+
   if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground font-mono">LOADING INVESTMENTS...</div>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
+    return <InvestmentsPageSkeleton />;
   }
 
   if (error) {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="border border-destructive bg-destructive/10 p-4 text-destructive">
-            Error: {error}
-          </div>
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardContent className="pt-6">
+              <p className="text-destructive">Error: {error}</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -190,7 +249,11 @@ export default function InvestmentsPage() {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="text-muted-foreground">No data available</div>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground">No data available</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -198,41 +261,57 @@ export default function InvestmentsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
+      <div className="p-8 space-y-8">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold font-mono uppercase">📈 INVESTMENTS & MARKET ANALYSIS</h1>
-          <p className="text-sm text-muted-foreground font-mono mt-2">
-            Investment thesis, watchlist, and market intelligence
-            {data.lastUpdated && ` • Last updated: ${formatDate(data.lastUpdated)}`}
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">Investments</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Investment thesis, watchlist, and market intelligence
+              {data.lastUpdated && (
+                <span className="ml-2 text-muted-foreground/70">
+                  · Updated {formatDate(data.lastUpdated)}
+                </span>
+              )}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={fetchInvestments}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
         </div>
 
         {/* Portfolio Tabs */}
         {data?.portfolios && (
-          <div className="flex gap-2 overflow-x-auto pb-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setSelectedCategory('all')}
-              className={`px-4 py-2 font-mono text-xs uppercase whitespace-nowrap transition-colors ${
+              className={cn(
+                "px-4 py-2 text-sm rounded-lg transition-colors",
                 selectedCategory === 'all'
-                  ? 'bg-accent text-accent-foreground'
-                  : 'bg-card border border-border hover:bg-muted'
-              }`}
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+              )}
             >
-              ALL ({data.portfolios.reduce((sum, p) => sum + p.symbolCount, 0)})
+              All
+              <span className="ml-2 text-xs opacity-70">
+                {data.portfolios.reduce((sum, p) => sum + p.symbolCount, 0)}
+              </span>
             </button>
             {data.portfolios.map((portfolio) => (
               <button
                 key={portfolio.id}
                 onClick={() => setSelectedCategory(portfolio.id)}
-                className={`px-4 py-2 font-mono text-xs uppercase whitespace-nowrap transition-colors ${
+                className={cn(
+                  "px-4 py-2 text-sm rounded-lg transition-colors",
                   selectedCategory === portfolio.id
-                    ? 'bg-accent text-accent-foreground'
-                    : 'bg-card border border-border hover:bg-muted'
-                }`}
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                )}
                 title={portfolio.description}
               >
-                {portfolio.name} ({portfolio.symbolCount})
+                {portfolio.name}
+                <span className="ml-2 text-xs opacity-70">{portfolio.symbolCount}</span>
               </button>
             ))}
           </div>
@@ -240,239 +319,342 @@ export default function InvestmentsPage() {
 
         {/* Portfolio Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">WATCHLIST</div>
-            <div className="text-3xl font-bold font-mono mt-2">{data.portfolioStats.totalSymbols}</div>
-            <div className="text-xs text-muted-foreground font-mono mt-1">symbols tracked</div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Briefcase className="w-4 h-4" />
+                <span className="text-xs font-medium">Watchlist</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">
+                {data.portfolioStats.totalSymbols}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">symbols tracked</div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">30-DAY PERF</div>
-            <div className={`text-3xl font-bold font-mono mt-2 ${data.portfolioStats.avgChange30d >= 0 ? 'text-accent' : 'text-destructive'}`}>
-              {data.portfolioStats.avgChange30d >= 0 ? '+' : ''}{data.portfolioStats.avgChange30d.toFixed(2)}%
-            </div>
-            <div className="text-xs text-muted-foreground font-mono mt-1">
-              {data.portfolioStats.winnersCount}↑ {data.portfolioStats.losersCount}↓
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <BarChart3 className="w-4 h-4" />
+                <span className="text-xs font-medium">30-Day Performance</span>
+              </div>
+              <div className={cn(
+                "text-2xl font-semibold tabular-nums",
+                data.portfolioStats.avgChange30d >= 0 ? 'text-success' : 'text-destructive'
+              )}>
+                {formatPercent(data.portfolioStats.avgChange30d)}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                <span className="text-success">{data.portfolioStats.winnersCount} up</span>
+                <span>·</span>
+                <span className="text-destructive">{data.portfolioStats.losersCount} down</span>
+              </div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">TOP GAINER</div>
-            <div className="text-lg font-bold font-mono mt-2">{data.portfolioStats.topGainer?.symbol}</div>
-            <div className="text-xs text-accent font-mono mt-1">
-              +{data.portfolioStats.topGainer?.performance_30d?.toFixed(2)}%
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <TrendingUp className="w-4 h-4 text-success" />
+                <span className="text-xs font-medium">Top Gainer</span>
+              </div>
+              <div className="text-lg font-semibold">
+                {data.portfolioStats.topGainer?.symbol || '—'}
+              </div>
+              <div className="text-sm text-success tabular-nums mt-1">
+                {formatPercent(data.portfolioStats.topGainer?.performance_30d)}
+              </div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">TOP LOSER</div>
-            <div className="text-lg font-bold font-mono mt-2">{data.portfolioStats.topLoser?.symbol}</div>
-            <div className="text-xs text-destructive font-mono mt-1">
-              {data.portfolioStats.topLoser?.performance_30d?.toFixed(2)}%
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <TrendingDown className="w-4 h-4 text-destructive" />
+                <span className="text-xs font-medium">Top Loser</span>
+              </div>
+              <div className="text-lg font-semibold">
+                {data.portfolioStats.topLoser?.symbol || '—'}
+              </div>
+              <div className="text-sm text-destructive tabular-nums mt-1">
+                {formatPercent(data.portfolioStats.topLoser?.performance_30d, false)}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Daily AI Analysis */}
         {analysisLoading ? (
-          <div className="border border-border bg-card p-6">
-            <div className="flex items-center justify-center py-8">
-              <div className="text-muted-foreground font-mono text-sm">GENERATING DAILY ANALYSIS...</div>
-            </div>
-          </div>
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-center py-8">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                  <span className="text-sm text-muted-foreground">Generating daily analysis...</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         ) : dailyAnalysis?.analysis && (
-          <div className="border border-accent/30 bg-accent/5 p-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-accent" />
-                <h2 className="text-lg font-bold font-mono uppercase">🤖 DAILY AI ANALYSIS</h2>
+          <Card className="border-primary/20 bg-primary/5">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-primary" />
+                  <CardTitle className="text-base">Daily AI Analysis</CardTitle>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={fetchDailyAnalysis}
+                  className="text-primary hover:text-primary"
+                >
+                  <RefreshCw className="w-4 h-4 mr-1" />
+                  Refresh
+                </Button>
               </div>
-              <button
-                onClick={fetchDailyAnalysis}
-                className="text-xs font-mono text-accent hover:opacity-70 transition-opacity"
-              >
-                REFRESH
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div className="font-mono text-xs text-muted-foreground">
-                Generated: {formatDate(dailyAnalysis.timestamp)} • {dailyAnalysis.source} • {dailyAnalysis.model}
+              <div className="text-xs text-muted-foreground">
+                Generated {formatDate(dailyAnalysis.timestamp)} · {dailyAnalysis.source} · {dailyAnalysis.model}
               </div>
-              <div className="font-mono text-sm whitespace-pre-wrap leading-relaxed">
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
                 {dailyAnalysis.analysis}
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Watchlist Table */}
-        <div className="border border-border bg-card p-6">
-          <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">📊 WATCHLIST</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3">SYMBOL</th>
-                  <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3">NAME</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">PRICE</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">CHANGE</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">30D</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">90D</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">1Y</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">MKT CAP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.watchlist.map((stock, index) => (
-                  <React.Fragment key={`${stock.symbol}-${index}`}>
-                    <tr
-                      className={`hover:bg-muted/50 cursor-pointer ${selectedStock === stock.symbol ? 'bg-muted/30' : ''}`}
-                      onClick={() => handleStockClick(stock.symbol)}
-                    >
-                      <td className="py-3 font-mono text-sm font-bold">{stock.symbol}</td>
-                      <td className="py-3 font-mono text-sm truncate max-w-[200px]">{stock.name}</td>
-                      <td className="py-3 font-mono text-sm text-right">${stock.price.toFixed(2)}</td>
-                      <td className={`py-3 font-mono text-sm text-right ${stock.change_percent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {stock.change_percent >= 0 ? '+' : ''}{stock.change_percent.toFixed(2)}%
-                      </td>
-                      <td className={`py-3 font-mono text-sm text-right ${stock.performance_30d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {stock.performance_30d >= 0 ? '+' : ''}{stock.performance_30d?.toFixed(2)}%
-                      </td>
-                      <td className={`py-3 font-mono text-sm text-right ${stock.performance_90d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {stock.performance_90d >= 0 ? '+' : ''}{stock.performance_90d?.toFixed(2)}%
-                      </td>
-                      <td className={`py-3 font-mono text-sm text-right ${stock.performance_365d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {stock.performance_365d >= 0 ? '+' : ''}{stock.performance_365d?.toFixed(2)}%
-                      </td>
-                      <td className="py-3 font-mono text-sm text-right text-muted-foreground">
-                        {formatCurrency(stock.market_cap)}
-                      </td>
-                    </tr>
-                    {selectedStock === stock.symbol && (
-                      <tr>
-                        <td colSpan={8} className="p-4 bg-muted/20">
-                          {historyLoading ? (
-                            <div className="flex items-center justify-center py-8">
-                              <div className="text-muted-foreground font-mono text-sm">Loading chart...</div>
-                            </div>
-                          ) : stockHistory ? (
-                            <div>
-                              <div className="font-mono text-sm font-bold mb-4">{stock.symbol} - Price History (90 Days)</div>
-                              <ResponsiveContainer width="100%" height={300}>
-                                <LineChart data={stockHistory.history}>
-                                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                                  <XAxis
-                                    dataKey="date"
-                                    tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                                    tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                  />
-                                  <YAxis
-                                    tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                                    tickFormatter={(value) => `$${value.toFixed(2)}`}
-                                    domain={['dataMin', 'dataMax']}
-                                  />
-                                  <Tooltip
-                                    contentStyle={{
-                                      backgroundColor: 'var(--card)',
-                                      border: '1px solid var(--border)',
-                                      fontFamily: 'monospace',
-                                      fontSize: 12
-                                    }}
-                                    formatter={(value: any) => `$${value.toFixed(2)}`}
-                                    labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                  />
-                                  <Line
-                                    type="monotone"
-                                    dataKey="price"
-                                    stroke={stock.performance_90d >= 0 ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)'}
-                                    strokeWidth={2}
-                                    dot={false}
-                                    name="Price"
-                                  />
-                                </LineChart>
-                              </ResponsiveContainer>
-                            </div>
-                          ) : (
-                            <div className="text-center py-8 text-muted-foreground font-mono text-sm">
-                              No price history available
-                            </div>
-                          )}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Watchlist
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-xs font-medium text-muted-foreground py-3 pr-4">Symbol</th>
+                    <th className="text-left text-xs font-medium text-muted-foreground py-3 pr-4">Name</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Price</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Change</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">30D</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">90D</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">1Y</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 pl-4">Market Cap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.watchlist.map((stock, index) => (
+                    <React.Fragment key={`${stock.symbol}-${index}`}>
+                      <tr
+                        className={cn(
+                          "border-b border-border/50 hover:bg-muted/50 cursor-pointer transition-colors",
+                          selectedStock === stock.symbol && 'bg-muted/30'
+                        )}
+                        onClick={() => handleStockClick(stock.symbol)}
+                      >
+                        <td className="py-3 pr-4">
+                          <span className="font-medium text-sm">{stock.symbol}</span>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
+                            {stock.name}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="text-sm tabular-nums">${stock.price.toFixed(2)}</span>
+                        </td>
+                        <td className={cn(
+                          "py-3 px-4 text-right text-sm tabular-nums",
+                          stock.change_percent >= 0 ? 'text-success' : 'text-destructive'
+                        )}>
+                          {formatPercent(stock.change_percent)}
+                        </td>
+                        <td className={cn(
+                          "py-3 px-4 text-right text-sm tabular-nums",
+                          stock.performance_30d >= 0 ? 'text-success' : 'text-destructive'
+                        )}>
+                          {formatPercent(stock.performance_30d)}
+                        </td>
+                        <td className={cn(
+                          "py-3 px-4 text-right text-sm tabular-nums",
+                          stock.performance_90d >= 0 ? 'text-success' : 'text-destructive'
+                        )}>
+                          {formatPercent(stock.performance_90d)}
+                        </td>
+                        <td className={cn(
+                          "py-3 px-4 text-right text-sm tabular-nums",
+                          stock.performance_365d >= 0 ? 'text-success' : 'text-destructive'
+                        )}>
+                          {formatPercent(stock.performance_365d)}
+                        </td>
+                        <td className="py-3 pl-4 text-right">
+                          <span className="text-sm text-muted-foreground tabular-nums">
+                            {formatCurrency(stock.market_cap)}
+                          </span>
                         </td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                      {selectedStock === stock.symbol && (
+                        <tr>
+                          <td colSpan={8} className="p-4 bg-muted/20">
+                            {historyLoading ? (
+                              <div className="flex items-center justify-center py-8">
+                                <div className="flex items-center gap-3">
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span className="text-sm text-muted-foreground">Loading chart...</span>
+                                </div>
+                              </div>
+                            ) : stockHistory ? (
+                              <div>
+                                <div className="text-sm font-medium mb-4">
+                                  {stock.symbol} · Price History (90 Days)
+                                </div>
+                                <ResponsiveContainer width="100%" height={300}>
+                                  <LineChart data={stockHistory.history}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                                    <XAxis
+                                      dataKey="date"
+                                      tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                    />
+                                    <YAxis
+                                      tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                                      tickFormatter={(value) => `$${value.toFixed(0)}`}
+                                      domain={['dataMin', 'dataMax']}
+                                    />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: 'hsl(var(--card))',
+                                        border: '1px solid hsl(var(--border))',
+                                        borderRadius: '8px',
+                                        fontSize: 12
+                                      }}
+                                      formatter={(value: any) => [`$${value.toFixed(2)}`, 'Price']}
+                                      labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                    />
+                                    <Line
+                                      type="monotone"
+                                      dataKey="price"
+                                      stroke={stock.performance_90d >= 0 ? 'hsl(var(--success))' : 'hsl(var(--destructive))'}
+                                      strokeWidth={2}
+                                      dot={false}
+                                      name="Price"
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                            ) : (
+                              <div className="text-center py-8 text-muted-foreground text-sm">
+                                No price history available
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Recent Analysis & News Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Analysis */}
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">RECENT ANALYSIS</h3>
-            <div className="space-y-3">
-              {data.recentAnalysis.map((analysis, index) => (
-                <div key={index} className="pb-3 last:pb-0">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Recent Analysis</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {data.recentAnalysis.map((analysis, index) => (
                   <div
-                    className="cursor-pointer hover:opacity-70 transition-opacity"
-                    onClick={() => setExpandedAnalysis(expandedAnalysis === index ? null : index)}
+                    key={index}
+                    className="border-b border-border/50 pb-4 last:border-0 last:pb-0"
+                  >
+                    <div
+                      className="cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={() => setExpandedAnalysis(expandedAnalysis === index ? null : index)}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{analysis.title}</div>
+                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                            <span>{formatDate(analysis.week_start)}</span>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {analysis.analysis_type}
+                            </Badge>
+                          </div>
+                        </div>
+                        {expandedAnalysis === index ? (
+                          <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className={cn(
+                        "text-sm text-muted-foreground mt-2",
+                        expandedAnalysis === index ? '' : 'line-clamp-2'
+                      )}>
+                        {analysis.summary}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Significant News */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Significant News</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto">
+                {data.significantNews.map((news, index) => (
+                  <div
+                    key={index}
+                    className="border-b border-border/50 pb-4 last:border-0 last:pb-0"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1">
-                        <div className="font-mono text-sm font-bold">{analysis.title}</div>
-                        <div className="font-mono text-xs text-muted-foreground mt-1">
-                          {formatDate(analysis.week_start)} • {analysis.analysis_type}
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="outline" className="text-xs font-medium">
+                            {news.symbol}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(news.published_at)}
+                          </span>
                         </div>
+                        <div className="text-sm font-medium">{news.headline}</div>
+                        {news.summary && (
+                          <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                            {news.summary}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-accent text-xs font-mono">
-                        {expandedAnalysis === index ? '▼' : '▶'}
-                      </div>
-                    </div>
-                    <div className={`font-mono text-xs text-muted-foreground mt-2 ${expandedAnalysis === index ? '' : 'line-clamp-2'}`}>
-                      {analysis.summary}
+                      <a
+                        href={news.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-primary transition-colors"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Significant News */}
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">SIGNIFICANT NEWS</h3>
-            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {data.significantNews.map((news, index) => (
-                <div key={index} className="pb-3 last:pb-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-accent">{news.symbol}</span>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {formatDate(news.published_at)}
-                        </span>
-                      </div>
-                      <div className="font-mono text-sm mt-1">{news.headline}</div>
-                      {news.summary && (
-                        <div className="font-mono text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {news.summary}
-                        </div>
-                      )}
-                    </div>
-                    <a
-                      href={news.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent hover:opacity-70"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </DashboardLayout>

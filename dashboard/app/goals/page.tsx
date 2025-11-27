@@ -3,7 +3,11 @@
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, Target, DollarSign } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, DollarSign, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 
 interface GoalData {
   currentMonth: {
@@ -46,6 +50,69 @@ interface GoalData {
   };
 }
 
+function GoalsPageSkeleton() {
+  return (
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
+        {/* Header skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+
+        {/* Main Goals skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <Skeleton className="h-4 w-24 mb-3" />
+                <Skeleton className="h-8 w-32 mb-2" />
+                <Skeleton className="h-3 w-20 mb-4" />
+                <Skeleton className="h-2 w-full mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Category Progress skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-5 w-48" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i}>
+                  <div className="flex justify-between mb-2">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                  <Skeleton className="h-2 w-full" />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Charts skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[1, 2].map((i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-5 w-48" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[300px] w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}
+
 export default function GoalsPage() {
   const [data, setData] = useState<GoalData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,24 +148,18 @@ export default function GoalsPage() {
   };
 
   if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground font-mono">LOADING GOALS...</div>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
+    return <GoalsPageSkeleton />;
   }
 
   if (error) {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="border border-destructive bg-destructive/10 p-4 text-destructive">
-            Error: {error}
-          </div>
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardContent className="pt-6">
+              <p className="text-destructive">Error: {error}</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -108,7 +169,11 @@ export default function GoalsPage() {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="text-muted-foreground">No data available</div>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground">No data available</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -116,11 +181,11 @@ export default function GoalsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
+      <div className="p-8 space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold font-mono uppercase">🎯 FINANCIAL GOALS & TARGETS</h1>
-          <p className="text-sm text-muted-foreground font-mono mt-2">
+          <h1 className="text-2xl font-semibold text-foreground">Financial Goals</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Track progress toward monthly income, spending, and savings goals
           </p>
         </div>
@@ -128,208 +193,252 @@ export default function GoalsPage() {
         {/* Main Goals Progress */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Income Goal */}
-          <div className="border border-border bg-card p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs text-muted-foreground font-mono uppercase">INCOME TARGET</div>
-              <TrendingUp className="w-4 h-4 text-accent" />
-            </div>
-            <div className="text-2xl font-bold font-mono mb-1">
-              {formatCurrency(data.currentMonth.income.actual)}
-            </div>
-            <div className="text-xs text-muted-foreground font-mono mb-3">
-              of {formatCurrency(data.currentMonth.income.target)} goal
-            </div>
-            <div className="w-full h-2 bg-muted border border-border mb-2">
-              <div
-                className="h-full bg-accent transition-all"
-                style={{ width: `${Math.min(100, data.currentMonth.income.percentage)}%` }}
-              />
-            </div>
-            <div className="text-xs font-mono text-muted-foreground">
-              {data.currentMonth.income.percentage.toFixed(1)}% complete
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-muted-foreground">Income Target</span>
+                <TrendingUp className="w-4 h-4 text-success" />
+              </div>
+              <div className="text-2xl font-semibold tabular-nums mb-1">
+                {formatCurrency(data.currentMonth.income.actual)}
+              </div>
+              <div className="text-xs text-muted-foreground mb-4">
+                of {formatCurrency(data.currentMonth.income.target)} goal
+              </div>
+              <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-2">
+                <div
+                  className="h-full bg-success rounded-full transition-all"
+                  style={{ width: `${Math.min(100, data.currentMonth.income.percentage)}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {data.currentMonth.income.percentage.toFixed(1)}% complete
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Expense Goal */}
-          <div className="border border-border bg-card p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs text-muted-foreground font-mono uppercase">EXPENSE LIMIT</div>
-              <TrendingDown className="w-4 h-4 text-destructive" />
-            </div>
-            <div className="text-2xl font-bold font-mono mb-1">
-              {formatCurrency(data.currentMonth.expenses.actual)}
-            </div>
-            <div className="text-xs text-muted-foreground font-mono mb-3">
-              of {formatCurrency(data.currentMonth.expenses.target)} limit
-            </div>
-            <div className="w-full h-2 bg-muted border border-border mb-2">
-              <div
-                className={`h-full transition-all ${
-                  data.currentMonth.expenses.percentage > 100 ? 'bg-destructive' : 'bg-accent'
-                }`}
-                style={{ width: `${Math.min(100, data.currentMonth.expenses.percentage)}%` }}
-              />
-            </div>
-            <div className={`text-xs font-mono ${
-              data.currentMonth.expenses.percentage > 100 ? 'text-destructive' : 'text-muted-foreground'
-            }`}>
-              {data.currentMonth.expenses.percentage.toFixed(1)}% of limit
-              {data.currentMonth.expenses.percentage > 100 && ' - OVER BUDGET!'}
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-muted-foreground">Expense Limit</span>
+                <TrendingDown className={cn(
+                  "w-4 h-4",
+                  data.currentMonth.expenses.percentage > 100 ? 'text-destructive' : 'text-warning'
+                )} />
+              </div>
+              <div className="text-2xl font-semibold tabular-nums mb-1">
+                {formatCurrency(data.currentMonth.expenses.actual)}
+              </div>
+              <div className="text-xs text-muted-foreground mb-4">
+                of {formatCurrency(data.currentMonth.expenses.target)} limit
+              </div>
+              <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-2">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    data.currentMonth.expenses.percentage > 100 ? 'bg-destructive' : 'bg-warning'
+                  )}
+                  style={{ width: `${Math.min(100, data.currentMonth.expenses.percentage)}%` }}
+                />
+              </div>
+              <div className={cn(
+                "text-xs tabular-nums flex items-center gap-1",
+                data.currentMonth.expenses.percentage > 100 ? 'text-destructive' : 'text-muted-foreground'
+              )}>
+                {data.currentMonth.expenses.percentage.toFixed(1)}% of limit
+                {data.currentMonth.expenses.percentage > 100 && (
+                  <>
+                    <AlertTriangle className="w-3 h-3 ml-1" />
+                    <span className="font-medium">Over budget</span>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Savings Rate Goal */}
-          <div className="border border-border bg-card p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs text-muted-foreground font-mono uppercase">SAVINGS RATE</div>
-              <Target className="w-4 h-4 text-accent" />
-            </div>
-            <div className="text-2xl font-bold font-mono mb-1">
-              {data.currentMonth.savingsRate.actual.toFixed(1)}%
-            </div>
-            <div className="text-xs text-muted-foreground font-mono mb-3">
-              goal: {data.currentMonth.savingsRate.target}%
-            </div>
-            <div className="w-full h-2 bg-muted border border-border mb-2">
-              <div
-                className={`h-full transition-all ${
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-muted-foreground">Savings Rate</span>
+                <Target className={cn(
+                  "w-4 h-4",
                   data.currentMonth.savingsRate.actual >= data.currentMonth.savingsRate.target
-                    ? 'bg-accent'
-                    : 'bg-yellow-500'
-                }`}
-                style={{
-                  width: `${Math.min(100, (data.currentMonth.savingsRate.actual / data.currentMonth.savingsRate.target) * 100)}%`
-                }}
-              />
-            </div>
-            <div className="text-xs font-mono text-muted-foreground">
-              {formatCurrency(data.currentMonth.savingsRate.netSavings)} net savings
-            </div>
-          </div>
+                    ? 'text-success'
+                    : 'text-warning'
+                )} />
+              </div>
+              <div className="text-2xl font-semibold tabular-nums mb-1">
+                {data.currentMonth.savingsRate.actual.toFixed(1)}%
+              </div>
+              <div className="text-xs text-muted-foreground mb-4">
+                goal: {data.currentMonth.savingsRate.target}%
+              </div>
+              <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-2">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    data.currentMonth.savingsRate.actual >= data.currentMonth.savingsRate.target
+                      ? 'bg-success'
+                      : 'bg-warning'
+                  )}
+                  style={{
+                    width: `${Math.min(100, (data.currentMonth.savingsRate.actual / data.currentMonth.savingsRate.target) * 100)}%`
+                  }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {formatCurrency(data.currentMonth.savingsRate.netSavings)} net savings
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Category Budget Progress */}
-        <div className="border border-border bg-card p-6">
-          <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">
-            📊 CATEGORY BUDGET PROGRESS
-          </h3>
-          <div className="space-y-4">
-            {data.categoryProgress.map((cat, index) => (
-              <div key={index}>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-mono text-sm font-bold">{cat.category}</span>
-                  <div className="flex items-center gap-2">
-                    <span className={`font-mono text-sm ${cat.overBudget ? 'text-destructive' : 'text-muted-foreground'}`}>
-                      {formatCurrency(cat.spent)} / {formatCurrency(cat.target)}
-                    </span>
-                    {cat.overBudget ? (
-                      <span className="text-destructive font-mono text-xs">⚠ OVER</span>
-                    ) : (
-                      <span className="text-accent font-mono text-xs">{formatCurrency(cat.remaining)} left</span>
-                    )}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Category Budget Progress</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-5">
+              {data.categoryProgress.map((cat, index) => (
+                <div key={index}>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-medium">{cat.category}</span>
+                    <div className="flex items-center gap-3">
+                      <span className={cn(
+                        "text-sm tabular-nums",
+                        cat.overBudget ? 'text-destructive' : 'text-muted-foreground'
+                      )}>
+                        {formatCurrency(cat.spent)} / {formatCurrency(cat.target)}
+                      </span>
+                      {cat.overBudget ? (
+                        <Badge variant="destructive" className="text-[10px] gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          Over
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-success tabular-nums">
+                          {formatCurrency(cat.remaining)} left
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all",
+                        cat.overBudget ? 'bg-destructive' : 'bg-primary'
+                      )}
+                      style={{ width: `${Math.min(100, cat.percentage)}%` }}
+                    />
                   </div>
                 </div>
-                <div className="w-full h-2 bg-muted border border-border">
-                  <div
-                    className={`h-full transition-all ${cat.overBudget ? 'bg-destructive' : 'bg-accent'}`}
-                    style={{ width: `${Math.min(100, cat.percentage)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Monthly Trends */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Income vs Expenses Trend */}
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">
-              INCOME VS EXPENSES (6 MONTHS)
-            </h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={data.monthlyProgress}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                />
-                <YAxis
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    fontFamily: 'monospace',
-                    fontSize: 12
-                  }}
-                  formatter={(value: any) => formatCurrency(value)}
-                />
-                <Legend
-                  wrapperStyle={{ fontFamily: 'monospace', fontSize: 12 }}
-                />
-                <Line type="monotone" dataKey="income" stroke="hsl(var(--accent))" strokeWidth={2} name="Income" />
-                <Line type="monotone" dataKey="expenses" stroke="hsl(var(--destructive))" strokeWidth={2} name="Expenses" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Income vs Expenses (6 Months)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={data.monthlyProgress}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                    tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      fontSize: 12
+                    }}
+                    formatter={(value: any) => formatCurrency(value)}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 12 }}
+                  />
+                  <Line type="monotone" dataKey="income" stroke="hsl(var(--success))" strokeWidth={2} name="Income" dot={false} />
+                  <Line type="monotone" dataKey="expenses" stroke="hsl(var(--destructive))" strokeWidth={2} name="Expenses" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
 
           {/* Savings Rate Trend */}
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">
-              SAVINGS RATE TREND
-            </h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data.monthlyProgress}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                />
-                <YAxis
-                  tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }}
-                  tickFormatter={(value) => `${value}%`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    fontFamily: 'monospace',
-                    fontSize: 12
-                  }}
-                  formatter={(value: any) => `${value.toFixed(1)}%`}
-                />
-                <Bar dataKey="savingsRate" fill="hsl(var(--accent))" name="Savings Rate" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Savings Rate Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={data.monthlyProgress}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                    tickFormatter={(value) => `${value}%`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      fontSize: 12
+                    }}
+                    formatter={(value: any) => [`${value.toFixed(1)}%`, 'Savings Rate']}
+                  />
+                  <Bar dataKey="savingsRate" fill="hsl(var(--primary))" name="Savings Rate" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Goal Targets Info */}
-        <div className="border border-accent/20 bg-accent/5 p-6">
-          <h3 className="text-sm font-mono uppercase text-muted-foreground mb-3">
-            💡 CURRENT TARGETS
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-sm">
-            <div>
-              <span className="text-muted-foreground">Monthly Income:</span>{' '}
-              <span className="font-bold">{formatCurrency(data.goals.monthlyIncome)}</span>
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Info className="w-4 h-4 text-primary" />
+              Current Targets
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
+                <span className="text-muted-foreground">Monthly Income</span>
+                <span className="font-semibold tabular-nums">{formatCurrency(data.goals.monthlyIncome)}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
+                <span className="text-muted-foreground">Monthly Expenses</span>
+                <span className="font-semibold tabular-nums">{formatCurrency(data.goals.monthlyExpenses)}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
+                <span className="text-muted-foreground">Savings Rate</span>
+                <span className="font-semibold tabular-nums">{data.goals.savingsRate}%</span>
+              </div>
             </div>
-            <div>
-              <span className="text-muted-foreground">Monthly Expenses:</span>{' '}
-              <span className="font-bold">{formatCurrency(data.goals.monthlyExpenses)}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Savings Rate:</span>{' '}
-              <span className="font-bold">{data.goals.savingsRate}%</span>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground font-mono mt-3">
-            Note: Goals can be customized in Settings (coming soon)
-          </p>
-        </div>
+            <p className="text-xs text-muted-foreground mt-4">
+              Goals can be customized in Settings
+            </p>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );

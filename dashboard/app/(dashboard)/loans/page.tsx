@@ -1,8 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import {
+  CreditCard,
+  GraduationCap,
+  Car,
+  Home,
+  Wallet,
+  MoreHorizontal,
+  Plus,
+  X,
+  Trash2,
+  Calendar,
+  Percent,
+  DollarSign,
+  Calculator,
+  TrendingDown
+} from 'lucide-react';
 
 interface Loan {
   id?: number;
@@ -29,23 +49,68 @@ interface LoanSummary {
   loans: Loan[];
 }
 
-const LOAN_TYPE_ICONS: Record<string, string> = {
-  personal: '=d',
-  student: '<�',
-  auto: '=�',
-  mortgage: '<�',
-  credit: '=�',
-  other: '=�'
+const LOAN_TYPE_ICONS: Record<string, React.ElementType> = {
+  personal: Wallet,
+  student: GraduationCap,
+  auto: Car,
+  mortgage: Home,
+  credit: CreditCard,
+  other: MoreHorizontal
 };
 
 const LOAN_TYPE_COLORS: Record<string, string> = {
-  personal: '#00aa66',
-  student: '#3377ff',
-  auto: '#ff8800',
-  mortgage: '#dd3333',
-  credit: '#00ff88',
-  other: '#999999'
+  personal: 'bg-emerald-500',
+  student: 'bg-blue-500',
+  auto: 'bg-orange-500',
+  mortgage: 'bg-red-500',
+  credit: 'bg-purple-500',
+  other: 'bg-gray-500'
 };
+
+function LoansPageSkeleton() {
+  return (
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
+        <div className="flex justify-between items-start">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+          <Skeleton className="h-9 w-28" />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <Skeleton className="h-4 w-20 mb-2" />
+                <Skeleton className="h-8 w-24" />
+                <Skeleton className="h-3 w-16 mt-2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[1, 2].map((i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <div className="flex gap-4 mb-4">
+                  <Skeleton className="h-10 w-10 rounded-lg" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-5 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                </div>
+                <Skeleton className="h-2 w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}
 
 export default function LoansPage() {
   const [data, setData] = useState<LoanSummary | null>(null);
@@ -54,7 +119,6 @@ export default function LoansPage() {
   const [showAddLoan, setShowAddLoan] = useState(false);
   const [extraPayment, setExtraPayment] = useState(0);
 
-  // New loan form
   const [newLoan, setNewLoan] = useState<Partial<Loan>>({
     name: '',
     original_amount: 0,
@@ -161,24 +225,18 @@ export default function LoansPage() {
   };
 
   if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground">Loading loans...</div>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
+    return <LoansPageSkeleton />;
   }
 
   if (error) {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="border border-destructive bg-destructive/10 p-4 text-destructive">
-            Error: {error}
-          </div>
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardContent className="pt-6">
+              <p className="text-destructive">Error: {error}</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -188,7 +246,11 @@ export default function LoansPage() {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="text-muted-foreground">No data available</div>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground">No data available</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -199,231 +261,298 @@ export default function LoansPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold font-mono uppercase">=� LOAN PAYBACK TRACKER</h1>
-          <p className="text-sm text-muted-foreground mt-2">
-            Track all loans and payoff progress
-          </p>
-        </div>
-        <button
-          onClick={() => setShowAddLoan(!showAddLoan)}
-          className="border border-border bg-accent text-accent-foreground px-4 py-2 hover:opacity-80 transition-opacity font-mono text-sm"
-        >
-          {showAddLoan ? 'Cancel' : '+ Add Loan'}
-        </button>
-      </div>
-
-      {/* Add Loan Form */}
-      {showAddLoan && (
-        <div className="border border-border bg-card p-6 space-y-4">
-          <h3 className="font-mono text-sm uppercase text-muted-foreground">Add New Loan</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input
-              type="text"
-              placeholder="Loan Name"
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.name}
-              onChange={(e) => setNewLoan({ ...newLoan, name: e.target.value })}
-            />
-            <select
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.loan_type}
-              onChange={(e) => setNewLoan({ ...newLoan, loan_type: e.target.value as any })}
-            >
-              <option value="personal">Personal</option>
-              <option value="student">Student</option>
-              <option value="auto">Auto</option>
-              <option value="mortgage">Mortgage</option>
-              <option value="credit">Credit Card</option>
-              <option value="other">Other</option>
-            </select>
-            <input
-              type="number"
-              placeholder="Original Amount"
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.original_amount || ''}
-              onChange={(e) => setNewLoan({ ...newLoan, original_amount: parseFloat(e.target.value) || 0 })}
-            />
-            <input
-              type="number"
-              placeholder="Current Balance"
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.current_balance || ''}
-              onChange={(e) => setNewLoan({ ...newLoan, current_balance: parseFloat(e.target.value) || 0 })}
-            />
-            <input
-              type="number"
-              placeholder="Interest Rate (%)"
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.interest_rate || ''}
-              onChange={(e) => setNewLoan({ ...newLoan, interest_rate: parseFloat(e.target.value) || 0 })}
-            />
-            <input
-              type="number"
-              placeholder="Monthly Payment"
-              className="border border-border bg-background p-2 font-mono text-sm"
-              value={newLoan.monthly_payment || ''}
-              onChange={(e) => setNewLoan({ ...newLoan, monthly_payment: parseFloat(e.target.value) || 0 })}
-            />
+      <div className="p-8 space-y-8">
+        {/* Header */}
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">Loans</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Track all loans and payoff progress
+            </p>
           </div>
-          <button
-            onClick={handleAddLoan}
-            className="border border-border bg-accent text-accent-foreground px-6 py-2 hover:opacity-80 transition-opacity font-mono text-sm"
-          >
-            Add Loan
-          </button>
-        </div>
-      )}
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="border border-border bg-card p-6">
-          <div className="text-xs text-muted-foreground font-mono uppercase">Total Owed</div>
-          <div className="text-3xl font-bold font-mono mt-2">{formatCurrency(data.totalOwed)}</div>
-          <div className="text-xs text-muted-foreground font-mono mt-1">{data.loans.length} active loans</div>
-        </div>
-
-        <div className="border border-border bg-card p-6">
-          <div className="text-xs text-muted-foreground font-mono uppercase">Monthly Payment</div>
-          <div className="text-3xl font-bold font-mono mt-2">{formatCurrency(data.totalMonthlyPayment)}</div>
-          <div className="text-xs text-muted-foreground font-mono mt-1">Combined total</div>
-        </div>
-
-        <div className="border border-border bg-card p-6">
-          <div className="text-xs text-muted-foreground font-mono uppercase">Debt Free Date</div>
-          <div className="text-3xl font-bold font-mono mt-2">{formatDate(debtFreeDate.toISOString())}</div>
-          <div className="text-xs text-muted-foreground font-mono mt-1">{data.monthsUntilDebtFree} months</div>
-        </div>
-
-        <div className="border border-border bg-card p-6">
-          <div className="text-xs text-muted-foreground font-mono uppercase">Avg Interest</div>
-          <div className="text-3xl font-bold font-mono mt-2">{data.totalInterestRate.toFixed(1)}%</div>
-          <div className="text-xs text-muted-foreground font-mono mt-1">Weighted average</div>
-        </div>
-      </div>
-
-      {/* Payoff Calculator */}
-      {data.loans.length > 0 && (
-        <div className="border border-border bg-card p-6">
-          <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">
-            =� Payoff Scenario Calculator
-          </h3>
-          <div className="space-y-4">
-            <div>
-              <label className="font-mono text-sm text-muted-foreground">Extra Monthly Payment: ${extraPayment}</label>
-              <input
-                type="range"
-                min="0"
-                max="1000"
-                step="50"
-                value={extraPayment}
-                onChange={(e) => setExtraPayment(parseInt(e.target.value))}
-                className="w-full mt-2"
-              />
-            </div>
-            {extraPayment > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                {data.loans.map((loan) => {
-                  const newMonths = calculatePayoffWithExtra(loan, extraPayment);
-                  const monthsSaved = (loan.monthsRemaining || 0) - newMonths;
-                  return (
-                    <div key={loan.id} className="border border-border bg-background p-4">
-                      <div className="font-mono text-sm font-bold">{loan.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground mt-1">
-                        Payoff in {newMonths} months
-                      </div>
-                      <div className="font-mono text-xs text-accent mt-1">
-                        Save {monthsSaved} months!
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+          <Button onClick={() => setShowAddLoan(!showAddLoan)}>
+            {showAddLoan ? (
+              <>
+                <X className="w-4 h-4 mr-2" />
+                Cancel
+              </>
+            ) : (
+              <>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Loan
+              </>
             )}
-          </div>
+          </Button>
         </div>
-      )}
 
-      {/* Loan Cards */}
-      {data.loans.length === 0 ? (
-        <div className="border border-border bg-card p-12 text-center">
-          <div className="text-muted-foreground font-mono">
-            No loans yet. Click "+ Add Loan" to get started.
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.loans.map((loan) => (
-            <div key={loan.id} className="border border-border bg-card p-6">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{LOAN_TYPE_ICONS[loan.loan_type]}</span>
-                  <div>
-                    <h3 className="font-mono font-bold">{loan.name}</h3>
-                    <p className="font-mono text-xs text-muted-foreground capitalize">{loan.loan_type} Loan</p>
-                  </div>
+        {/* Add Loan Form */}
+        {showAddLoan && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Add New Loan</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Loan Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Car Loan"
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.name}
+                    onChange={(e) => setNewLoan({ ...newLoan, name: e.target.value })}
+                  />
                 </div>
-                <button
-                  onClick={() => loan.id && handleDeleteLoan(loan.id)}
-                  className="text-destructive hover:opacity-70 font-mono text-xs"
-                >
-                  Delete
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-4 font-mono text-sm">
-                <div>
-                  <div className="text-muted-foreground text-xs">Original</div>
-                  <div className="font-bold">{formatCurrency(loan.original_amount)}</div>
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Loan Type</label>
+                  <select
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.loan_type}
+                    onChange={(e) => setNewLoan({ ...newLoan, loan_type: e.target.value as any })}
+                  >
+                    <option value="personal">Personal</option>
+                    <option value="student">Student</option>
+                    <option value="auto">Auto</option>
+                    <option value="mortgage">Mortgage</option>
+                    <option value="credit">Credit Card</option>
+                    <option value="other">Other</option>
+                  </select>
                 </div>
-                <div>
-                  <div className="text-muted-foreground text-xs">Balance</div>
-                  <div className="font-bold">{formatCurrency(loan.current_balance)}</div>
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Original Amount</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.original_amount || ''}
+                    onChange={(e) => setNewLoan({ ...newLoan, original_amount: parseFloat(e.target.value) || 0 })}
+                  />
                 </div>
-                <div>
-                  <div className="text-muted-foreground text-xs">Rate</div>
-                  <div className="font-bold">{loan.interest_rate}%</div>
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Current Balance</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.current_balance || ''}
+                    onChange={(e) => setNewLoan({ ...newLoan, current_balance: parseFloat(e.target.value) || 0 })}
+                  />
                 </div>
-                <div>
-                  <div className="text-muted-foreground text-xs">Monthly</div>
-                  <div className="font-bold">{formatCurrency(loan.monthly_payment)}</div>
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Interest Rate (%)</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    step="0.1"
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.interest_rate || ''}
+                    onChange={(e) => setNewLoan({ ...newLoan, interest_rate: parseFloat(e.target.value) || 0 })}
+                  />
                 </div>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="mb-2">
-                <div className="flex justify-between font-mono text-xs text-muted-foreground mb-1">
-                  <span>Progress</span>
-                  <span>{loan.percentPaid?.toFixed(1)}% paid</span>
-                </div>
-                <div className="w-full h-2 bg-muted border border-border">
-                  <div
-                    className="h-full transition-all"
-                    style={{
-                      width: `${loan.percentPaid}%`,
-                      backgroundColor: LOAN_TYPE_COLORS[loan.loan_type]
-                    }}
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">Monthly Payment</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    className="w-full border border-border bg-background px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newLoan.monthly_payment || ''}
+                    onChange={(e) => setNewLoan({ ...newLoan, monthly_payment: parseFloat(e.target.value) || 0 })}
                   />
                 </div>
               </div>
-
-              <div className="flex justify-between font-mono text-xs mt-4">
-                <div>
-                  <span className="text-muted-foreground">Payoff:</span>{' '}
-                  <span className="font-bold">{formatDate(loan.payoff_date)}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Interest:</span>{' '}
-                  <span className="font-bold">{formatCurrency(loan.totalInterestPaid || 0)}</span>
-                </div>
+              <div className="mt-6">
+                <Button onClick={handleAddLoan}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Loan
+                </Button>
               </div>
-            </div>
-          ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <DollarSign className="w-4 h-4" />
+                <span className="text-xs font-medium">Total Owed</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">{formatCurrency(data.totalOwed)}</div>
+              <div className="text-xs text-muted-foreground mt-1">{data.loans.length} active loans</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <TrendingDown className="w-4 h-4" />
+                <span className="text-xs font-medium">Monthly Payment</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">{formatCurrency(data.totalMonthlyPayment)}</div>
+              <div className="text-xs text-muted-foreground mt-1">Combined total</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Calendar className="w-4 h-4" />
+                <span className="text-xs font-medium">Debt Free Date</span>
+              </div>
+              <div className="text-2xl font-semibold">{formatDate(debtFreeDate.toISOString())}</div>
+              <div className="text-xs text-muted-foreground mt-1 tabular-nums">{data.monthsUntilDebtFree} months</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Percent className="w-4 h-4" />
+                <span className="text-xs font-medium">Avg Interest</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">{data.totalInterestRate.toFixed(1)}%</div>
+              <div className="text-xs text-muted-foreground mt-1">Weighted average</div>
+            </CardContent>
+          </Card>
         </div>
-      )}
+
+        {/* Payoff Calculator */}
+        {data.loans.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Calculator className="w-4 h-4" />
+                Payoff Scenario Calculator
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm text-muted-foreground">Extra Monthly Payment</label>
+                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(extraPayment)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1000"
+                    step="50"
+                    value={extraPayment}
+                    onChange={(e) => setExtraPayment(parseInt(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+                {extraPayment > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                    {data.loans.map((loan) => {
+                      const newMonths = calculatePayoffWithExtra(loan, extraPayment);
+                      const monthsSaved = (loan.monthsRemaining || 0) - newMonths;
+                      return (
+                        <div key={loan.id} className="p-4 bg-secondary/50 rounded-lg">
+                          <div className="font-medium text-sm">{loan.name}</div>
+                          <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+                            Payoff in {newMonths} months
+                          </div>
+                          <div className="text-xs text-success mt-1 tabular-nums font-medium">
+                            Save {monthsSaved} months!
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Loan Cards */}
+        {data.loans.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <div className="text-muted-foreground">
+                No loans yet. Click "Add Loan" to get started.
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {data.loans.map((loan) => {
+              const Icon = LOAN_TYPE_ICONS[loan.loan_type];
+              return (
+                <Card key={loan.id}>
+                  <CardContent className="pt-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-10 h-10 rounded-lg flex items-center justify-center",
+                          LOAN_TYPE_COLORS[loan.loan_type]
+                        )}>
+                          <Icon className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold">{loan.name}</h3>
+                          <p className="text-xs text-muted-foreground capitalize">{loan.loan_type} Loan</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => loan.id && handleDeleteLoan(loan.id)}
+                        className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Original</div>
+                        <div className="font-semibold tabular-nums">{formatCurrency(loan.original_amount)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Balance</div>
+                        <div className="font-semibold tabular-nums">{formatCurrency(loan.current_balance)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Rate</div>
+                        <div className="font-semibold tabular-nums">{loan.interest_rate}%</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Monthly</div>
+                        <div className="font-semibold tabular-nums">{formatCurrency(loan.monthly_payment)}</div>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="mb-4">
+                      <div className="flex justify-between text-xs text-muted-foreground mb-2">
+                        <span>Progress</span>
+                        <span className="tabular-nums">{loan.percentPaid?.toFixed(1)}% paid</span>
+                      </div>
+                      <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full transition-all", LOAN_TYPE_COLORS[loan.loan_type])}
+                          style={{ width: `${loan.percentPaid}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between text-xs">
+                      <div>
+                        <span className="text-muted-foreground">Payoff:</span>{' '}
+                        <span className="font-medium">{formatDate(loan.payoff_date)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Interest:</span>{' '}
+                        <span className="font-medium tabular-nums">{formatCurrency(loan.totalInterestPaid || 0)}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

@@ -3,6 +3,57 @@
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { BarChart, Bar, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import { TrendingUp, TrendingDown, DollarSign, Calendar, Store } from 'lucide-react';
+
+function AnalyticsPageSkeleton() {
+  return (
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <Skeleton className="h-4 w-20 mb-2" />
+                <Skeleton className="h-8 w-24" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[1, 2].map((i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-5 w-40" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[300px] w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-5 w-48" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
+  );
+}
 
 export default function AnalyticsPage() {
   const [data, setData] = useState<any>(null);
@@ -15,100 +66,211 @@ export default function AnalyticsPage() {
       .catch(err => { console.error('Error:', err); setLoading(false); });
   }, []);
 
-  const formatCurrency = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+  const formatCurrency = (amount: number) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount);
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
 
   if (loading) {
+    return <AnalyticsPageSkeleton />;
+  }
+
+  if (!data) {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground font-mono">LOADING ANALYTICS...</div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground">No data available</p>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
   }
 
-  if (!data) return null;
+  const changeIsPositive = data.monthlyComparison.change > 0;
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-6">
+      <div className="p-8 space-y-8">
+        {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold font-mono uppercase">📊 SPENDING ANALYTICS</h1>
-          <p className="text-sm text-muted-foreground font-mono mt-2">Deep insights into your spending patterns</p>
+          <h1 className="text-2xl font-semibold text-foreground">Spending Analytics</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Deep insights into your spending patterns
+          </p>
         </div>
 
+        {/* Monthly Comparison */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">THIS MONTH</div>
-            <div className="text-3xl font-bold font-mono mt-2">{formatCurrency(data.monthlyComparison.thisMonth)}</div>
-          </div>
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">LAST MONTH</div>
-            <div className="text-3xl font-bold font-mono mt-2">{formatCurrency(data.monthlyComparison.lastMonth)}</div>
-          </div>
-          <div className="border border-border bg-card p-6">
-            <div className="text-xs text-muted-foreground font-mono uppercase">CHANGE</div>
-            <div className={`text-3xl font-bold font-mono mt-2 ${data.monthlyComparison.change > 0 ? 'text-destructive' : 'text-accent'}`}>
-              {data.monthlyComparison.change > 0 ? '+' : ''}{data.monthlyComparison.change.toFixed(1)}%
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Calendar className="w-4 h-4" />
+                <span className="text-xs font-medium">This Month</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">
+                {formatCurrency(data.monthlyComparison.thisMonth)}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Calendar className="w-4 h-4" />
+                <span className="text-xs font-medium">Last Month</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">
+                {formatCurrency(data.monthlyComparison.lastMonth)}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                {changeIsPositive ? (
+                  <TrendingUp className="w-4 h-4 text-destructive" />
+                ) : (
+                  <TrendingDown className="w-4 h-4 text-success" />
+                )}
+                <span className="text-xs font-medium">Change</span>
+              </div>
+              <div className={cn(
+                "text-2xl font-semibold tabular-nums",
+                changeIsPositive ? 'text-destructive' : 'text-success'
+              )}>
+                {changeIsPositive ? '+' : ''}{data.monthlyComparison.change.toFixed(1)}%
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
+        {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">TOP MERCHANTS (YTD)</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data.topMerchants} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis type="number" tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }} tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="merchant" width={100} tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }} />
-                <Tooltip contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', fontFamily: 'monospace', fontSize: 12 }} formatter={(value: any) => formatCurrency(value)} />
-                <Bar dataKey="total" fill="hsl(var(--accent))" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {/* Top Merchants */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Store className="w-4 h-4" />
+                Top Merchants (YTD)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={data.topMerchants} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis
+                    type="number"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                    tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="merchant"
+                    width={100}
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      fontSize: 12
+                    }}
+                    formatter={(value: any) => formatCurrency(value)}
+                  />
+                  <Bar dataKey="total" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">SPENDING BY DAY</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <RadarChart data={data.dayOfWeekSpending}>
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis dataKey="day" tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }} />
-                <PolarRadiusAxis tick={{ fill: 'var(--muted-foreground)', fontFamily: 'monospace', fontSize: 10 }} />
-                <Radar dataKey="avgAmount" stroke="hsl(var(--accent))" fill="hsl(var(--accent))" fillOpacity={0.3} />
-                <Tooltip contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', fontFamily: 'monospace', fontSize: 12 }} formatter={(value: any) => formatCurrency(value)} />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
+          {/* Spending by Day */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Spending by Day of Week
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <RadarChart data={data.dayOfWeekSpending}>
+                  <PolarGrid stroke="hsl(var(--border))" />
+                  <PolarAngleAxis
+                    dataKey="day"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                  />
+                  <PolarRadiusAxis
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  />
+                  <Radar
+                    dataKey="avgAmount"
+                    stroke="hsl(var(--primary))"
+                    fill="hsl(var(--primary))"
+                    fillOpacity={0.2}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      fontSize: 12
+                    }}
+                    formatter={(value: any) => formatCurrency(value)}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="border border-border bg-card p-6">
-          <h3 className="text-sm font-mono uppercase text-muted-foreground mb-4">LARGEST TRANSACTIONS</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3">DATE</th>
-                  <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3">DESCRIPTION</th>
-                  <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3">CATEGORY</th>
-                  <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3">AMOUNT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.largestTransactions.map((txn: any, i: number) => (
-                  <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/50">
-                    <td className="py-3 font-mono text-sm">{new Date(txn.date).toLocaleDateString()}</td>
-                    <td className="py-3 font-mono text-sm truncate max-w-[300px]">{txn.description}</td>
-                    <td className="py-3 font-mono text-sm text-muted-foreground">{txn.category || 'Uncategorized'}</td>
-                    <td className="py-3 font-mono text-sm text-right font-bold">{formatCurrency(txn.amount)}</td>
+        {/* Largest Transactions */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              Largest Transactions
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-xs font-medium text-muted-foreground py-3">Date</th>
+                    <th className="text-left text-xs font-medium text-muted-foreground py-3">Description</th>
+                    <th className="text-left text-xs font-medium text-muted-foreground py-3">Category</th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3">Amount</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                </thead>
+                <tbody>
+                  {data.largestTransactions.map((txn: any, i: number) => (
+                    <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-muted/50 transition-colors">
+                      <td className="py-3 text-sm">{formatDate(txn.date)}</td>
+                      <td className="py-3 text-sm truncate max-w-[300px]">{txn.description}</td>
+                      <td className="py-3 text-sm text-muted-foreground">{txn.category || 'Uncategorized'}</td>
+                      <td className="py-3 text-sm text-right font-semibold tabular-nums">{formatCurrency(txn.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
