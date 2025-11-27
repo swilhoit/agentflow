@@ -300,7 +300,7 @@ export class CognitiveToolExecutor {
 
   /**
    * Manage context to stay within token limits
-   * Strategy: Keep system prompt + recent exchanges, summarize/truncate old ones
+   * CRITICAL: Must preserve tool_use/tool_result pairs - they must stay together!
    */
   private manageContext(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
     const estimatedTokens = this.estimateTokens(messages);
@@ -311,7 +311,6 @@ export class CognitiveToolExecutor {
 
     logger.warn(`⚠️ Context too large (${estimatedTokens} tokens), truncating...`);
 
-    // Strategy: Keep first message (system/task) and last N exchanges
     const managed: Anthropic.MessageParam[] = [];
 
     // Always keep the first message (contains task context)
@@ -319,37 +318,82 @@ export class CognitiveToolExecutor {
       managed.push(messages[0]);
     }
 
-    // Add a summary of what was truncated
-    const truncatedCount = messages.length - 1;
-    if (truncatedCount > 10) {
+    // Find safe truncation point - we need to keep tool_use/tool_result pairs together
+    // Work backwards to find complete assistant/user pairs
+    const keepCount = Math.min(20, messages.length - 1);  // Keep last ~10 exchanges
+    let startIdx = messages.length - keepCount;
+
+    // Ensure we start at a user message (after any tool_result for previous assistant)
+    // If startIdx lands on an assistant message with tool_use, move forward to include its tool_result
+    while (startIdx > 1 && startIdx < messages.length) {
+      const msg = messages[startIdx];
+      const prevMsg = messages[startIdx - 1];
+
+      // Check if previous message has tool_use that needs a tool_result
+      if (prevMsg.role === 'assistant' && Array.isArray(prevMsg.content)) {
+        const hasToolUse = prevMsg.content.some((block: any) => block.type === 'tool_use');
+        if (hasToolUse) {
+          // We can't start here - would orphan the tool_use
+          // Move forward to skip this tool_result
+          startIdx++;
+          continue;
+        }
+      }
+
+      // Safe to start here if current is user message
+      if (msg.role === 'user') {
+        break;
+      }
+      startIdx++;
+    }
+
+    // Add summary of truncated content
+    const truncatedCount = startIdx - 1;
+    if (truncatedCount > 0) {
       managed.push({
         role: 'user',
-        content: `[CONTEXT SUMMARY: ${truncatedCount - 10} previous exchanges were truncated to manage context. Key discoveries so far: ${this.monitor.getMemory().discoveredFacts.slice(-5).join('; ') || 'None recorded'}. Continue from where we left off.]`
+        content: `[CONTEXT SUMMARY: ${truncatedCount} previous messages were truncated. Key discoveries: ${this.monitor.getMemory().discoveredFacts.slice(-5).join('; ') || 'None'}. Continue the analysis.]`
+      });
+
+      // Need an assistant acknowledgment to maintain alternation
+      managed.push({
+        role: 'assistant',
+        content: 'Understood. Continuing the analysis with the context preserved.'
       });
     }
 
-    // Keep last 10 exchanges (20 messages for user/assistant pairs)
-    const recentMessages = messages.slice(-20);
-    for (const msg of recentMessages) {
-      // Truncate very long tool results
+    // Add remaining messages, truncating large tool results
+    for (let i = startIdx; i < messages.length; i++) {
+      const msg = messages[i];
+
       if (typeof msg.content !== 'string' && Array.isArray(msg.content)) {
-        const truncatedContent = msg.content.map(block => {
-          if ('content' in block && typeof block.content === 'string' && block.content.length > 10000) {
+        const truncatedContent = msg.content.map((block: any) => {
+          // Truncate large tool_result content but keep the structure
+          if (block.type === 'tool_result' && typeof block.content === 'string' && block.content.length > 8000) {
             return {
               ...block,
-              content: block.content.substring(0, 8000) + '\n\n[...TRUNCATED - output was ' + block.content.length + ' chars...]'
+              content: block.content.substring(0, 6000) + '\n\n[...OUTPUT TRUNCATED from ' + block.content.length + ' chars...]'
+            };
+          }
+          // Truncate large text blocks
+          if (block.type === 'text' && block.text && block.text.length > 8000) {
+            return {
+              ...block,
+              text: block.text.substring(0, 6000) + '\n\n[...TRUNCATED...]'
             };
           }
           return block;
         });
         managed.push({ ...msg, content: truncatedContent as any });
+      } else if (typeof msg.content === 'string' && msg.content.length > 8000) {
+        managed.push({ ...msg, content: msg.content.substring(0, 6000) + '\n\n[...TRUNCATED...]' });
       } else {
         managed.push(msg);
       }
     }
 
     const newTokens = this.estimateTokens(managed);
-    logger.info(`   Context reduced: ${estimatedTokens} → ${newTokens} tokens`);
+    logger.info(`   Context reduced: ${estimatedTokens} → ${newTokens} tokens (kept ${messages.length - startIdx} messages)`);
 
     return managed;
   }
@@ -489,21 +533,62 @@ export class CognitiveToolExecutor {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // Check if it's a token limit error - try aggressive truncation
-      if (errorMessage.includes('too long') || errorMessage.includes('tokens')) {
-        logger.warn(`   ⚠️ Token limit hit, applying aggressive truncation...`);
+      // Check if it's a token limit error OR tool_use/tool_result mismatch - try aggressive truncation
+      if (errorMessage.includes('too long') || errorMessage.includes('tokens') || errorMessage.includes('tool_use') || errorMessage.includes('tool_result')) {
+        logger.warn(`   ⚠️ Context error, applying aggressive truncation...`);
 
-        // More aggressive truncation - keep only last 5 exchanges
+        // Aggressive but safe truncation - preserve tool pairs
         const aggressiveManaged: Anthropic.MessageParam[] = [];
         if (messages.length > 0) {
           aggressiveManaged.push(messages[0]);  // Keep system prompt
         }
+
+        // Add context summary
         aggressiveManaged.push({
           role: 'user',
-          content: `[AGGRESSIVE TRUNCATION: Context was too large. Key facts: ${this.monitor.getMemory().discoveredFacts.slice(-3).join('; ') || 'None'}. Please continue the task concisely.]`
+          content: `[CONTEXT RESET: Previous context was truncated due to size limits. Key discoveries: ${this.monitor.getMemory().discoveredFacts.slice(-3).join('; ') || 'None'}. Please continue the task concisely.]`
         });
-        const lastFew = messages.slice(-10);
-        aggressiveManaged.push(...lastFew);
+        aggressiveManaged.push({
+          role: 'assistant',
+          content: 'Understood. I will continue the task with the context provided.'
+        });
+
+        // Find last safe starting point - must be a user message not containing tool_result for orphaned tool_use
+        let safeStart = messages.length - 6;  // Try last 3 exchanges
+        while (safeStart > 1) {
+          const msg = messages[safeStart];
+          if (msg.role === 'user') {
+            // Check this isn't a tool_result for a truncated tool_use
+            if (!Array.isArray(msg.content) || !msg.content.some((b: any) => b.type === 'tool_result')) {
+              break;  // Safe to start here
+            }
+          }
+          safeStart++;
+        }
+
+        // If we found a safe start, add those messages
+        if (safeStart < messages.length) {
+          for (let i = safeStart; i < messages.length; i++) {
+            const msg = messages[i];
+            // Heavily truncate content
+            if (typeof msg.content === 'string') {
+              aggressiveManaged.push({ ...msg, content: msg.content.substring(0, 2000) });
+            } else if (Array.isArray(msg.content)) {
+              const truncated = msg.content.map((block: any) => {
+                if (block.type === 'tool_result' && typeof block.content === 'string') {
+                  return { ...block, content: block.content.substring(0, 2000) + '\n[TRUNCATED]' };
+                }
+                if (block.type === 'text' && block.text) {
+                  return { ...block, text: block.text.substring(0, 2000) };
+                }
+                return block;
+              });
+              aggressiveManaged.push({ ...msg, content: truncated as any });
+            } else {
+              aggressiveManaged.push(msg);
+            }
+          }
+        }
 
         return await this.client.messages.create({
           model: modelToUse.id,
