@@ -195,6 +195,35 @@ export function registerDefaultTasks(agentManager: AgentManagerService): void {
       timezone: 'America/New_York',
       isEnabled: true,
       config: JSON.stringify({ type: 'health_check' })
+    },
+
+    // Mr. Krabs Personal Finance Tasks
+    {
+      taskName: 'Daily Budget Update',
+      agentName: 'mr-krabs',
+      description: 'Daily spending update with category breakdown (9:00 AM PT)',
+      cronSchedule: '0 9 * * *',
+      timezone: 'America/Los_Angeles',
+      isEnabled: true,
+      config: JSON.stringify({ type: 'daily_budget' })
+    },
+    {
+      taskName: 'Weekly Budget Summary',
+      agentName: 'mr-krabs',
+      description: 'Weekly financial summary with spending analysis (Sunday 8:00 PM PT)',
+      cronSchedule: '0 20 * * 0',
+      timezone: 'America/Los_Angeles',
+      isEnabled: true,
+      config: JSON.stringify({ type: 'weekly_summary' })
+    },
+    {
+      taskName: 'Daily Transaction Sync',
+      agentName: 'mr-krabs',
+      description: 'Sync transactions from Teller API (2:00 AM PT)',
+      cronSchedule: '0 2 * * *',
+      timezone: 'America/Los_Angeles',
+      isEnabled: true,
+      config: JSON.stringify({ type: 'transaction_sync' })
     }
   ];
 

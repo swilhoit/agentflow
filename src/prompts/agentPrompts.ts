@@ -37,12 +37,12 @@ TASK: ${context.command}
    - gh api (REST API access)
    - User is ALREADY logged in via: gh auth login
 
-3. **Google Cloud CLI (gcloud)**: Fully authenticated  
-   - gcloud projects list
-   - gcloud compute instances list
-   - gcloud run services list
-   - gcloud builds submit
-   - User is ALREADY logged in via: gcloud auth login`;
+3. **Hetzner Cloud CLI (hcloud)**: Fully authenticated
+   - hcloud server list
+   - hcloud server create
+   - hcloud server delete
+   - SSH access to VPS: ssh root@178.156.198.233
+   - Docker deployment via HetznerDeploymentService`;
 
   if (context.hasTrello) {
     prompt += `

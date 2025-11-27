@@ -1,28 +1,32 @@
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase, isUsingPostgres, getDatabaseType } from './databaseFactory';
+import { getPostgresDatabase, PostgresDatabaseService } from './postgresDatabaseService';
 import type { DatabaseService } from './database';
 import { Client, TextChannel } from 'discord.js';
 import * as cron from 'node-cron';
 
 /**
  * Category Budget Service
- * 
+ *
  * Tracks separate budgets for different spending categories
+ * Supports both SQLite (local) and PostgreSQL (cloud) databases
  */
 export class CategoryBudgetService {
-  private db: DatabaseService;
+  private sqliteDb?: DatabaseService;
+  private postgresDb?: PostgresDatabaseService;
+  private usePostgres: boolean;
   private discordClient?: Client;
   private channelId: string;
   private dailyUpdateCron?: cron.ScheduledTask;
   private enabled: boolean;
-  
+
   // Category budgets
   private budgets: {
     groceries: number;
     dining: number;
     other: number;
   };
-  
+
   // Alert thresholds
   private readonly ALERT_THRESHOLDS = [0.75, 0.9, 1.0]; // 75%, 90%, 100%
   private alertsSent: Map<string, Set<number>> = new Map(); // Track alerts per category
@@ -35,7 +39,15 @@ export class CategoryBudgetService {
     enabled?: boolean;
     dailyUpdateTime?: string;
   }) {
-    this.db = getSQLiteDatabase();
+    const dbType = getDatabaseType();
+    this.usePostgres = dbType === 'postgres' || dbType === 'supabase';
+
+    if (this.usePostgres) {
+      this.postgresDb = getPostgresDatabase();
+    } else {
+      this.sqliteDb = getSQLiteDatabase();
+    }
+
     this.budgets = {
       groceries: config.groceriesBudget,
       dining: config.diningBudget,
@@ -43,17 +55,17 @@ export class CategoryBudgetService {
     };
     this.channelId = config.channelId;
     this.enabled = config.enabled !== false;
-    
+
     // Initialize alert tracking
     this.alertsSent.set('groceries', new Set());
     this.alertsSent.set('dining', new Set());
     this.alertsSent.set('other', new Set());
-    
+
     if (this.enabled) {
       this.setupDailyUpdates(config.dailyUpdateTime || '0 9 * * *');
     }
-    
-    logger.info(`💰 Category Budget Service initialized`);
+
+    logger.info(`💰 Category Budget Service initialized (${this.usePostgres ? 'PostgreSQL' : 'SQLite'} mode)`);
     logger.info(`   🛒 Groceries: $${this.budgets.groceries}/week`);
     logger.info(`   🍽️  Dining Out: $${this.budgets.dining}/week`);
     logger.info(`   💵 Other: $${this.budgets.other}/week`);
@@ -117,25 +129,33 @@ export class CategoryBudgetService {
   /**
    * Get current week's spending by category
    */
-  private getCurrentWeekSpending(): {
+  private async getCurrentWeekSpending(): Promise<{
     groceries: { total: number; transactions: any[] };
     dining: { total: number; transactions: any[] };
     other: { total: number; transactions: any[] };
     work: { total: number; transactions: any[] };
     startDate: string;
     endDate: string;
-  } {
+  }> {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - daysToMonday);
     startOfWeek.setHours(0, 0, 0, 0);
-    
+
     const startDate = startOfWeek.toISOString().split('T')[0];
     const endDate = now.toISOString().split('T')[0];
-    
-    const transactions = this.db.getTransactionsByDateRange(startDate, endDate);
+
+    // Get transactions from appropriate database
+    let transactions: any[];
+    if (this.usePostgres && this.postgresDb) {
+      transactions = await this.postgresDb.getTransactionsByDateRange(startDate, endDate);
+    } else if (this.sqliteDb) {
+      transactions = this.sqliteDb.getTransactionsByDateRange(startDate, endDate);
+    } else {
+      transactions = [];
+    }
     
     // Filter to actual spending
     // IMPORTANT: Credit cards use positive amounts for purchases, checking uses negative
@@ -188,8 +208,8 @@ export class CategoryBudgetService {
   /**
    * Get budget status for all categories
    */
-  getBudgetStatus() {
-    const spending = this.getCurrentWeekSpending();
+  async getBudgetStatus() {
+    const spending = await this.getCurrentWeekSpending();
     const now = new Date();
     const dayOfWeek = now.getDay();
     const daysIntoWeek = dayOfWeek === 0 ? 7 : dayOfWeek;
@@ -229,7 +249,7 @@ export class CategoryBudgetService {
    * Check and send threshold alerts for all categories
    */
   private async checkThresholdAlerts(): Promise<void> {
-    const status = this.getBudgetStatus();
+    const status = await this.getBudgetStatus();
     
     // Check each category
     for (const [category, data] of Object.entries(status)) {
@@ -337,8 +357,8 @@ export class CategoryBudgetService {
     try {
       const channel = await this.discordClient.channels.fetch(this.channelId) as TextChannel;
       if (!channel || !channel.isTextBased()) return;
-      
-      const status = this.getBudgetStatus();
+
+      const status = await this.getBudgetStatus();
       
       // Overall status
       const totalBudget = this.budgets.groceries + this.budgets.dining + this.budgets.other;

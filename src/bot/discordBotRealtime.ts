@@ -14,10 +14,12 @@ import {
 import { BotConfig } from '../types';
 import { logger } from '../utils/logger';
 import { RealtimeVoiceReceiver } from './realtimeVoiceReceiver';
-import { CloudDeploymentService } from '../services/cloudDeployment';
+import { HetznerDeploymentService } from '../services/hetznerDeployment';
+import { ClaudeContainerService } from '../services/claudeContainerService';
 import { SubAgentManager } from '../agents/subAgentManager';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
 import { DatabaseService } from '../services/database';
+import { PostgresDatabaseService } from '../services/postgresDatabaseService';
 import { ChannelNotifier } from '../services/channelNotifier';
 import { DirectCommandExecutor } from '../services/directCommandExecutor';
 
@@ -31,9 +33,11 @@ export class DiscordBotRealtime {
   private realtimeReceivers: Map<string, RealtimeVoiceReceiver> = new Map();
   private orchestratorUrl: string;
   private orchestratorApiKey: string;
-  private cloudDeployment: CloudDeploymentService;
+  private hetznerDeployment: HetznerDeploymentService;
+  private claudeContainer: ClaudeContainerService;
   private subAgentManager: SubAgentManager;
-  private db: DatabaseService;
+  private db: DatabaseService | null = null;
+  private pgDb: PostgresDatabaseService | null = null; // Self-hosted PostgreSQL for logging
   private channelNotifier: ChannelNotifier;
   private activeVoiceConnections: Map<string, any> = new Map(); // Track voice receivers by guildId for task announcements
 
@@ -54,16 +58,42 @@ export class DiscordBotRealtime {
     this.orchestratorUrl = config.orchestratorUrl;
     this.orchestratorApiKey = config.orchestratorApiKey;
 
-    // Initialize Cloud Deployment Service
-    const gcpProjectId = process.env.GCP_PROJECT_ID || 'agentflow-discord-bot';
-    const gcpRegion = process.env.GCP_REGION || 'us-central1';
-    this.cloudDeployment = new CloudDeploymentService(gcpProjectId, gcpRegion);
+    // Initialize Hetzner Deployment Service
+    const hetznerIp = process.env.HETZNER_SERVER_IP || '178.156.198.233';
+    const hetznerUser = process.env.HETZNER_SSH_USER || 'root';
+    this.hetznerDeployment = new HetznerDeploymentService(hetznerIp, hetznerUser);
+
+    // Initialize Claude Container Service for remote Claude Code execution
+    this.claudeContainer = new ClaudeContainerService({
+      serverIp: hetznerIp,
+      sshUser: hetznerUser,
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+    });
 
     // Initialize Sub-Agent Manager
     this.subAgentManager = new SubAgentManager(config);
 
-    // Initialize database (uses SQLite for conversation history)
-    this.db = getSQLiteDatabase();
+    // Initialize database for conversation history and logging
+    if (isUsingPostgres()) {
+      // Self-hosted PostgreSQL on Hetzner VPS - full logging enabled!
+      try {
+        this.pgDb = getAgentFlowDatabase();
+        logger.info('🐘 DiscordBotRealtime: PostgreSQL database initialized (full logging enabled)');
+      } catch (e) {
+        logger.error('❌ DiscordBotRealtime: PostgreSQL not available!', e);
+      }
+    } else if (!isUsingSupabase()) {
+      // Local SQLite for development
+      try {
+        this.db = getSQLiteDatabase();
+        logger.info('📦 DiscordBotRealtime: SQLite database initialized');
+      } catch (e) {
+        logger.warn('⚠️  DiscordBotRealtime: SQLite not available, conversation history disabled');
+      }
+    } else {
+      logger.info('📦 DiscordBotRealtime: Running in Supabase mode (local conversation history disabled)');
+    }
 
     this.client = new Client({
       intents: [
@@ -102,7 +132,7 @@ export class DiscordBotRealtime {
             // 🔥 CRITICAL FIX: Save task output to database so voice agent can see it!
             // Get guild ID from channel
             if ('guild' in channel && channel.guild) {
-              this.db.saveMessage({
+              await this.saveMessageToDb({
                 guildId: channel.guild.id,
                 channelId: channelId,
                 userId: this.client.user!.id,
@@ -193,7 +223,7 @@ export class DiscordBotRealtime {
 
       // Save text message to database
       if (message.guild) {
-        this.db.saveMessage({
+        await this.saveMessageToDb({
           guildId: message.guild.id,
           channelId: message.channel.id,
           userId: message.author.id,
@@ -264,6 +294,73 @@ export class DiscordBotRealtime {
         }
       }
     });
+  }
+
+  /**
+   * Save a message to the appropriate database (PostgreSQL or SQLite)
+   */
+  private async saveMessageToDb(data: {
+    guildId: string;
+    channelId: string;
+    userId: string;
+    username?: string;
+    message: string;
+    messageType?: string;
+    metadata?: any;
+    timestamp?: Date; // Optional, used by SQLite
+  }): Promise<void> {
+    try {
+      if (this.pgDb) {
+        // Use self-hosted PostgreSQL (full logging)
+        await this.pgDb.saveConversation({
+          guildId: data.guildId,
+          channelId: data.channelId,
+          userId: data.userId,
+          username: data.username,
+          message: data.message,
+          messageType: data.messageType || 'text',
+          metadata: data.metadata
+        });
+      } else if (this.db) {
+        // Fallback to SQLite - map messageType to valid values
+        const validType = (data.messageType === 'voice' || data.messageType === 'agent_response') 
+          ? data.messageType 
+          : 'text';
+        await this.db.saveMessage({
+          guildId: data.guildId,
+          channelId: data.channelId,
+          userId: data.userId,
+          username: data.username || 'unknown',
+          message: data.message,
+          messageType: validType as 'voice' | 'text' | 'agent_response',
+          timestamp: data.timestamp || new Date()
+        });
+      }
+      // If no database available, just skip silently
+    } catch (error) {
+      logger.error('Failed to save message to database:', error);
+    }
+  }
+
+  /**
+   * Log agent activity to the database
+   */
+  private async logAgentActivity(data: {
+    agentId: string;
+    taskId?: string;
+    guildId: string;
+    channelId: string;
+    logType: 'info' | 'warning' | 'error' | 'success' | 'step' | 'tool_call' | 'tool_result';
+    message: string;
+    details?: any;
+  }): Promise<void> {
+    try {
+      if (this.pgDb) {
+        await this.pgDb.logAgentActivity(data);
+      }
+    } catch (error) {
+      logger.error('Failed to log agent activity:', error);
+    }
   }
 
   private async handleHelpCommand(message: Message): Promise<void> {
@@ -614,15 +711,15 @@ ${statusEmoji} **Task Status**
       receiver.setContext(guildId, channelId);
 
       // Get recent conversation history and send to agent
-      const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+      const conversationContext = this.db?.getConversationContext(guildId, channelId, 20);
       if (conversationContext && conversationContext.trim().length > 0) {
         logger.info('[Voice Setup] Sending recent conversation context to agent');
         // We'll send this after connection is established
       }
 
       // Set up message callback to save to database
-      receiver.onMessage((userId: string, username: string, msg: string, isBot: boolean) => {
-        this.db.saveMessage({
+      receiver.onMessage(async (userId: string, username: string, msg: string, isBot: boolean) => {
+        await this.saveMessageToDb({
           guildId,
           channelId,
           userId,
@@ -635,7 +732,7 @@ ${statusEmoji} **Task Status**
 
       // Set up conversation refresh callback so voice agent can get latest messages
       receiver.setConversationRefreshCallback((gId: string, cId: string) => {
-        return this.db.getConversationContext(gId, cId, 20);
+        return this.db?.getConversationContext(gId, cId, 20) || '';
       });
 
       // Set up Discord message handler for transcription/response notifications
@@ -881,7 +978,7 @@ ${statusEmoji} **Task Status**
         await message.reply(directResult.response!);
 
         // Save to database
-        this.db.saveMessage({
+        await this.saveMessageToDb({
           guildId: message.guild.id,
           channelId: message.channel.id,
           userId: this.client.user!.id,
@@ -902,7 +999,7 @@ ${statusEmoji} **Task Status**
       }
 
       // Get conversation context from database for continuity
-      const conversationContext = this.db.getConversationContext(
+      const conversationContext = this.db?.getConversationContext(
         message.guild.id,
         message.channel.id,
         20 // Last 20 messages
@@ -944,7 +1041,7 @@ ${statusEmoji} **Task Status**
         logger.info(`Response from orchestrator for text message`);
 
         // Save bot response to database
-        this.db.saveMessage({
+        await this.saveMessageToDb({
           guildId: message.guild.id,
           channelId: message.channel.id,
           userId: this.client.user!.id,
@@ -1031,29 +1128,28 @@ ${statusEmoji} **Task Status**
       }
     }
 
-    // Handle cloud deployment functions
-    if (name === 'deploy_to_cloud_run') {
+    // Handle Hetzner deployment functions
+    if (name === 'deploy_to_hetzner') {
       try {
         // Set up deployment notification callback
-        this.cloudDeployment.setNotificationCallback(async (event) => {
+        this.hetznerDeployment.setNotificationCallback(async (event) => {
           await this.channelNotifier.notifyDeployment(guildId, channelId, event);
         });
 
-        const result = await this.cloudDeployment.deployToCloudRun({
-          projectId: process.env.GCP_PROJECT_ID || 'agentflow-discord-bot',
-          region: process.env.GCP_REGION || 'us-central1',
+        const result = await this.hetznerDeployment.deployToHetzner({
           serviceName: args.service_name,
-          imageName: args.image_name,
+          imageName: args.image_name || args.service_name,
           buildContext: args.build_context || '.',
-          envVars: args.env_vars || {},
-          claudeApiKey: process.env.ANTHROPIC_API_KEY
+          port: args.port || 8080,
+          envVars: args.env_vars || {}
         });
 
         if (result.success) {
           return {
             success: true,
-            message: `Successfully deployed to Cloud Run! Service URL: ${result.serviceUrl}`,
+            message: `Successfully deployed to Hetzner VPS! Service URL: ${result.serviceUrl}`,
             serviceUrl: result.serviceUrl,
+            containerId: result.containerId,
             logs: result.logs
           };
         } else {
@@ -1063,7 +1159,7 @@ ${statusEmoji} **Task Status**
           };
         }
       } catch (error) {
-        logger.error('Cloud deployment failed', error);
+        logger.error('Hetzner deployment failed', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -1071,18 +1167,18 @@ ${statusEmoji} **Task Status**
       }
     }
 
-    if (name === 'list_cloud_services') {
+    if (name === 'list_containers') {
       try {
-        const services = await this.cloudDeployment.listServices();
+        const containers = await this.hetznerDeployment.listContainers();
         return {
           success: true,
-          message: services.length > 0
-            ? `Found ${services.length} service(s): ${services.join(', ')}`
-            : 'No services found',
-          services
+          message: containers.length > 0
+            ? `Found ${containers.length} container(s)`
+            : 'No containers found',
+          containers
         };
       } catch (error) {
-        logger.error('Failed to list services', error);
+        logger.error('Failed to list containers', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -1090,10 +1186,10 @@ ${statusEmoji} **Task Status**
       }
     }
 
-    if (name === 'get_service_logs') {
+    if (name === 'get_container_logs') {
       try {
-        const logs = await this.cloudDeployment.getServiceLogs(
-          args.service_name,
+        const logs = await this.hetznerDeployment.getContainerLogs(
+          args.container_name,
           args.limit || 50
         );
         return {
@@ -1102,7 +1198,7 @@ ${statusEmoji} **Task Status**
           logs
         };
       } catch (error) {
-        logger.error('Failed to get service logs', error);
+        logger.error('Failed to get container logs', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -1110,22 +1206,262 @@ ${statusEmoji} **Task Status**
       }
     }
 
-    if (name === 'delete_cloud_service') {
+    if (name === 'delete_container') {
       try {
-        const success = await this.cloudDeployment.deleteService(args.service_name);
+        const success = await this.hetznerDeployment.deleteContainer(args.container_name);
         if (success) {
           return {
             success: true,
-            message: `Successfully deleted service: ${args.service_name}`
+            message: `Successfully deleted container: ${args.container_name}`
           };
         } else {
           return {
             success: false,
-            error: `Failed to delete service: ${args.service_name}`
+            error: `Failed to delete container: ${args.container_name}`
           };
         }
       } catch (error) {
-        logger.error('Failed to delete service', error);
+        logger.error('Failed to delete container', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    // ========================================
+    // Claude Code Container Tools
+    // ========================================
+
+    if (name === 'spawn_claude_agent') {
+      try {
+        logger.info(`🤖 Spawning Claude Code container for task: ${args.task}`);
+
+        // Check if image exists, build if needed
+        const imageExists = await this.claudeContainer.imageExists();
+        if (!imageExists) {
+          logger.info('Building Claude Code Docker image...');
+          await this.channelNotifier.sendMessage(guildId, channelId,
+            '🔨 **Building Claude Code Image**\nFirst-time setup, this may take a few minutes...'
+          );
+          const buildSuccess = await this.claudeContainer.buildImage();
+          if (!buildSuccess) {
+            return {
+              success: false,
+              error: 'Failed to build Claude Code Docker image. Check VPS logs for details.'
+            };
+          }
+        }
+
+        // Spawn the agent with notification handler
+        const { containerId, streamPromise } = await this.claudeContainer.spawnAgent(
+          args.task,
+          {
+            workspacePath: args.workspace_path,
+            timeout: args.timeout,
+            notificationHandler: async (msg) => {
+              await this.channelNotifier.sendMessage(guildId, channelId, msg);
+            }
+          }
+        );
+
+        // Monitor completion in background
+        streamPromise.then(async (result) => {
+          const emoji = result.success ? '✅' : '❌';
+          await this.channelNotifier.sendMessage(guildId, channelId,
+            `${emoji} **Claude Agent ${result.success ? 'Completed' : 'Failed'}**\n` +
+            `Container: \`${containerId}\`\n` +
+            `Duration: ${(result.duration / 1000).toFixed(1)}s\n` +
+            `Exit Code: ${result.exitCode}`
+          );
+        }).catch(async (error) => {
+          await this.channelNotifier.sendMessage(guildId, channelId,
+            `❌ **Claude Agent Error**\n\`${containerId}\`: ${error.message}`
+          );
+        });
+
+        return {
+          success: true,
+          message: `Claude Code agent spawned successfully`,
+          containerId,
+          task: args.task,
+          status: 'running',
+          note: 'Use get_claude_status to monitor progress'
+        };
+      } catch (error) {
+        logger.error('Failed to spawn Claude agent', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'get_claude_status') {
+      try {
+        const status = await this.claudeContainer.getAgentStatus(args.container_id);
+        return {
+          success: true,
+          containerId: args.container_id,
+          ...status
+        };
+      } catch (error) {
+        logger.error(`Failed to get Claude agent status: ${args.container_id}`, error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'get_claude_output') {
+      try {
+        const logs = await this.claudeContainer.getAgentLogs(args.container_id, args.lines || 100);
+        return {
+          success: true,
+          containerId: args.container_id,
+          lineCount: logs.length,
+          output: logs.join('\n')
+        };
+      } catch (error) {
+        logger.error(`Failed to get Claude agent output: ${args.container_id}`, error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'stop_claude_agent') {
+      try {
+        const success = await this.claudeContainer.stopAgent(args.container_id);
+        if (success) {
+          return {
+            success: true,
+            message: `Successfully stopped Claude agent: ${args.container_id}`
+          };
+        } else {
+          return {
+            success: false,
+            error: `Failed to stop Claude agent: ${args.container_id}`
+          };
+        }
+      } catch (error) {
+        logger.error(`Failed to stop Claude agent: ${args.container_id}`, error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'list_claude_agents') {
+      try {
+        const agents = await this.claudeContainer.listAgents();
+        return {
+          success: true,
+          message: agents.length > 0
+            ? `Found ${agents.length} Claude Code agent(s)`
+            : 'No Claude Code agents found',
+          agents
+        };
+      } catch (error) {
+        logger.error('Failed to list Claude agents', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    // ========================================
+    // GitHub / Workspace Management Tools
+    // ========================================
+
+    if (name === 'clone_repo') {
+      try {
+        const result = await this.claudeContainer.cloneRepo(args.repo_url, {
+          workspaceName: args.workspace_name,
+          branch: args.branch
+        });
+
+        if (result.success) {
+          await this.channelNotifier.sendMessage(guildId, channelId,
+            `📦 **Repository Cloned**\n\`${args.repo_url}\`\nWorkspace: \`${result.workspacePath}\``
+          );
+        }
+
+        return result;
+      } catch (error) {
+        logger.error('Failed to clone repository', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'create_workspace') {
+      try {
+        const result = await this.claudeContainer.createWorkspace(args.workspace_name, {
+          initGit: true,
+          createGitHubRepo: args.create_github_repo,
+          repoVisibility: args.repo_visibility || 'private'
+        });
+
+        if (result.success) {
+          let msg = `📁 **Workspace Created**\nPath: \`${result.workspacePath}\``;
+          if (result.repoUrl) {
+            msg += `\nGitHub: ${result.repoUrl}`;
+          }
+          await this.channelNotifier.sendMessage(guildId, channelId, msg);
+        }
+
+        return result;
+      } catch (error) {
+        logger.error('Failed to create workspace', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'list_workspaces') {
+      try {
+        const workspaces = await this.claudeContainer.listWorkspaces();
+        return {
+          success: true,
+          message: workspaces.length > 0
+            ? `Found ${workspaces.length} workspace(s)`
+            : 'No workspaces found',
+          workspaces
+        };
+      } catch (error) {
+        logger.error('Failed to list workspaces', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
+    if (name === 'push_workspace') {
+      try {
+        const result = await this.claudeContainer.pushWorkspace(args.workspace_name, {
+          commitMessage: args.commit_message,
+          branch: args.branch || 'main'
+        });
+
+        if (result.success) {
+          await this.channelNotifier.sendMessage(guildId, channelId,
+            `🚀 **Changes Pushed**\nWorkspace: \`${args.workspace_name}\`\nBranch: \`${args.branch || 'main'}\``
+          );
+        }
+
+        return result;
+      } catch (error) {
+        logger.error('Failed to push workspace', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -1139,7 +1475,7 @@ ${statusEmoji} **Task Status**
         logger.info(`🤖 Spawning autonomous agent for task: ${args.task_description}`);
 
         // Get conversation context from database
-        const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+        const conversationContext = this.db?.getConversationContext(guildId, channelId, 20);
 
         // Enhance task description with context
         let enhancedTaskDescription = args.task_description;
@@ -1168,15 +1504,27 @@ ${statusEmoji} **Task Status**
           userId
         );
 
-        // Create agent task in database
-        this.db.createAgentTask({
+        // Create agent task in PostgreSQL database
+        if (this.pgDb) {
+          await this.pgDb.createAgentTask({
+            agentId: sessionId,
+            guildId,
+            channelId,
+            userId,
+            taskDescription: args.task_description,
+            status: 'running'
+          });
+          logger.info(`📝 Agent task created in PostgreSQL: ${sessionId}`);
+        }
+
+        // Log agent start activity
+        await this.logAgentActivity({
           agentId: sessionId,
           guildId,
           channelId,
-          userId,
-          taskDescription: args.task_description,
-          status: 'running',
-          startedAt: new Date()
+          logType: 'info',
+          message: `Agent started: ${args.task_description}`,
+          details: { userId, requirements: args.requirements }
         });
 
         // Stream agent output to channel
@@ -1189,7 +1537,17 @@ ${statusEmoji} **Task Status**
 
         // Listen to agent events - track listeners for cleanup
         const stepStartedHandler = (step: any) => {
-          // Only notify on every 5th step or important milestones to reduce spam
+          // Log every step to PostgreSQL for full audit trail
+          this.logAgentActivity({
+            agentId: sessionId,
+            guildId,
+            channelId,
+            logType: 'step',
+            message: `Step ${step.step}: ${step.action || 'Processing'}`,
+            details: { step: step.step, totalSteps: step.totalSteps, action: step.action }
+          }).catch((err) => logger.error('Failed to log agent step', err));
+
+          // Only notify Discord on every 5th step or important milestones to reduce spam
           if (step.step % 5 === 0 || step.step === 1 || step.step === step.totalSteps) {
             this.channelNotifier.notifyAgentProgress(guildId, channelId, {
               agentId: sessionId,
@@ -1203,12 +1561,32 @@ ${statusEmoji} **Task Status**
 
         const taskCompletedHandler = async (result: any) => {
           try {
-            // Update database
-            this.db.updateAgentTask(sessionId, {
-              status: result.success ? 'completed' : 'failed',
-              completedAt: new Date(),
-              result: JSON.stringify(result),
-              error: result.success ? undefined : result.error?.message
+            // Update PostgreSQL database
+            if (this.pgDb) {
+              await this.pgDb.updateAgentTask(sessionId, {
+                status: result.success ? 'completed' : 'failed',
+                completedAt: new Date(),
+                result: JSON.stringify(result),
+                error: result.success ? undefined : result.error?.message,
+                iterations: result.steps?.length || 0
+              });
+              logger.info(`📝 Agent task updated in PostgreSQL: ${sessionId} -> ${result.success ? 'completed' : 'failed'}`);
+            }
+
+            // Log completion activity
+            await this.logAgentActivity({
+              agentId: sessionId,
+              guildId,
+              channelId,
+              logType: result.success ? 'success' : 'error',
+              message: result.success
+                ? `Task completed successfully in ${(result.duration / 1000).toFixed(2)}s`
+                : `Task failed: ${result.error?.message || 'Unknown error'}`,
+              details: {
+                duration: result.duration,
+                steps: result.steps?.length,
+                testResults: result.testResults
+              }
             });
 
             // Post completion notification
@@ -1235,7 +1613,17 @@ ${statusEmoji} **Task Status**
         };
 
         const warningHandler = (warning: any) => {
-          // Only log critical warnings to reduce spam
+          // Log ALL warnings to PostgreSQL for audit trail
+          this.logAgentActivity({
+            agentId: sessionId,
+            guildId,
+            channelId,
+            logType: 'warning',
+            message: warning.message,
+            details: { type: warning.type, data: warning.data }
+          }).catch((err) => logger.error('Failed to log warning to DB', err));
+
+          // Only notify Discord for critical warnings to reduce spam
           if (warning.type === 'critical' || warning.type === 'security') {
             this.channelNotifier.notifyAgentLog(guildId, channelId, {
               agentId: sessionId,
@@ -1250,6 +1638,17 @@ ${statusEmoji} **Task Status**
         };
 
         const errorHandler = (error: any) => {
+          // Log error to PostgreSQL
+          this.logAgentActivity({
+            agentId: sessionId,
+            guildId,
+            channelId,
+            logType: 'error',
+            message: error.message,
+            details: { stack: error.stack, code: error.code }
+          }).catch((err) => logger.error('Failed to log error to DB', err));
+
+          // Notify Discord
           this.channelNotifier.notifyAgentLog(guildId, channelId, {
             agentId: sessionId,
             logType: 'error',
@@ -1354,6 +1753,27 @@ ${statusEmoji} **Task Status**
         logger.info(`📍 Channel ID for notifications: ${channelId}`);
         logger.info(`👤 User ID: ${userId}, Guild ID: ${guildId}`);
 
+        // Log task start to PostgreSQL
+        const taskId = `voice_task_${Date.now()}`;
+        if (this.pgDb) {
+          await this.pgDb.createAgentTask({
+            agentId: taskId,
+            guildId,
+            channelId,
+            userId,
+            taskDescription: args.task_description,
+            status: 'pending'
+          });
+          await this.pgDb.logAgentActivity({
+            agentId: taskId,
+            guildId,
+            channelId,
+            logType: 'info',
+            message: `Voice task initiated: ${args.task_description}`,
+            details: { taskType: args.task_type, parameters: args.parameters }
+          });
+        }
+
         // Send initial notification to Discord channel
         try {
           logger.info(`🔍 Attempting to fetch channel: ${channelId}`);
@@ -1367,7 +1787,7 @@ ${statusEmoji} **Task Status**
             logger.info(`✅ Task start message sent successfully!`);
 
             // Save task start to database so voice agent can see it
-            this.db.saveMessage({
+            await this.saveMessageToDb({
               guildId,
               channelId,
               userId: this.client.user!.id,
@@ -1394,9 +1814,14 @@ ${statusEmoji} **Task Status**
 
         // Execute task asynchronously and send results to Discord
         (async () => {
+          // Update task status to running
+          if (this.pgDb) {
+            await this.pgDb.updateAgentTask(taskId, { status: 'running' });
+          }
+
           try {
             // Get conversation context from database for continuity
-            const conversationContext = this.db.getConversationContext(guildId, channelId, 20);
+            const conversationContext = this.db?.getConversationContext(guildId, channelId, 20);
 
             // Send to Claude orchestrator
             const response = await fetch(`${this.orchestratorUrl}/command`, {
@@ -1427,6 +1852,23 @@ ${statusEmoji} **Task Status**
             if (result.success) {
               logger.info(`✅ Task completed: ${args.task_description}`);
 
+              // Update PostgreSQL task status
+              if (this.pgDb) {
+                await this.pgDb.updateAgentTask(taskId, {
+                  status: 'completed',
+                  result: result.message || 'Task completed',
+                  completedAt: new Date()
+                });
+                await this.pgDb.logAgentActivity({
+                  agentId: taskId,
+                  guildId,
+                  channelId,
+                  logType: 'success',
+                  message: `Task completed: ${args.task_description}`,
+                  details: { result: result.message }
+                });
+              }
+
               // Send completion notification to Discord channel
               try {
                 const channel = await this.client.channels.fetch(channelId);
@@ -1453,7 +1895,7 @@ ${statusEmoji} **Task Status**
                   }
 
                   // CRITICAL: Save task result to database so voice agent can see it!
-                  this.db.saveMessage({
+                  await this.saveMessageToDb({
                     guildId,
                     channelId,
                     userId: this.client.user!.id,
@@ -1473,18 +1915,35 @@ ${statusEmoji} **Task Status**
             } else {
               logger.error(`❌ Task failed: ${args.task_description}`);
 
+              // Update PostgreSQL task status
+              if (this.pgDb) {
+                await this.pgDb.updateAgentTask(taskId, {
+                  status: 'failed',
+                  error: result.error || 'Task execution failed',
+                  completedAt: new Date()
+                });
+                await this.pgDb.logAgentActivity({
+                  agentId: taskId,
+                  guildId,
+                  channelId,
+                  logType: 'error',
+                  message: `Task failed: ${args.task_description}`,
+                  details: { error: result.error }
+                });
+              }
+
               // Send failure notification to Discord channel
               try {
                 const channel = await this.client.channels.fetch(channelId);
                 if (channel && channel.isTextBased() && 'send' in channel) {
                   const failureMessage = `❌ **Task Failed**\n${result.error || 'Task execution failed'}`;
                   await channel.send(failureMessage);
-                  
+
                   // VOICE UPDATE: Announce failure
                   this.speakTaskFailure(guildId, channelId, userId, result.error || 'Task execution failed');
 
                   // Save failure to database so voice agent can see it
-                  this.db.saveMessage({
+                  await this.saveMessageToDb({
                     guildId,
                     channelId,
                     userId: this.client.user!.id,
@@ -1502,6 +1961,23 @@ ${statusEmoji} **Task Status**
           } catch (error) {
             logger.error('Failed to execute task via orchestrator', error);
 
+            // Update PostgreSQL task status
+            if (this.pgDb) {
+              await this.pgDb.updateAgentTask(taskId, {
+                status: 'failed',
+                error: error instanceof Error ? error.message : 'Unknown error',
+                completedAt: new Date()
+              });
+              await this.pgDb.logAgentActivity({
+                agentId: taskId,
+                guildId,
+                channelId,
+                logType: 'error',
+                message: `Task exception: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                details: { stack: error instanceof Error ? error.stack : undefined }
+              });
+            }
+
             // Send error notification to Discord channel
             try {
               const channel = await this.client.channels.fetch(channelId);
@@ -1510,7 +1986,7 @@ ${statusEmoji} **Task Status**
                 await channel.send(errorMessage);
 
                 // Save error to database so voice agent can see it
-                this.db.saveMessage({
+                await this.saveMessageToDb({
                   guildId,
                   channelId,
                   userId: this.client.user!.id,
@@ -1633,6 +2109,8 @@ ${statusEmoji} **Task Status**
   }
 
   async stop(): Promise<void> {
+    logger.info('🛑 Discord bot stopping...');
+
     // Send shutdown notification if configured
     if (this.config.systemNotificationGuildId && this.config.systemNotificationChannelId) {
       await this.sendSystemNotification({
@@ -1654,8 +2132,17 @@ ${statusEmoji} **Task Status**
     this.realtimeReceivers.clear();
     this.activeVoiceConnections.clear();
 
+    // Shutdown Claude Container Service (SSH pool, running containers)
+    if (this.claudeContainer) {
+      try {
+        await this.claudeContainer.shutdown();
+      } catch (error) {
+        logger.warn('Error during ClaudeContainerService shutdown:', error);
+      }
+    }
+
     await this.client.destroy();
-    logger.info('Discord bot stopped');
+    logger.info('✅ Discord bot stopped');
   }
 
   /**

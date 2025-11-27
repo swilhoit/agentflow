@@ -1,7 +1,8 @@
 import { ToolBasedAgent, AgentTask, AgentResult } from '../agents/toolBasedAgent';
 import { TrelloService } from '../services/trello';
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from '../services/databaseFactory';
+import { PostgresDatabaseService } from '../services/postgresDatabaseService';
 
 export interface ManagedTask {
   taskId: string;
@@ -51,11 +52,17 @@ export class TaskManager {
   private trelloService?: TrelloService;
   private notificationHandlers: Map<string, (channelId: string, message: string) => Promise<void>> = new Map();
   private maxConcurrentTasks: number;
+  private pgDb: PostgresDatabaseService | null = null;
 
   constructor(anthropicApiKey: string, maxConcurrentTasks: number = 10, trelloService?: TrelloService) {
     this.anthropicApiKey = anthropicApiKey;
     this.maxConcurrentTasks = maxConcurrentTasks;
     this.trelloService = trelloService;
+    
+    // Initialize PostgreSQL if configured
+    if (isUsingPostgres()) {
+      this.pgDb = getAgentFlowDatabase();
+    }
   }
 
   /**
@@ -84,19 +91,44 @@ export class TaskManager {
     logger.info(`🚀 Starting new task: ${taskId} in channel ${task.context.channelId}`);
 
     // PERSISTENCE: Save user command to database
-    try {
-      const db = getSQLiteDatabase();
-      
-      // Save user message
-      db.saveMessage({
-        guildId: task.context.guildId,
-        channelId: task.context.channelId,
-        userId: task.context.userId,
-        username: 'User', // Placeholder until context has username
-        message: task.command,
-        messageType: 'voice', // Assuming voice for now, or update context to include type
-        timestamp: new Date()
-      });
+    if (this.pgDb) {
+      // Use PostgreSQL (self-hosted)
+      try {
+        await this.pgDb.saveConversation({
+          guildId: task.context.guildId,
+          channelId: task.context.channelId,
+          userId: task.context.userId,
+          username: 'User',
+          message: task.command,
+          messageType: 'text'
+        });
+        
+        await this.pgDb.createAgentTask({
+          agentId: taskId,
+          guildId: task.context.guildId,
+          channelId: task.context.channelId,
+          userId: task.context.userId,
+          taskDescription: description,
+          status: 'pending'
+        });
+      } catch (e) { 
+        logger.error('Failed to save task to PostgreSQL', e); 
+      }
+    } else if (!isUsingSupabase()) {
+      // Fallback to SQLite (local dev)
+      try {
+        const db = getSQLiteDatabase();
+        
+        // Save user message
+        db.saveMessage({
+          guildId: task.context.guildId,
+          channelId: task.context.channelId,
+          userId: task.context.userId,
+          username: 'User',
+          message: task.command,
+          messageType: 'voice',
+          timestamp: new Date()
+        });
 
       // Save initial task state to DB
       db.createAgentTask({
@@ -121,9 +153,13 @@ export class TaskManager {
       logger.error('Failed to persist message or load history:', error);
       // Continue without history if DB fails
     }
+    }
 
     // Create a new ToolBasedAgent instance for this task (full isolation!)
     const agent = new ToolBasedAgent(this.anthropicApiKey, this.trelloService);
+    
+    // Set task context for PostgreSQL logging
+    agent.setTaskContext(taskId, task.context.guildId, task.context.channelId);
 
     // Set up channel-specific notification handler
     const notificationHandler = this.notificationHandlers.get(notificationHandlerId);
@@ -201,9 +237,15 @@ export class TaskManager {
       logger.info(`▶️ Task ${taskId} started execution`);
 
       // PERSISTENCE: Update status
-      try {
-        getSQLiteDatabase().updateAgentTask(taskId, { status: 'running' });
-      } catch (e) { logger.error('Failed to update task status in DB', e); }
+      if (this.pgDb) {
+        try {
+          await this.pgDb.updateAgentTask(taskId, { status: 'running' });
+        } catch (e) { logger.error('Failed to update task status in PostgreSQL', e); }
+      } else if (!isUsingSupabase()) {
+        try {
+          getSQLiteDatabase().updateAgentTask(taskId, { status: 'running' });
+        } catch (e) { logger.error('Failed to update task status in SQLite', e); }
+      }
 
       const result = await agent.executeTask(task);
 
@@ -242,33 +284,64 @@ export class TaskManager {
       }
 
       // PERSISTENCE: Update completion status
-      try {
-        const db = getSQLiteDatabase();
-        db.updateAgentTask(taskId, {
-          status: managedTask.status,
-          completedAt: managedTask.completedAt,
-          result: JSON.stringify(result),
-          error: managedTask.error
-        });
-        
-        db.saveMessage({
-          guildId: task.context.guildId,
-          channelId: task.context.channelId,
-          userId: 'agent', // System ID
-          username: 'AgentFlow',
-          message: result.message || (result.success ? 'Task completed' : 'Task failed'),
-          messageType: 'agent_response',
-          timestamp: new Date(),
-          metadata: JSON.stringify({
-            taskId,
+      if (this.pgDb) {
+        try {
+          await this.pgDb.updateAgentTask(taskId, {
+            status: managedTask.status,
+            result: result.message || (result.success ? 'Task completed' : 'Task failed'),
+            error: managedTask.error,
             iterations: result.iterations,
             toolCalls: result.toolCalls,
-            success: result.success,
-            trelloCardUrl: managedTask.trelloCardUrl
-          })
-        });
-      } catch (error) {
-        logger.error('Failed to save agent response to DB:', error);
+            completedAt: managedTask.completedAt
+          });
+
+          await this.pgDb.saveConversation({
+            guildId: task.context.guildId,
+            channelId: task.context.channelId,
+            userId: 'agent',
+            username: 'AgentFlow',
+            message: result.message || (result.success ? 'Task completed' : 'Task failed'),
+            messageType: 'agent_response',
+            metadata: {
+              taskId,
+              iterations: result.iterations,
+              toolCalls: result.toolCalls,
+              success: result.success,
+              trelloCardUrl: managedTask.trelloCardUrl
+            }
+          });
+        } catch (error) {
+          logger.error('Failed to save agent response to PostgreSQL:', error);
+        }
+      } else if (!isUsingSupabase()) {
+        try {
+          const db = getSQLiteDatabase();
+          db.updateAgentTask(taskId, {
+            status: managedTask.status,
+            completedAt: managedTask.completedAt,
+            result: JSON.stringify(result),
+            error: managedTask.error
+          });
+
+          db.saveMessage({
+            guildId: task.context.guildId,
+            channelId: task.context.channelId,
+            userId: 'agent',
+            username: 'AgentFlow',
+            message: result.message || (result.success ? 'Task completed' : 'Task failed'),
+            messageType: 'agent_response',
+            timestamp: new Date(),
+            metadata: JSON.stringify({
+              taskId,
+              iterations: result.iterations,
+              toolCalls: result.toolCalls,
+              success: result.success,
+              trelloCardUrl: managedTask.trelloCardUrl
+            })
+          });
+        } catch (error) {
+          logger.error('Failed to save agent response to SQLite:', error);
+        }
       }
 
       logger.info(`${result.success ? '✅' : '❌'} Task ${taskId} ${managedTask.status}`);
@@ -285,13 +358,23 @@ export class TaskManager {
       }
 
       // PERSISTENCE: Update error status
-      try {
-        getSQLiteDatabase().updateAgentTask(taskId, {
-          status: 'failed',
-          completedAt: managedTask.completedAt,
-          error: managedTask.error
-        });
-      } catch (e) { logger.error('Failed to update task error in DB', e); }
+      if (this.pgDb) {
+        try {
+          await this.pgDb.updateAgentTask(taskId, {
+            status: 'failed',
+            completedAt: managedTask.completedAt,
+            error: managedTask.error
+          });
+        } catch (e) { logger.error('Failed to update task error in PostgreSQL', e); }
+      } else if (!isUsingSupabase()) {
+        try {
+          getSQLiteDatabase().updateAgentTask(taskId, {
+            status: 'failed',
+            completedAt: managedTask.completedAt,
+            error: managedTask.error
+          });
+        } catch (e) { logger.error('Failed to update task error in SQLite', e); }
+      }
 
       logger.error(`❌ Task ${taskId} failed with exception`, error);
     }
@@ -428,6 +511,34 @@ export class TaskManager {
    * Marks interrupted tasks as failed so they don't hang forever
    */
   async restoreTasks(): Promise<void> {
+    // PostgreSQL: Mark any running tasks as failed (they were interrupted)
+    if (this.pgDb) {
+      try {
+        const activeTasks = await this.pgDb.getAllActiveAgentTasks();
+        if (activeTasks.length > 0) {
+          logger.info(`🔄 Found ${activeTasks.length} interrupted tasks - marking as failed`);
+          for (const task of activeTasks) {
+            await this.pgDb.updateAgentTask(task.agent_id, {
+              status: 'failed',
+              error: 'Task interrupted by system restart',
+              completedAt: new Date()
+            });
+          }
+        }
+        logger.info('✅ Task restoration complete (PostgreSQL)');
+        return;
+      } catch (e) {
+        logger.error('Failed to restore tasks from PostgreSQL:', e);
+        return;
+      }
+    }
+    
+    if (isUsingSupabase()) {
+      logger.info('🔄 Task restoration skipped (Supabase mode - not yet implemented)');
+      return;
+    }
+    
+    // SQLite fallback
     try {
       const db = getSQLiteDatabase();
       const activeTasks = db.getAllActiveAgentTasks();

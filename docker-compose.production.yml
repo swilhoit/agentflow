@@ -1,0 +1,143 @@
+services:
+  # PostgreSQL Database (Self-hosted for AgentFlow)
+  agentflow-db:
+    image: postgres:16-alpine
+    container_name: agentflow-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=agentflow
+      - POSTGRES_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
+      - POSTGRES_DB=agentflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - agentflow-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentflow -d agentflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Main AgentFlow Bot (Voice-Driven AI Coding)
+  agentflow-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentflow-bot
+    restart: unless-stopped
+    depends_on:
+      agentflow-db:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+      - DATABASE_TYPE=postgres
+      - AGENTFLOW_DB_HOST=agentflow-db
+      - AGENTFLOW_DB_PORT=5432
+      - AGENTFLOW_DB_USER=agentflow
+      - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
+      - AGENTFLOW_DB_NAME=agentflow
+      # Server Monitor configuration - SSH to Docker host for monitoring
+      - HETZNER_SERVER_IP=172.17.0.1
+      - HETZNER_SSH_USER=root
+      - SERVER_MONITOR_CHANNEL_ID=1439836943264382976
+    env_file:
+      - .env
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./audio:/app/audio
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Mount SSH key for server monitoring (SSH to host)
+      - /root/.ssh/monitor_key:/root/.ssh/monitor_key:ro
+      - /root/.ssh/monitor_known_hosts:/root/.ssh/known_hosts:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agentflow-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Atlas Bot (Market Intelligence)
+  agentflow-atlas:
+    build:
+      context: .
+      dockerfile: Dockerfile.atlas
+    container_name: agentflow-atlas
+    restart: unless-stopped
+    depends_on:
+      agentflow-db:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+      - DATABASE_TYPE=postgres
+      - AGENTFLOW_DB_HOST=agentflow-db
+      - AGENTFLOW_DB_PORT=5432
+      - AGENTFLOW_DB_USER=agentflow
+      - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
+      - AGENTFLOW_DB_NAME=agentflow
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - agentflow-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Financial Advisor Bot (Personal Finance)
+  agentflow-advisor:
+    build:
+      context: .
+      dockerfile: Dockerfile.advisor
+    container_name: agentflow-advisor
+    restart: unless-stopped
+    depends_on:
+      agentflow-db:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+      - DATABASE_TYPE=postgres
+      - AGENTFLOW_DB_HOST=agentflow-db
+      - AGENTFLOW_DB_PORT=5432
+      - AGENTFLOW_DB_USER=agentflow
+      - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
+      - AGENTFLOW_DB_NAME=agentflow
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./teller_certificates:/app/teller_certificates:ro
+    networks:
+      - agentflow-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  agentflow-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  audio:
+  temp:
+  logs:
+  data:

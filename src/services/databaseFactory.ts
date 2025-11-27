@@ -2,15 +2,19 @@ import { DatabaseService } from './database';
 import { CloudDatabaseService } from './cloudDatabase';
 import { SupabaseDatabaseService } from './supabaseDatabase';
 import { UnifiedDatabaseService, getUnifiedDatabase } from './unifiedDatabase';
+import { PostgresDatabaseService, getPostgresDatabase } from './postgresDatabaseService';
 import { logger } from '../utils/logger';
 
 /**
  * Database Factory - Returns the appropriate database service based on configuration
- * Supports: Supabase (default for cloud), SQLite (local dev), Cloud SQL (legacy)
+ * Supports: Postgres (self-hosted), Supabase, SQLite (local dev), Cloud SQL (legacy)
  */
 
 // Track which database type is in use
-let currentDatabaseType: 'supabase' | 'sqlite' | 'cloudsql' = 'supabase';
+let currentDatabaseType: 'postgres' | 'supabase' | 'sqlite' | 'cloudsql' = 'supabase';
+
+// AgentFlow's dedicated PostgreSQL instance (for logging, tasks, etc.)
+let agentflowDbInstance: PostgresDatabaseService | null = null;
 
 export interface IDatabase {
   // Market data methods
@@ -135,11 +139,40 @@ export function getDatabase(): IDatabase {
     return databaseInstance;
   }
 
-  // Default to Supabase - only use SQLite if explicitly set
+  // Default to postgres for self-hosted AgentFlow database
   const databaseType = process.env.DATABASE_TYPE || 'supabase';
-  currentDatabaseType = databaseType as 'supabase' | 'sqlite' | 'cloudsql';
+  currentDatabaseType = databaseType as 'postgres' | 'supabase' | 'sqlite' | 'cloudsql';
 
-  if (databaseType === 'supabase') {
+  if (databaseType === 'postgres') {
+    // Self-hosted PostgreSQL on Hetzner VPS
+    logger.info('🐘 Initializing self-hosted PostgreSQL database...');
+    
+    // For market data, we still use Supabase (personal-finance shared db)
+    // But AgentFlow logging/tasks use local PostgreSQL
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (supabaseUrl && supabaseServiceKey) {
+      // Use Supabase for market data but initialize AgentFlow DB separately
+      databaseInstance = new SupabaseDatabaseService({
+        url: supabaseUrl,
+        serviceRoleKey: supabaseServiceKey,
+      });
+      logger.info('✅ Market data database (Supabase) initialized');
+    }
+    
+    // Initialize AgentFlow's dedicated PostgreSQL
+    agentflowDbInstance = getPostgresDatabase();
+    logger.info('✅ AgentFlow PostgreSQL database initialized');
+    logger.info(`   Host: ${process.env.AGENTFLOW_DB_HOST || 'localhost'}`);
+    
+    // If no Supabase, use a minimal wrapper
+    if (!databaseInstance) {
+      logger.warn('⚠️ No Supabase configured - market data features limited');
+      // Create a minimal database wrapper that delegates to PostgreSQL
+      databaseInstance = createPostgresWrapper(agentflowDbInstance);
+    }
+  } else if (databaseType === 'supabase') {
     // Check if Supabase credentials are configured
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -187,10 +220,69 @@ export function getDatabase(): IDatabase {
     databaseInstance = new SQLiteDatabaseWrapper(sqliteDb);
     logger.info('✅ SQLite database initialized');
   } else {
-    throw new Error(`Unknown DATABASE_TYPE: ${databaseType}. Valid options: 'supabase', 'cloudsql', 'sqlite'`);
+    throw new Error(`Unknown DATABASE_TYPE: ${databaseType}. Valid options: 'postgres', 'supabase', 'cloudsql', 'sqlite'`);
   }
 
   return databaseInstance;
+}
+
+/**
+ * Get the AgentFlow dedicated PostgreSQL database (for logging, tasks, etc.)
+ * This is separate from the market data database (Supabase)
+ */
+export function getAgentFlowDatabase(): PostgresDatabaseService | null {
+  if (agentflowDbInstance) {
+    return agentflowDbInstance;
+  }
+  
+  // Auto-initialize if DATABASE_TYPE is postgres
+  if (process.env.DATABASE_TYPE === 'postgres') {
+    agentflowDbInstance = getPostgresDatabase();
+    return agentflowDbInstance;
+  }
+  
+  return null;
+}
+
+/**
+ * Create a minimal IDatabase wrapper for PostgreSQL
+ */
+function createPostgresWrapper(db: PostgresDatabaseService): IDatabase {
+  return {
+    async saveMarketData(): Promise<number> {
+      logger.warn('Market data storage not available (no Supabase)');
+      return 0;
+    },
+    async saveMarketNews(): Promise<number | null> {
+      logger.warn('Market news storage not available (no Supabase)');
+      return null;
+    },
+    async saveWeeklyAnalysis(): Promise<number> {
+      logger.warn('Weekly analysis storage not available (no Supabase)');
+      return 0;
+    },
+    async getMarketDataByDateRange(): Promise<any[]> {
+      return [];
+    },
+    async getMarketNewsByDateRange(): Promise<any[]> {
+      return [];
+    },
+    async getLatestWeeklyAnalysis(): Promise<any | null> {
+      return null;
+    },
+    getAllActiveAgentTasks(): any[] {
+      // This will be async but we return empty for sync interface
+      logger.warn('getAllActiveAgentTasks: Use async getActiveAgentTasksAsync instead');
+      return [];
+    },
+    getFailedTasks(): any[] {
+      logger.warn('getFailedTasks: Use async getFailedTasksAsync instead');
+      return [];
+    },
+    async close(): Promise<void> {
+      await db.close();
+    }
+  };
 }
 
 /**
@@ -201,9 +293,16 @@ export function isUsingSupabase(): boolean {
 }
 
 /**
+ * Check if we're using self-hosted PostgreSQL
+ */
+export function isUsingPostgres(): boolean {
+  return currentDatabaseType === 'postgres';
+}
+
+/**
  * Get the current database type
  */
-export function getDatabaseType(): 'supabase' | 'sqlite' | 'cloudsql' {
+export function getDatabaseType(): 'postgres' | 'supabase' | 'sqlite' | 'cloudsql' {
   return currentDatabaseType;
 }
 

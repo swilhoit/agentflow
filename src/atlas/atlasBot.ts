@@ -9,7 +9,7 @@ import {
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../utils/logger';
 import { AtlasTools } from './atlasTools';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -23,7 +23,7 @@ export class AtlasBot {
   private anthropic: Anthropic;
   private tools: AtlasTools;
   private monitoredChannels: Set<string> = new Set();
-  private db: DatabaseService;
+  private db: DatabaseService | null = null;
 
   // Configuration
   private readonly BOT_NAME = 'Atlas';
@@ -146,9 +146,17 @@ Stay sharp. Stay global. 🌏`;
       ]
     });
 
-    // Initialize database
-    this.db = getSQLiteDatabase();
-    logger.info('🌍 Atlas database initialized');
+    // Initialize database (only for SQLite - Supabase handled separately)
+    if (!isUsingSupabase()) {
+      try {
+        this.db = getSQLiteDatabase();
+        logger.info('🌍 Atlas database initialized (SQLite)');
+      } catch (e) {
+        logger.warn('⚠️  Atlas running without local database');
+      }
+    } else {
+      logger.info('🌍 Atlas using Supabase - message logging disabled');
+    }
 
     // Initialize Anthropic
     this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
@@ -235,27 +243,28 @@ Stay sharp. Stay global. 🌏`;
       if (response) {
         await message.reply(response);
 
-        // Save user message to database
-        this.db.saveMessage({
-          guildId: message.guild!.id,
-          channelId: message.channel.id,
-          userId: message.author.id,
-          username: message.author.tag,
-          message: message.content,
-          messageType: 'text',
-          timestamp: new Date()
-        });
+        // Save messages to database (if available)
+        if (this.db) {
+          this.db.saveMessage({
+            guildId: message.guild!.id,
+            channelId: message.channel.id,
+            userId: message.author.id,
+            username: message.author.tag,
+            message: message.content,
+            messageType: 'text',
+            timestamp: new Date()
+          });
 
-        // Save bot response to database
-        this.db.saveMessage({
-          guildId: message.guild!.id,
-          channelId: message.channel.id,
-          userId: this.client.user!.id,
-          username: this.BOT_NAME, // 'Atlas'
-          message: response,
-          messageType: 'agent_response',
-          timestamp: new Date()
-        });
+          this.db.saveMessage({
+            guildId: message.guild!.id,
+            channelId: message.channel.id,
+            userId: this.client.user!.id,
+            username: this.BOT_NAME, // 'Atlas'
+            message: response,
+            messageType: 'agent_response',
+            timestamp: new Date()
+          });
+        }
 
         // Update rate limit
         this.messageRateLimits.set(message.author.id, Date.now());

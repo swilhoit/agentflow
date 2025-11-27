@@ -1,14 +1,14 @@
-# Three Bot Architecture - Complete Summary 🤖🌏💰
+# Three Bot Architecture - Complete Summary
 
 ## Overview
 
-You now have THREE independent Discord bots, each specialized for different tasks:
+You have THREE independent Discord bots running on Hetzner VPS, each specialized for different tasks:
 
-## 1. Main Bot - General Assistant 🤖
+## 1. Main Bot - General Assistant
 
 **Purpose**: General-purpose assistant for coding, tasks, and voice AI
 
-**Runs**: Locally on your machine
+**Runs**: Hetzner VPS (agentflow-bot container)
 **Monitors**: All channels EXCEPT #crypto, #global-ai, #finance
 **Token**: `DISCORD_TOKEN`
 
@@ -16,7 +16,7 @@ You now have THREE independent Discord bots, each specialized for different task
 - Voice conversations (OpenAI Realtime API)
 - Autonomous coding agents (Claude Code)
 - Task orchestration
-- Cloud deployments
+- Cloud deployments (for user apps)
 - Engineering tasks
 - General Q&A
 
@@ -37,11 +37,11 @@ You now have THREE independent Discord bots, each specialized for different task
 
 ---
 
-## 2. Atlas Bot - Market Intelligence 🌏
+## 2. Atlas Bot - Market Intelligence
 
 **Purpose**: Global markets expert and financial market analyst
 
-**Runs**: Google Cloud Run (24/7)
+**Runs**: Hetzner VPS (agentflow-atlas container)
 **Monitors**: #crypto, #global-ai ONLY
 **Token**: `ATLAS_DISCORD_TOKEN`
 
@@ -54,7 +54,7 @@ You now have THREE independent Discord bots, each specialized for different task
 - AI Manhattan Project portfolio tracking (30+ tickers)
 - Fear & Greed Index
 
-### 14 Market Tools
+### Market Tools
 1. `crypto_price` - BTC, ETH, SOL prices
 2. `forex_rate` - Currency exchange rates
 3. `market_sentiment` - Fear & Greed Index
@@ -66,7 +66,6 @@ You now have THREE independent Discord bots, each specialized for different task
 9. `breaking_market_news` - Current developments
 10. `portfolio_snapshot` - AI Manhattan portfolio
 11. `ticker_deep_dive` - Stock analysis
-12. `chart_analysis` - Technical analysis (coming soon)
 
 ### Example Queries
 ```
@@ -77,27 +76,15 @@ china economic outlook
 uranium sector analysis
 ```
 
-### Deployment
-```bash
-# View logs
-gcloud run services logs read agentflow-atlas --region us-central1 --limit 50
-
-# Restart
-gcloud run services update agentflow-atlas --region us-central1
-
-# Redeploy
-./deploy/gcp-cloud-run-atlas.sh
-```
-
 ---
 
-## 3. Financial Advisor - Personal Finance 💰
+## 3. Financial Advisor - Personal Finance
 
 **Purpose**: Personal finance expert using real bank account data
 
-**Runs**: Google Cloud Run (24/7) - READY TO DEPLOY
+**Runs**: Hetzner VPS (agentflow-advisor container)
 **Monitors**: #finance ONLY
-**Token**: `ADVISOR_DISCORD_TOKEN` (needs setup)
+**Token**: `ADVISOR_DISCORD_TOKEN`
 
 ### Capabilities
 - Connect to real bank accounts (Teller API)
@@ -108,7 +95,7 @@ gcloud run services update agentflow-atlas --region us-central1
 - Transaction search
 - Financial advice
 
-### 7 Finance Tools
+### Finance Tools
 1. `get_accounts` - List all bank accounts
 2. `get_account_details` - Account details
 3. `get_balance_summary` - Net worth calculation
@@ -127,106 +114,92 @@ show recent transactions
 am I over budget for groceries?
 ```
 
-### Setup Required
-1. Create Discord bot for Financial Advisor
-2. Enable MESSAGE_CONTENT intent
-3. Update .env with bot credentials
-4. Deploy to Cloud Run: `./deploy/gcp-cloud-run-advisor.sh`
-
 ---
 
 ## Channel Assignment
 
 ```
-┌──────────────────────────────────────────────────────┐
-│             Discord Server                           │
-│        "INTELLIGENCE UNLEASHED"                      │
-└──────────────────────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        │             │             │
-┌───────▼────────┐ ┌──▼──────┐ ┌───▼──────────┐
-│   Main Bot     │ │ Atlas   │ │ Advisor Bot  │
-│   (General)    │ │ (Market)│ │ (Finance)    │
-└───┬────────────┘ └──┬──────┘ └───┬──────────┘
-    │                 │             │
-    │                 │             │
-#general          #crypto        #finance
-#agent-chat       #global-ai
+                Discord Server
+          "INTELLIGENCE UNLEASHED"
+                     |
+       +-------------+-------------+
+       |             |             |
+  Main Bot        Atlas       Advisor Bot
+  (General)      (Market)     (Finance)
+       |             |             |
+#general        #crypto        #finance
+#agent-chat     #global-ai
 #goals
 #waterwise
 #mogul
-#crystals
 ... (all other)
 ```
 
-## Running All Three
+---
 
-### Local Development
+## Infrastructure
 
-```bash
-# Terminal 1: Main bot
-npm run dev
+All three bots run on a single Hetzner VPS:
 
-# Terminal 2: Atlas (if testing locally)
-npm run atlas:dev
-
-# Terminal 3: Financial Advisor (if testing locally)
-npm run advisor:dev
-
-# OR run all 3 at once:
-npm run start:all:three
+```
+Hetzner VPS (178.156.198.233)
++------------------------------------+
+|  Docker Compose                    |
+|  +-------------+                   |
+|  | agentflow-  |  Port 3001       |
+|  | bot         |  (Main Bot)      |
+|  +-------------+                   |
+|  +-------------+                   |
+|  | agentflow-  |  Port 8082       |
+|  | atlas       |  (Atlas)         |
+|  +-------------+                   |
+|  +-------------+                   |
+|  | agentflow-  |  Port 8081       |
+|  | advisor     |  (Advisor)       |
+|  +-------------+                   |
++------------------------------------+
 ```
 
-### Production
+---
 
+## Deployment Commands
+
+### Deploy All Bots
 ```bash
-# Main bot: Running locally
-npm start
-
-# Atlas: Deployed to Cloud Run
-https://agentflow-atlas-213724465032.us-central1.run.app
-
-# Financial Advisor: Deploy to Cloud Run
-./deploy/gcp-cloud-run-advisor.sh
+./deploy-all-bots.sh
 ```
 
-## Current Status
+### Restart All Bots
+```bash
+./finish-setup.sh
+```
 
-### ✅ Main Bot
-- **Status**: Running locally
-- **Channels**: All except #crypto, #global-ai, #finance
-- **Ready**: Yes
+### Check Status
+```bash
+./verify-bots.sh
+```
 
-### ⚠️ Atlas Bot
-- **Status**: Deployed to Cloud Run
-- **Channels**: #crypto, #global-ai
-- **Ready**: Needs MESSAGE_CONTENT intent enabled
-- **Action**: Run `./finish-setup.sh` after enabling intent
+### View Logs
+```bash
+ssh root@178.156.198.233 'docker logs agentflow-bot -f'
+ssh root@178.156.198.233 'docker logs agentflow-atlas -f'
+ssh root@178.156.198.233 'docker logs agentflow-advisor -f'
+```
 
-### 🔨 Financial Advisor Bot
-- **Status**: Code complete, ready to deploy
-- **Channels**: #finance
-- **Ready**: Needs Discord bot creation + deployment
-- **Action**: Follow `FINANCIAL_ADVISOR_SETUP.md`
+---
 
 ## Cost Breakdown
 
 ### Monthly Costs
 
-**Main Bot**: Free (runs locally)
+**Hetzner VPS**: ~$10-15/month (all three bots)
+**Perplexity API**: $1.50-9/month
+**Anthropic API**: $3-10/month
+**Teller API**: Free tier
 
-**Atlas Bot**: ~$6.50-19/month
-- Cloud Run: $5-10/month
-- Perplexity API: $1.50-9/month
-- Other APIs: Free
+**Total**: ~$15-35/month for 24/7 intelligent bot system
 
-**Financial Advisor**: ~$8-20/month
-- Cloud Run: $5-10/month
-- Teller API: Free tier, then $0.01/request
-- Anthropic API: $3-10/month
-
-**Total**: ~$15-40/month for all three bots running 24/7
+---
 
 ## Testing
 
@@ -251,34 +224,17 @@ how much did I spend on dining?
 can I afford a $5000 vacation?
 ```
 
-## Documentation
+---
 
-- **Main Bot**: See existing docs
-- **Atlas Bot**:
-  - `ATLAS_COMPLETE_FEATURES.md`
-  - `ATLAS_FINAL_SETUP_STEPS.md`
-  - `DUAL_BOT_SETUP.md`
-- **Financial Advisor**:
-  - `FINANCIAL_ADVISOR_SETUP.md`
+## Architecture Highlights
 
-## Next Steps
-
-### 1. Complete Atlas Setup (5 minutes)
-- Enable MESSAGE_CONTENT intent in Discord Developer Portal
-- Run `./finish-setup.sh`
-- Test in #crypto
-
-### 2. Set Up Financial Advisor (15 minutes)
-- Create Discord bot
-- Enable MESSAGE_CONTENT intent
-- Update .env with credentials
-- Deploy: `./deploy/gcp-cloud-run-advisor.sh`
-- Test in #finance
-
-### 3. Enjoy Your Three-Bot System! 🎉
-- Main bot for general tasks
-- Atlas for market intelligence
-- Financial Advisor for personal finance
+- **Three independent bots** - No conflicts
+- **Clean channel separation** - Each bot knows its place
+- **Specialized capabilities** - Each bot is an expert in its domain
+- **Docker deployment** - Easy to manage and update
+- **Health checks** - Automatic recovery from failures
+- **Supabase database** - Cloud database for persistence
+- **Cost-effective** - All bots on one server
 
 ---
 
@@ -288,7 +244,5 @@ Each bot has its own:
 - Discord token & credentials
 - Monitored channels
 - Specialized tools
-- Deployment strategy
+- Container instance
 - Purpose & personality
-
-Perfect separation of concerns! 🚀

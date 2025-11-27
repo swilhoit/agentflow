@@ -1,7 +1,7 @@
 import { logger } from '../utils/logger';
 import * as https from 'https';
 import * as fs from 'fs';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -16,7 +16,7 @@ export class AdvisorTools {
   private certPath: string;
   private keyPath: string;
   private httpsAgent: https.Agent;
-  private db: DatabaseService;
+  private db: DatabaseService | null = null;
   private useCache: boolean;
 
   constructor(useCache: boolean = true) {
@@ -24,8 +24,20 @@ export class AdvisorTools {
     this.tellerTokenAmex = process.env.TELLER_API_TOKEN_AMEX || '';
     this.certPath = process.env.TELLER_CERT_PATH || '';
     this.keyPath = process.env.TELLER_KEY_PATH || '';
-    this.useCache = useCache;
-    this.db = getSQLiteDatabase();
+    this.useCache = useCache && !isUsingSupabase();
+
+    // Only use SQLite database when not using Supabase
+    if (!isUsingSupabase()) {
+      try {
+        this.db = getSQLiteDatabase();
+      } catch (e) {
+        logger.warn('⚠️  AdvisorTools: SQLite database not available, caching disabled');
+        this.useCache = false;
+      }
+    } else {
+      logger.info('💰 AdvisorTools: Using Teller API directly (Supabase mode)');
+      this.useCache = false;
+    }
 
     if (!this.tellerToken) {
       logger.warn('TELLER_API_TOKEN not configured - Financial Advisor will have limited functionality');
@@ -505,6 +517,9 @@ export class AdvisorTools {
    * Get cached transactions from database (faster than API)
    */
   getCachedTransactions(accountId: string, days: number = 30): any {
+    if (!this.db) {
+      return { error: 'Database caching not available in Supabase mode. Use get_transactions tool instead.' };
+    }
     try {
       const transactions = this.db.getRecentTransactions(days, 100)
         .filter(t => !accountId || t.accountId === accountId);
@@ -535,6 +550,9 @@ export class AdvisorTools {
    * Get spending analysis from cached data (much faster)
    */
   getCachedSpendingAnalysis(days: number = 30): any {
+    if (!this.db) {
+      return { error: 'Database caching not available in Supabase mode. Use get_transactions tool instead.' };
+    }
     try {
       const today = new Date().toISOString().split('T')[0];
       const startDate = new Date();
@@ -574,6 +592,9 @@ export class AdvisorTools {
    * Get transaction history from database
    */
   getTransactionHistory(days: number = 90, accountId?: string): any {
+    if (!this.db) {
+      return { error: 'Database caching not available in Supabase mode. Use get_transactions tool instead.' };
+    }
     try {
       const transactions = accountId
         ? this.db.getTransactionsByAccount(accountId, 500)
@@ -608,6 +629,9 @@ export class AdvisorTools {
    * Search transactions by merchant or description
    */
   searchTransactions(query: string, days: number = 90): any {
+    if (!this.db) {
+      return { error: 'Database caching not available in Supabase mode. Use get_transactions tool instead.' };
+    }
     try {
       const allTransactions = this.db.getRecentTransactions(days, 1000);
       const searchTerm = query.toLowerCase();
@@ -640,6 +664,13 @@ export class AdvisorTools {
    * Get database sync status
    */
   getSyncStatus(): any {
+    if (!this.db) {
+      return {
+        cache_enabled: false,
+        mode: 'supabase',
+        note: 'Using Teller API directly - no local caching'
+      };
+    }
     try {
       const lastSync = this.db.getLastTransactionSync();
       const recentCount = this.db.getRecentTransactions(30).length;

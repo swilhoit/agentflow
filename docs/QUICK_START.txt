@@ -1,43 +1,45 @@
 ╔══════════════════════════════════════════════════════════════════╗
-║          ATLAS BOT - QUICK START GUIDE                         ║
+║          THREE BOT SYSTEM - QUICK REFERENCE                       ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-🎯 3 STEPS TO COMPLETE SETUP:
+🖥️  INFRASTRUCTURE: Hetzner VPS (178.156.198.233)
 
 ┌──────────────────────────────────────────────────────────────────┐
-│ STEP 1: Enable Discord Intent (2 minutes)                       │
+│ CHECK STATUS                                                      │
 ├──────────────────────────────────────────────────────────────────┤
-│ 1. Go to: https://discord.com/developers/applications           │
-│ 2. Select Atlas app (ID: 1440057375527665674)                   │
-│ 3. Bot → Privileged Gateway Intents                             │
-│ 4. ✅ Enable "MESSAGE CONTENT INTENT"                           │
-│ 5. Save Changes                                                  │
+│ $ ./verify-bots.sh                                                │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
-│ STEP 2: Run Setup Script (30 seconds)                           │
+│ DEPLOY UPDATES                                                    │
 ├──────────────────────────────────────────────────────────────────┤
-│ $ ./complete-atlas-setup.sh                                      │
-│                                                                  │
-│ This restarts Atlas and verifies it's online                     │
+│ $ ./deploy-all-bots.sh                                           │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
-│ STEP 3: Restart Main Bot (10 seconds)                           │
+│ RESTART ALL BOTS                                                  │
 ├──────────────────────────────────────────────────────────────────┤
-│ Stop bot (Ctrl+C), then:                                         │
-│ $ npm run dev                                                     │
+│ $ ./finish-setup.sh                                               │
 └──────────────────────────────────────────────────────────────────┘
 
-✅ DONE! Test in Discord:
+┌──────────────────────────────────────────────────────────────────┐
+│ VIEW LOGS                                                         │
+├──────────────────────────────────────────────────────────────────┤
+│ Main Bot:   ssh root@178.156.198.233 'docker logs agentflow-bot -f'│
+│ Atlas:      ssh root@178.156.198.233 'docker logs agentflow-atlas -f'│
+│ Advisor:    ssh root@178.156.198.233 'docker logs agentflow-advisor -f'│
+└──────────────────────────────────────────────────────────────────┘
 
-  Go to #crypto and type:  btc price?
+🧪 TEST IN DISCORD:
 
-📚 Full docs: See SETUP_COMPLETE_README.md
+  Main Bot (#general):      !help
+  Atlas (#crypto):          btc price?
+  Advisor (#finance):       what's my balance?
 
-🐛 Troubleshooting: See ATLAS_FINAL_SETUP_STEPS.md
+📚 Full docs: See docs/DEPLOYMENT_STATUS.md
+
+🐛 Troubleshooting: See docs/THREE_BOTS_SUMMARY.md
 
 ╔══════════════════════════════════════════════════════════════════╗
-║ Atlas is deployed to Cloud Run and ready to respond!            ║
-║ Just complete the 3 steps above to activate it.                 ║
+║ All three bots running on Hetzner VPS 24/7!                      ║
 ╚══════════════════════════════════════════════════════════════════╝

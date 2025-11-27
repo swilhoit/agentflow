@@ -1,0 +1,54 @@
+# Claude Code Container - Full YOLO Mode
+# Runs Claude Code CLI with --dangerously-skip-permissions for autonomous execution
+
+FROM node:20-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    openssh-client \
+    build-essential \
+    python3 \
+    jq \
+    gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create non-root user for security (but with full workspace access)
+RUN useradd -m -u 1001 -s /bin/bash claude \
+    && mkdir -p /workspace /home/claude/.claude /home/claude/.ssh \
+    && chown -R claude:claude /workspace /home/claude
+
+# Configure git for the claude user
+RUN git config --global --add safe.directory '*' \
+    && git config --global init.defaultBranch main
+
+# Copy YOLO mode settings
+COPY --chown=claude:claude .claude/settings.json /home/claude/.claude/settings.json
+COPY --chown=claude:claude .claude/settings.json /workspace/.claude/settings.json
+
+# Set working directory
+WORKDIR /workspace
+
+# Switch to non-root user
+USER claude
+
+# Environment variables
+ENV HOME=/home/claude
+ENV NODE_ENV=production
+ENV CLAUDE_CODE_SKIP_PERMISSIONS=true
+
+# Health check - verify Claude CLI is available
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD claude --version || exit 1
+
+# Default entrypoint - runs Claude with YOLO mode
+# The actual prompt is passed via docker exec or as CMD override
+ENTRYPOINT ["claude", "--dangerously-skip-permissions", "--output-format", "stream-json"]
+
+# Default command (can be overridden)
+CMD ["--help"]

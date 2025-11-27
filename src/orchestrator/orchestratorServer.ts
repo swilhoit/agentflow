@@ -89,10 +89,10 @@ export class OrchestratorServer {
       }
     });
 
-    // API Key authentication middleware (skip for webhooks)
+    // API Key authentication middleware (skip for webhooks and health)
     this.app.use((req, res, next) => {
-      // Skip authentication for webhook endpoints
-      if (req.path.startsWith('/webhooks/')) {
+      // Skip authentication for webhook and health endpoints
+      if (req.path.startsWith('/webhooks/') || req.path === '/health') {
         return next();
       }
 

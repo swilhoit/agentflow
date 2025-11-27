@@ -1,6 +1,8 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from './databaseFactory';
+import { isUsingSupabase, isUsingPostgres, getSQLiteDatabase, getAgentFlowDatabase } from './databaseFactory';
+import { DatabaseService } from './database';
+import { PostgresDatabaseService } from './postgresDatabaseService';
 
 export interface ProgressUpdate {
   agentId: string;
@@ -32,12 +34,24 @@ export interface ActionUpdate {
 
 export class ChannelNotifier {
   private client: Client;
-  private db = getSQLiteDatabase();
+  private db: DatabaseService | null = null;
+  private pgDb: PostgresDatabaseService | null = null;
   private systemNotificationChannelId?: string;
 
   constructor(client: Client, systemNotificationChannelId?: string) {
     this.client = client;
     this.systemNotificationChannelId = systemNotificationChannelId;
+    
+    // Initialize database based on configuration
+    if (isUsingPostgres()) {
+      this.pgDb = getAgentFlowDatabase();
+    } else if (!isUsingSupabase()) {
+      try {
+        this.db = getSQLiteDatabase();
+      } catch (e) {
+        logger.warn('ChannelNotifier: SQLite not available');
+      }
+    }
   }
 
   setSystemNotificationChannelId(channelId: string): void {
@@ -75,7 +89,7 @@ export class ChannelNotifier {
       await channel.send({ embeds: [embed] });
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId,
         taskId: agentId,
         guildId,
@@ -125,7 +139,7 @@ export class ChannelNotifier {
       await channel.send({ embeds: [embed] });
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: update.agentId,
         taskId: update.agentId,
         guildId,
@@ -166,7 +180,7 @@ export class ChannelNotifier {
         'info'; // Default for thinking, action, command, reading, writing
       
       // Still log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: log.agentId,
         taskId: log.agentId,
         guildId,
@@ -242,7 +256,7 @@ export class ChannelNotifier {
       await channel.send(message);
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: update.agentId,
         taskId: update.agentId,
         guildId,
@@ -280,7 +294,7 @@ export class ChannelNotifier {
       await channel.send(message);
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: update.agentId,
         taskId: update.agentId,
         guildId,
@@ -330,7 +344,7 @@ export class ChannelNotifier {
       await channel.send(message);
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId,
         taskId: agentId,
         guildId,
@@ -398,7 +412,7 @@ export class ChannelNotifier {
       await channel.send({ embeds: [embed] });
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId,
         taskId: agentId,
         guildId,
@@ -463,7 +477,7 @@ export class ChannelNotifier {
       await channel.send({ embeds: [embed] });
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: 'system',
         taskId: `deployment_${Date.now()}`,
         guildId,
@@ -533,7 +547,7 @@ export class ChannelNotifier {
       await channel.send({ embeds: [embed] });
 
       // Log to database
-      this.db.logAgentActivity({
+      this.db?.logAgentActivity({
         agentId: 'system',
         taskId: `system_${Date.now()}`,
         guildId,

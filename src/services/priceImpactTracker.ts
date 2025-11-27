@@ -1,5 +1,5 @@
 import YahooFinanceClass from 'yahoo-finance2';
-import { getSQLiteDatabase } from './databaseFactory';
+import { isUsingSupabase, getSQLiteDatabase } from './databaseFactory';
 import { logger } from '../utils/logger';
 import { DatabaseService } from './database';
 
@@ -31,18 +31,34 @@ export interface PriceImpact {
  * market reaction and news impact on stock performance.
  */
 export class PriceImpactTracker {
-  private db: DatabaseService;
+  private db: DatabaseService | null = null;
   private trackingIntervals: Map<number, NodeJS.Timeout[]> = new Map();
+  private enabled: boolean = false;
 
   constructor() {
-    this.db = getSQLiteDatabase();
-    this.initializeDatabase();
+    if (!isUsingSupabase()) {
+      try {
+        this.db = getSQLiteDatabase();
+        this.initializeDatabase();
+        this.enabled = true;
+        logger.info('📊 PriceImpactTracker initialized (SQLite mode)');
+      } catch (e) {
+        logger.warn('⚠️  PriceImpactTracker: SQLite not available');
+      }
+    } else {
+      logger.info('📊 PriceImpactTracker disabled (Supabase mode - feature not yet implemented)');
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
   }
 
   /**
    * Initialize price impact tracking table
    */
   private initializeDatabase(): void {
+    if (!this.db) return;
     try {
       // SQLite schema
       this.db.exec(`
@@ -92,6 +108,9 @@ export class PriceImpactTracker {
     newsTime: Date,
     onUpdate?: (impactId: number, symbol: string, interval: string) => Promise<void>
   ): Promise<void> {
+    if (!this.enabled || !this.db) {
+      return; // Tracking not available
+    }
     try {
       logger.info(`📈 Starting price impact tracking for ${symbol} (article ${articleId})`);
 
@@ -264,6 +283,7 @@ export class PriceImpactTracker {
    * Save initial price impact record
    */
   private async saveInitialImpact(impact: PriceImpact): Promise<number | null> {
+    if (!this.db) return null;
     try {
       const stmt = this.db.prepare(`
         INSERT INTO news_price_impact (
@@ -293,6 +313,7 @@ export class PriceImpactTracker {
    * Get price impact record by ID
    */
   private async getPriceImpact(impactId: number): Promise<PriceImpact | null> {
+    if (!this.db) return null;
     try {
       const stmt = this.db.prepare(`
         SELECT * FROM news_price_impact WHERE id = ?
@@ -329,6 +350,7 @@ export class PriceImpactTracker {
    * Update price impact record
    */
   private async updatePriceImpactRecord(impactId: number, updates: any): Promise<void> {
+    if (!this.db) return;
     try {
       const setClause = Object.keys(updates).map(key => `${key} = ?`).join(', ');
       const values = Object.values(updates);
@@ -347,6 +369,9 @@ export class PriceImpactTracker {
    * Get price impact for a news article
    */
   async getImpactForArticle(articleId: number): Promise<PriceImpact | null> {
+    if (!this.enabled || !this.db) {
+      return null;
+    }
     try {
       const stmt = this.db.prepare(`
         SELECT * FROM news_price_impact WHERE article_id = ?

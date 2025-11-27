@@ -75,6 +75,8 @@ export interface BotConfig {
   // News monitoring
   finnhubApiKey?: string;
   finnhubWebhookSecret?: string;
+  // Perplexity API for AI-powered news analysis
+  perplexityApiKey?: string;
   // Database configuration
   databaseType?: 'sqlite' | 'supabase' | 'cloudsql';
   cloudSqlInstanceConnectionName?: string;

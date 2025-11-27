@@ -309,6 +309,74 @@ Be specific, cite sources implicitly, use numbers, and maintain analytical objec
   }
 
   /**
+   * Analyze a news article - generate insights instead of just linking
+   */
+  async analyzeNewsArticle(article: {
+    headline: string;
+    summary: string;
+    symbol: string;
+    source: string;
+    url: string;
+  }): Promise<string> {
+    const cacheKey = `article:${article.headline.slice(0, 50)}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) return cached.analysis;
+
+    try {
+      logger.info(`Perplexity analyzing article: ${article.headline.slice(0, 60)}...`);
+
+      const response = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'sonar',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a senior market analyst for an AI/energy investment thesis focused on nuclear, uranium, data centers, and AI infrastructure. Analyze news articles and provide:
+
+1. **Key Takeaway** (1 sentence): What happened and why it matters
+2. **Market Impact**: How this affects the sector/stock (bullish/bearish/neutral)
+3. **Thesis Relevance**: Connection to AI energy demand, nuclear renaissance, or data center buildout
+4. **Action Items**: What investors should watch for next
+
+Be concise but insightful. Use specific numbers when available. Write for sophisticated investors.`
+            },
+            {
+              role: 'user',
+              content: `Analyze this ${article.symbol} news:
+
+**Headline:** ${article.headline}
+**Source:** ${article.source}
+**Summary:** ${article.summary || 'No summary provided'}
+
+Provide your analysis in a Discord-friendly format (use **bold** and bullet points).`
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 600
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Perplexity API error: ${response.statusText}`);
+      }
+
+      const data: any = await response.json();
+      const analysis = data.choices?.[0]?.message?.content || 'Analysis unavailable';
+
+      this.setCache(cacheKey, { analysis });
+      return analysis;
+    } catch (error) {
+      logger.error('Perplexity article analysis error:', error);
+      return `*Unable to generate analysis. [Read original article](${article.url})*`;
+    }
+  }
+
+  /**
    * Get earnings analysis
    */
   async getEarningsAnalysis(company: string): Promise<any> {

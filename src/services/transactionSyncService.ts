@@ -1,7 +1,9 @@
 import * as cron from 'node-cron';
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase, getDatabaseType } from './databaseFactory';
+import { getPostgresDatabase, PostgresDatabaseService } from './postgresDatabaseService';
 import { FinancialTransaction } from './database';
+import type { DatabaseService } from './database';
 import { AdvisorTools } from '../advisor/advisorTools';
 
 export interface TransactionSyncConfig {
@@ -13,18 +15,30 @@ export interface TransactionSyncConfig {
 
 /**
  * Transaction Sync Service
- * 
- * Automatically syncs transactions from Teller API to the local database
+ *
+ * Automatically syncs transactions from Teller API to the database
  * Runs daily to keep transaction history up to date
+ * Supports both SQLite (local) and PostgreSQL (cloud) databases
  */
 export class TransactionSyncService {
-  private db = getSQLiteDatabase();
+  private sqliteDb?: DatabaseService;
+  private postgresDb?: PostgresDatabaseService;
+  private usePostgres: boolean;
   private advisorTools: AdvisorTools;
   private scheduledTask: any = null;
   private config: TransactionSyncConfig;
   private isSyncing: boolean = false;
 
   constructor(config: TransactionSyncConfig) {
+    const dbType = getDatabaseType();
+    this.usePostgres = dbType === 'postgres' || dbType === 'supabase';
+
+    if (this.usePostgres) {
+      this.postgresDb = getPostgresDatabase();
+    } else {
+      this.sqliteDb = getSQLiteDatabase();
+    }
+
     this.config = {
       enabled: config.enabled,
       cronExpression: config.cronExpression || '0 2 * * *', // 2:00 AM daily
@@ -33,6 +47,8 @@ export class TransactionSyncService {
     };
 
     this.advisorTools = new AdvisorTools();
+
+    logger.info(`🔄 Transaction Sync Service initialized (${this.usePostgres ? 'PostgreSQL' : 'SQLite'} mode)`);
 
     if (this.config.enabled) {
       this.start();
@@ -181,8 +197,15 @@ export class TransactionSyncService {
           logger.info(`  Retrieved ${transactions.length} transaction(s)`);
 
           // Get existing transaction IDs to check for duplicates
-          const existingTransactions = this.db.getTransactionsByAccount(account.id, 1000);
-          const existingIds = new Set(existingTransactions.map(t => t.transactionId));
+          let existingTransactions: any[];
+          if (this.usePostgres && this.postgresDb) {
+            existingTransactions = await this.postgresDb.getTransactionsByAccount(account.id, 1000);
+          } else if (this.sqliteDb) {
+            existingTransactions = this.sqliteDb.getTransactionsByAccount(account.id, 1000);
+          } else {
+            existingTransactions = [];
+          }
+          const existingIds = new Set(existingTransactions.map(t => t.transactionId || t.transaction_id));
 
           // Prepare transactions for database
           const transactionsToSave: FinancialTransaction[] = transactions.map((txn: any) => ({
@@ -216,7 +239,11 @@ export class TransactionSyncService {
 
           // Save in batch
           if (transactionsToSave.length > 0) {
-            this.db.saveTransactionsBatch(transactionsToSave);
+            if (this.usePostgres && this.postgresDb) {
+              await this.postgresDb.saveTransactionsBatch(transactionsToSave);
+            } else if (this.sqliteDb) {
+              this.sqliteDb.saveTransactionsBatch(transactionsToSave);
+            }
             totalSynced += transactionsToSave.length;
             totalNew += newCount;
             totalUpdated += updatedCount;
@@ -267,9 +294,17 @@ export class TransactionSyncService {
   /**
    * Get sync status
    */
-  getStatus(): any {
-    const lastSync = this.db.getLastTransactionSync();
-    const recentTransactions = this.db.getRecentTransactions(7);
+  async getStatus(): Promise<any> {
+    let lastSync: Date | null = null;
+    let recentTransactions: any[] = [];
+
+    if (this.usePostgres && this.postgresDb) {
+      lastSync = await this.postgresDb.getLastTransactionSync();
+      recentTransactions = await this.postgresDb.getRecentTransactions(7);
+    } else if (this.sqliteDb) {
+      lastSync = this.sqliteDb.getLastTransactionSync();
+      recentTransactions = this.sqliteDb.getRecentTransactions(7);
+    }
 
     return {
       enabled: this.config.enabled,
@@ -279,18 +314,24 @@ export class TransactionSyncService {
       timezone: this.config.timezone,
       lastSync: lastSync?.toISOString() || 'Never',
       recentTransactionCount: recentTransactions.length,
-      totalTransactions: this.getTotalTransactionCount()
+      totalTransactions: await this.getTotalTransactionCount()
     };
   }
 
   /**
    * Get total transaction count from database
    */
-  private getTotalTransactionCount(): number {
+  private async getTotalTransactionCount(): Promise<number> {
     try {
-      const stmt = this.db.prepare('SELECT COUNT(*) as count FROM financial_transactions');
-      const result: any = stmt.get();
-      return result?.count || 0;
+      if (this.usePostgres && this.postgresDb) {
+        const result = await this.postgresDb.query('SELECT COUNT(*) as count FROM financial_transactions');
+        return parseInt(result.rows[0]?.count) || 0;
+      } else if (this.sqliteDb) {
+        const stmt = (this.sqliteDb as any).prepare('SELECT COUNT(*) as count FROM financial_transactions');
+        const result: any = stmt.get();
+        return result?.count || 0;
+      }
+      return 0;
     } catch (error) {
       return 0;
     }
@@ -300,22 +341,34 @@ export class TransactionSyncService {
    * Get sync history/stats
    */
   async getSyncStats(days: number = 30): Promise<any> {
-    const recentTransactions = this.db.getRecentTransactions(days);
-    const categories = this.db.getTransactionCategories();
-    
+    let recentTransactions: any[] = [];
+    let categories: string[] = [];
+    let spendingSummary: any[] = [];
+    let lastSync: Date | null = null;
+
     const today = new Date().toISOString().split('T')[0];
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     const startDateStr = startDate.toISOString().split('T')[0];
 
-    const spendingSummary = this.db.getSpendingSummary(startDateStr, today);
+    if (this.usePostgres && this.postgresDb) {
+      recentTransactions = await this.postgresDb.getRecentTransactions(days);
+      categories = await this.postgresDb.getTransactionCategories();
+      spendingSummary = await this.postgresDb.getSpendingSummary(startDateStr, today);
+      lastSync = await this.postgresDb.getLastTransactionSync();
+    } else if (this.sqliteDb) {
+      recentTransactions = this.sqliteDb.getRecentTransactions(days);
+      categories = this.sqliteDb.getTransactionCategories();
+      spendingSummary = this.sqliteDb.getSpendingSummary(startDateStr, today);
+      lastSync = this.sqliteDb.getLastTransactionSync();
+    }
 
     return {
       period: `${days} days`,
       transactionCount: recentTransactions.length,
       uniqueCategories: categories.length,
       spendingByCategory: spendingSummary,
-      lastSync: this.db.getLastTransactionSync()?.toISOString() || 'Never'
+      lastSync: lastSync?.toISOString() || 'Never'
     };
   }
 
@@ -324,7 +377,14 @@ export class TransactionSyncService {
    */
   async cleanupOldTransactions(daysToKeep: number = 365): Promise<number> {
     logger.info(`Cleaning up transactions older than ${daysToKeep} days...`);
-    const deleted = this.db.deleteOldTransactions(daysToKeep);
+    let deleted = 0;
+
+    if (this.usePostgres && this.postgresDb) {
+      deleted = await this.postgresDb.deleteOldTransactions(daysToKeep);
+    } else if (this.sqliteDb) {
+      deleted = this.sqliteDb.deleteOldTransactions(daysToKeep);
+    }
+
     logger.info(`✅ Deleted ${deleted} old transaction(s)`);
     return deleted;
   }

@@ -1,10 +1,11 @@
 import * as cron from 'node-cron';
-import { Client } from 'discord.js';
+import { Client, EmbedBuilder, Colors } from 'discord.js';
 import { logger } from '../utils/logger';
 import { TickerMonitor, THESIS_PORTFOLIO } from './tickerMonitor';
 import { IntelligentChannelNotifier } from './intelligentChannelNotifier';
-import { NewsMonitor } from './newsMonitor';
+import { NewsMonitor, NewsArticle } from './newsMonitor';
 import { WeeklyThesisAnalyzer } from './weeklyThesisAnalyzer';
+import { PerplexityMarketService } from './perplexityMarketService';
 
 export interface ScheduleConfig {
   // Cron expression for daily updates (default: 9:00 AM ET weekdays)
@@ -25,6 +26,8 @@ export interface ScheduleConfig {
   finnhubApiKey?: string;
   // Anthropic API key for weekly analysis
   anthropicApiKey?: string;
+  // Perplexity API key for news analysis
+  perplexityApiKey?: string;
 }
 
 /**
@@ -36,6 +39,7 @@ export class MarketUpdateScheduler {
   private tickerMonitor: TickerMonitor;
   private newsMonitor: NewsMonitor | null = null;
   private weeklyAnalyzer: WeeklyThesisAnalyzer | null = null;
+  private perplexityService: PerplexityMarketService | null = null;
   private notifier: IntelligentChannelNotifier;
   private config: ScheduleConfig;
   private dailyTask: cron.ScheduledTask | null = null;
@@ -43,15 +47,19 @@ export class MarketUpdateScheduler {
   private newsTask: cron.ScheduledTask | null = null;
   private weeklyTask: cron.ScheduledTask | null = null;
 
+  private marketUpdatesChannelId?: string;
+
   constructor(
     client: Client,
     config: ScheduleConfig,
-    systemNotificationChannelId?: string
+    systemNotificationChannelId?: string,
+    marketUpdatesChannelId?: string
   ) {
     this.client = client;
     this.tickerMonitor = new TickerMonitor();
     this.notifier = new IntelligentChannelNotifier(client, systemNotificationChannelId);
     this.config = config;
+    this.marketUpdatesChannelId = marketUpdatesChannelId;
 
     // Initialize news monitor if API key provided
     if (config.finnhubApiKey) {
@@ -67,6 +75,14 @@ export class MarketUpdateScheduler {
       logger.info('✅ Weekly thesis analysis enabled with Claude');
     } else {
       logger.info('ℹ️  Weekly thesis analysis disabled (no Anthropic API key)');
+    }
+
+    // Initialize Perplexity service for AI-powered news analysis
+    if (config.perplexityApiKey) {
+      this.perplexityService = new PerplexityMarketService(config.perplexityApiKey);
+      logger.info('✅ Perplexity news analysis enabled');
+    } else {
+      logger.info('ℹ️  Perplexity news analysis disabled (no API key) - will use basic Finnhub summaries');
     }
   }
 
@@ -184,12 +200,16 @@ export class MarketUpdateScheduler {
       // Fetch portfolio data
       const categoryData = await this.tickerMonitor.fetchThesisPortfolio();
 
-      // Find the finance/AI channel
-      const channelId = await this.notifier.getChannelAwareness().findBestChannel(
-        this.config.guildId,
-        'finance',
-        'AI Manhattan Project market update'
-      );
+      // Use dedicated market updates channel if configured, otherwise find best channel
+      let channelId: string | null | undefined = this.marketUpdatesChannelId;
+
+      if (!channelId) {
+        channelId = await this.notifier.getChannelAwareness().findBestChannel(
+          this.config.guildId,
+          'finance',
+          'AI Manhattan Project market update'
+        );
+      }
 
       if (!channelId) {
         logger.error('Could not find appropriate channel for market updates');
@@ -310,7 +330,7 @@ The portfolio tracks the energy revolution powering AI with exposure to:
   }
 
   /**
-   * Run hourly news check
+   * Run hourly news check with AI-powered analysis
    */
   private async runNewsCheck(): Promise<void> {
     if (!this.newsMonitor) {
@@ -319,14 +339,6 @@ The portfolio tracks the energy revolution powering AI with exposure to:
 
     try {
       logger.info('📰 Running hourly news check...');
-
-      // Check if it's a weekday
-      const today = new Date();
-      const dayOfWeek = today.getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-        logger.info('📅 Weekend - skipping news check');
-        return;
-      }
 
       // Get all tickers from the thesis portfolio
       const allTickers = THESIS_PORTFOLIO.flatMap(category => category.tickers);
@@ -339,12 +351,16 @@ The portfolio tracks the energy revolution powering AI with exposure to:
         return;
       }
 
-      // Find the finance channel
-      const channelId = await this.notifier.getChannelAwareness().findBestChannel(
-        this.config.guildId,
-        'finance',
-        'AI Manhattan Project news update'
-      );
+      // Use dedicated market updates channel if configured, otherwise find best channel
+      let channelId: string | null | undefined = this.marketUpdatesChannelId;
+
+      if (!channelId) {
+        channelId = await this.notifier.getChannelAwareness().findBestChannel(
+          this.config.guildId,
+          'finance',
+          'AI Manhattan Project news update'
+        );
+      }
 
       if (!channelId) {
         logger.error('Could not find appropriate channel for news updates');
@@ -359,38 +375,99 @@ The portfolio tracks the energy revolution powering AI with exposure to:
         return;
       }
 
-      // Send news summary
-      const summaryEmbed = this.newsMonitor.generateNewsSummary(newsBySymbol);
-      await channel.send({ embeds: [summaryEmbed] });
-
-      // Send individual embeds for significant news
-      let significantNewsCount = 0;
+      // Collect significant articles for AI analysis
+      const significantArticles: { symbol: string; article: NewsArticle }[] = [];
       for (const [symbol, articles] of newsBySymbol) {
         for (const article of articles) {
           if (this.newsMonitor.isSignificantNews(article)) {
-            const embed = this.newsMonitor.generateNewsEmbed(article);
-            await channel.send({ embeds: [embed] });
-            significantNewsCount++;
-
-            // Limit to 5 significant news per hour to avoid spam
-            if (significantNewsCount >= 5) {
-              break;
-            }
-
-            // Small delay between messages
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            significantArticles.push({ symbol, article });
           }
-        }
-        if (significantNewsCount >= 5) {
-          break;
         }
       }
 
-      logger.info(`✅ Posted ${newsBySymbol.size} news summaries, ${significantNewsCount} significant alerts`);
+      // If we have Perplexity and significant news, generate AI analysis
+      if (this.perplexityService && significantArticles.length > 0) {
+        // Limit to 5 articles per hour
+        const articlesToAnalyze = significantArticles.slice(0, 5);
+
+        for (const { symbol, article } of articlesToAnalyze) {
+          try {
+            // Generate AI analysis using Perplexity
+            const analysis = await this.perplexityService.analyzeNewsArticle({
+              headline: article.headline,
+              summary: article.summary,
+              symbol: symbol,
+              source: article.source,
+              url: article.url
+            });
+
+            // Create enhanced embed with AI analysis
+            const embed = this.generateAnalyzedNewsEmbed(article, symbol, analysis);
+            await channel.send({ embeds: [embed] });
+
+            // Small delay between messages
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          } catch (error) {
+            logger.error(`Failed to analyze article for ${symbol}:`, error);
+            // Fall back to basic embed
+            const embed = this.newsMonitor.generateNewsEmbed(article);
+            await channel.send({ embeds: [embed] });
+          }
+        }
+
+        logger.info(`✅ Posted ${articlesToAnalyze.length} AI-analyzed news alerts`);
+      } else if (significantArticles.length > 0) {
+        // Fallback: Send basic news summary without AI analysis
+        const summaryEmbed = this.newsMonitor.generateNewsSummary(newsBySymbol);
+        await channel.send({ embeds: [summaryEmbed] });
+
+        // Send individual embeds for significant news (limited)
+        let count = 0;
+        for (const { article } of significantArticles.slice(0, 5)) {
+          const embed = this.newsMonitor.generateNewsEmbed(article);
+          await channel.send({ embeds: [embed] });
+          count++;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        logger.info(`✅ Posted ${count} basic news alerts (Perplexity not configured)`);
+      } else {
+        // No significant news, just log
+        logger.info(`Found ${newsBySymbol.size} symbols with news, but no significant articles`);
+      }
 
     } catch (error) {
       logger.error('Failed to run news check', error);
     }
+  }
+
+  /**
+   * Generate an enhanced embed with AI analysis
+   */
+  private generateAnalyzedNewsEmbed(article: NewsArticle, symbol: string, analysis: string): EmbedBuilder {
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle(`📊 ${symbol}: ${article.headline.slice(0, 200)}`)
+      .setURL(article.url)
+      .setTimestamp(article.datetime * 1000);
+
+    // Add AI analysis as the main content
+    if (analysis.length > 4096) {
+      embed.setDescription(analysis.slice(0, 4093) + '...');
+    } else {
+      embed.setDescription(analysis);
+    }
+
+    embed.addFields({
+      name: '📰 Source',
+      value: `${article.source}`,
+      inline: true
+    });
+
+    embed.setFooter({
+      text: '🤖 Analysis by Perplexity AI • Data from Finnhub'
+    });
+
+    return embed;
   }
 
   /**
@@ -422,12 +499,16 @@ The portfolio tracks the energy revolution powering AI with exposure to:
       // Generate analysis
       const analysis = await this.weeklyAnalyzer.generateWeeklyAnalysis();
 
-      // Find the finance channel
-      const channelId = await this.notifier.getChannelAwareness().findBestChannel(
-        this.config.guildId,
-        'finance',
-        'AI Manhattan Project weekly analysis'
-      );
+      // Use dedicated market updates channel if configured, otherwise find best channel
+      let channelId: string | null | undefined = this.marketUpdatesChannelId;
+
+      if (!channelId) {
+        channelId = await this.notifier.getChannelAwareness().findBestChannel(
+          this.config.guildId,
+          'finance',
+          'AI Manhattan Project weekly analysis'
+        );
+      }
 
       if (!channelId) {
         logger.error('Could not find appropriate channel for weekly analysis');
@@ -516,8 +597,8 @@ export const DEFAULT_SCHEDULE_CONFIG: Omit<ScheduleConfig, 'guildId'> = {
   dailyUpdateCron: '0 9 * * 1-5',
   // 4:05 PM ET, Monday-Friday (5 mins after market close)
   marketCloseCron: '5 16 * * 1-5',
-  // Every hour from 9 AM to 4 PM ET, Monday-Friday (market hours)
-  newsCheckCron: '0 9-16 * * 1-5',
+  // Every hour, every day (for global markets coverage)
+  newsCheckCron: '0 * * * *',
   // 6:00 PM ET, Sunday
   weeklyAnalysisCron: '0 18 * * 0',
   enabled: true,

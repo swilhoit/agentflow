@@ -1,5 +1,5 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
-import { getSQLiteDatabase, isUsingSupabase, getDatabaseType } from './databaseFactory';
+import { getSQLiteDatabase, isUsingSupabase, isUsingPostgres, getDatabaseType } from './databaseFactory';
 import { getUnifiedDatabase, UnifiedDatabaseService } from './unifiedDatabase';
 import { logger } from '../utils/logger';
 import * as cron from 'node-cron';
@@ -77,7 +77,9 @@ export class AgentManagerService {
 
   constructor(client: Client) {
     this.client = client;
-    this.useSupabase = isUsingSupabase();
+    // Use Supabase for agent config storage when in postgres or supabase mode
+    // PostgreSQL mode uses Supabase for agent/task management (tables already exist there)
+    this.useSupabase = isUsingSupabase() || isUsingPostgres();
     this.initializeDatabase();
     this.registerDefaultAgents();
   }
@@ -87,14 +89,14 @@ export class AgentManagerService {
    */
   private initializeDatabase(): void {
     if (this.useSupabase) {
-      // For Supabase, tables are already created via migrations
+      // For Supabase/Postgres mode, tables are already created via migrations
       // Just get the unified database instance
       this.unifiedDb = getUnifiedDatabase();
       logger.info('✅ Agent Manager using Supabase (cloud mode)');
       return;
     }
 
-    // SQLite mode - create tables locally
+    // SQLite mode - create tables locally (local dev only)
     const db = getSQLiteDatabase().getRawDatabase();
 
     // Agent configurations table

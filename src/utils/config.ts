@@ -45,12 +45,14 @@ export function loadConfig(): BotConfig {
     marketUpdatesGuildId: process.env.MARKET_UPDATES_GUILD_ID,
     marketUpdatesDailyCron: process.env.MARKET_UPDATES_DAILY_CRON || '0 9 * * 1-5',
     marketUpdatesCloseCron: process.env.MARKET_UPDATES_CLOSE_CRON || '5 16 * * 1-5',
-    marketUpdatesNewsCron: process.env.MARKET_UPDATES_NEWS_CRON || '0 9-16 * * 1-5',
+    marketUpdatesNewsCron: process.env.MARKET_UPDATES_NEWS_CRON || '0 * * * *',
     marketUpdatesWeeklyCron: process.env.MARKET_UPDATES_WEEKLY_CRON || '0 18 * * 0',
     marketUpdatesTimezone: process.env.MARKET_UPDATES_TIMEZONE || 'America/New_York',
     // News monitoring
     finnhubApiKey: process.env.FINNHUB_API_KEY,
     finnhubWebhookSecret: process.env.FINNHUB_WEBHOOK_SECRET,
+    // Perplexity API for AI-powered news analysis
+    perplexityApiKey: process.env.PERPLEXITY_API_KEY,
     // Database configuration - default to Supabase for cloud operation
     databaseType: (process.env.DATABASE_TYPE as 'sqlite' | 'supabase' | 'cloudsql') || 'supabase',
     cloudSqlInstanceConnectionName: process.env.CLOUDSQL_INSTANCE_CONNECTION_NAME,

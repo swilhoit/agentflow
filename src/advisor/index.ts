@@ -5,6 +5,7 @@ import * as http from 'http';
 import { TransactionSyncService } from '../services/transactionSyncService';
 import { CategoryBudgetService } from '../services/categoryBudgetService';
 import { WeeklyBudgetService } from '../services/weeklyBudgetService';
+import { isUsingSupabase } from '../services/databaseFactory';
 
 dotenv.config();
 
@@ -41,7 +42,7 @@ async function main() {
     logger.info(`📡 Will monitor ${channels.length} channel(s):`);
     channels.forEach(ch => logger.info(`   - ${ch}`));
 
-    // Start HTTP server FIRST for Cloud Run health checks
+    // Start HTTP server FIRST for container health checks
     const port = parseInt(process.env.ADVISOR_PORT || process.env.PORT || '8081');
     const server = http.createServer((req, res) => {
       if (req.url === '/health' || req.url === '/') {
@@ -74,88 +75,102 @@ async function main() {
 
     await advisor.start();
 
-    // Start Category Budget Service (daily updates)
+    // Start Category Budget Service (daily updates) - SQLite only
     const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
     const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
     const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
 
-    logger.info(`💰 Initializing Category Budget Service (Daily Updates)...`);
-    logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
-    logger.info(`   🍽️  Dining: $${diningBudget}/week`);
-    logger.info(`   💵 Other: $${otherBudget}/week`);
+    if (!isUsingSupabase()) {
+      logger.info(`💰 Initializing Category Budget Service (Daily Updates)...`);
+      logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
+      logger.info(`   🍽️  Dining: $${diningBudget}/week`);
+      logger.info(`   💵 Other: $${otherBudget}/week`);
 
-    const budgetService = new CategoryBudgetService({
-      groceriesBudget,
-      diningBudget,
-      otherBudget,
-      channelId: channels[0],
-      enabled: true,
-      dailyUpdateTime: process.env.BUDGET_UPDATE_TIME || '0 9 * * *'
-    });
+      const budgetService = new CategoryBudgetService({
+        groceriesBudget,
+        diningBudget,
+        otherBudget,
+        channelId: channels[0],
+        enabled: true,
+        dailyUpdateTime: process.env.BUDGET_UPDATE_TIME || '0 9 * * *'
+      });
 
-    // Register Discord client with budget service
-    budgetService.setDiscordClient(advisor.getClient());
-    budgetService.start();
+      // Register Discord client with budget service
+      budgetService.setDiscordClient(advisor.getClient());
+      budgetService.start();
 
-    // Start Weekly Budget Summary Service
-    const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
+      // Start Weekly Budget Summary Service
+      const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
 
-    logger.info(`📅 Initializing Weekly Budget Service...`);
-    logger.info(`   Personal Weekly: $${groceriesBudget + diningBudget + otherBudget}`);
-    logger.info(`   Business Monthly: $${monthlyBusinessBudget}`);
+      logger.info(`📅 Initializing Weekly Budget Service...`);
+      logger.info(`   Personal Weekly: $${groceriesBudget + diningBudget + otherBudget}`);
+      logger.info(`   Business Monthly: $${monthlyBusinessBudget}`);
 
-    const weeklyBudgetService = new WeeklyBudgetService({
-      groceriesBudget,
-      diningBudget,
-      otherBudget,
-      monthlyBusinessBudget,
-      channelId: channels[0],
-      enabled: true,
-      weeklyUpdateTime: process.env.WEEKLY_BUDGET_UPDATE_TIME || '0 20 * * 0' // 8 PM Sunday
-    });
+      const weeklyBudgetService = new WeeklyBudgetService({
+        groceriesBudget,
+        diningBudget,
+        otherBudget,
+        monthlyBusinessBudget,
+        channelId: channels[0],
+        enabled: true,
+        weeklyUpdateTime: process.env.WEEKLY_BUDGET_UPDATE_TIME || '0 20 * * 0' // 8 PM Sunday
+      });
 
-    weeklyBudgetService.setDiscordClient(advisor.getClient());
-    weeklyBudgetService.start();
+      weeklyBudgetService.setDiscordClient(advisor.getClient());
+      weeklyBudgetService.start();
 
-    // Start Transaction Sync Service
-    logger.info('📊 Initializing Transaction Sync Service...');
-    const transactionSync = new TransactionSyncService({
-      enabled: true,
-      cronExpression: '0 2 * * *', // 2:00 AM daily
-      timezone: 'America/Los_Angeles',
-      daysToSync: 90
-    });
-
-    // Run initial sync
-    logger.info('🔄 Running initial transaction sync...');
-    const initialSync = await transactionSync.triggerSync();
-    if (initialSync.success) {
-      logger.info('✅ Initial transaction sync completed');
-      if (initialSync.stats) {
-        logger.info(`   Synced ${initialSync.stats.totalTransactions} transactions from ${initialSync.stats.accounts} accounts`);
+      // Start Transaction Sync Service
+      logger.info('📊 Initializing Transaction Sync Service...');
+      const transactionSync = new TransactionSyncService({
+        enabled: true,
+        cronExpression: '0 2 * * *', // 2:00 AM daily
+        timezone: 'America/Los_Angeles',
+        daysToSync: 90
+      });
+      // Run initial sync
+      logger.info('🔄 Running initial transaction sync...');
+      const initialSync = await transactionSync.triggerSync();
+      if (initialSync.success) {
+        logger.info('✅ Initial transaction sync completed');
+        if (initialSync.stats) {
+          logger.info(`   Synced ${initialSync.stats.totalTransactions} transactions from ${initialSync.stats.accounts} accounts`);
+        }
+      } else {
+        logger.warn(`⚠️  Initial sync failed: ${initialSync.message}`);
       }
+
+      // Graceful shutdown with budget services
+      const shutdown = async () => {
+        logger.info('💰 Shutting down Financial Advisor bot...');
+        budgetService.stop();
+        weeklyBudgetService.stop();
+        transactionSync.stop();
+        server.close();
+        await advisor.stop();
+        logger.info('✅ Financial Advisor shutdown complete');
+        process.exit(0);
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
     } else {
-      logger.warn(`⚠️  Initial sync failed: ${initialSync.message}`);
+      logger.info('☁️  Supabase mode: Budget/Sync services disabled (SQLite-only features)');
+
+      // Graceful shutdown without budget services
+      const shutdown = async () => {
+        logger.info('💰 Shutting down Financial Advisor bot...');
+        server.close();
+        await advisor.stop();
+        logger.info('✅ Financial Advisor shutdown complete');
+        process.exit(0);
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
     }
-
-    // Graceful shutdown
-    const shutdown = async () => {
-      logger.info('💰 Shutting down Financial Advisor bot...');
-      budgetService.stop();
-      weeklyBudgetService.stop();
-      transactionSync.stop();
-      server.close();
-      await advisor.stop();
-      logger.info('✅ Financial Advisor shutdown complete');
-      process.exit(0);
-    };
-
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
 
     logger.info('✅ Financial Advisor bot is online and monitoring channels');
     logger.info('   Ask about balances, spending, budgets, or savings goals!');
-    logger.info('   Transactions sync daily at 2:00 AM PST');
 
   } catch (error) {
     logger.error('Failed to start Financial Advisor bot:', error);

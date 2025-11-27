@@ -80,3 +80,4 @@ advisor-env.yaml
 ATLAS_BOT_SETUP.md
 FINANCIAL_ADVISOR_SETUP.md
 .env.bak
+.vercel

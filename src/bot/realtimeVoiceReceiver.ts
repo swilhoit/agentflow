@@ -11,6 +11,43 @@ import { Readable, Transform } from 'stream';
 import * as prism from 'prism-media';
 
 /**
+ * Simple async mutex for preventing race conditions
+ */
+class AsyncMutex {
+  private locked: boolean = false;
+  private queue: (() => void)[] = [];
+
+  async acquire(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.locked) {
+        this.locked = true;
+        resolve();
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+
+  release(): void {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift()!;
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+
+  async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+/**
  * Realtime Voice Receiver
  * Bridges Discord voice with ElevenLabs Conversational AI
  */
@@ -38,6 +75,12 @@ export class RealtimeVoiceReceiver {
   private lastAudioTime: number = 0;
   private isSpeaking: boolean = false;
   private silenceThreshold: number = 1500; // 1.5 seconds of silence to trigger response
+
+  // Race condition prevention
+  private transcriptMutex: AsyncMutex = new AsyncMutex();
+  private functionCallMutex: AsyncMutex = new AsyncMutex();
+  private transcriptFinalizationTimeout: NodeJS.Timeout | null = null;
+  private pendingFunctionCalls: Set<string> = new Set();
 
   // Callbacks and context
   private onMessageCallback: ((userId: string, username: string, message: string, isBot: boolean) => void) | null = null;
@@ -206,9 +249,9 @@ User: "Review my in-progress tasks on Trello"
 Your response: "I'll review your in-progress items. Discord will show the results."
 [CALL execute_task with task_description: "List all Trello cards in 'In Progress' lists and review them", task_type: "trello"]
 
-User: "Show my Cloud Run services"
-Your response: "I'll list your services - check Discord for the list."
-[CALL list_cloud_services function]
+User: "Show my containers on Hetzner"
+Your response: "I'll list your containers - check Discord for the list."
+[CALL list_containers function]
 
 🚨 CRITICAL: COMPLEX MULTI-STEP TASKS 🚨
 When user asks for tasks involving MULTIPLE SYSTEMS or COMPLEX WORKFLOWS, use task_type: "coding":
@@ -309,14 +352,14 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
       },
       {
         type: 'function',
-        name: 'deploy_to_cloud_run',
-        description: 'Deploy a Docker container to Google Cloud Run with Claude Code CLI pre-installed',
+        name: 'deploy_to_hetzner',
+        description: 'Deploy a Docker container to Hetzner VPS',
         parameters: {
           type: 'object',
           properties: {
             service_name: {
               type: 'string',
-              description: 'Name for the Cloud Run service (e.g., "my-api-server")'
+              description: 'Name for the container (e.g., "my-api-server")'
             },
             image_name: {
               type: 'string',
@@ -326,52 +369,201 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
               type: 'string',
               description: 'Path to the build context directory (defaults to ".")'
             },
+            port: {
+              type: 'number',
+              description: 'Port to expose (default: 8080)'
+            },
             env_vars: {
               type: 'object',
               description: 'Environment variables to set in the container',
               additionalProperties: { type: 'string' }
             }
           },
-          required: ['service_name', 'image_name']
+          required: ['service_name']
         }
       },
       {
         type: 'function',
-        name: 'list_cloud_services',
-        description: 'List all running Cloud Run services in the project'
+        name: 'list_containers',
+        description: 'List all running containers on Hetzner VPS'
       },
       {
         type: 'function',
-        name: 'get_service_logs',
-        description: 'Get recent logs from a Cloud Run service',
+        name: 'get_container_logs',
+        description: 'Get recent logs from a container on Hetzner VPS',
         parameters: {
           type: 'object',
           properties: {
-            service_name: {
+            container_name: {
               type: 'string',
-              description: 'Name of the service to get logs from'
+              description: 'Name of the container to get logs from'
             },
             limit: {
               type: 'number',
               description: 'Number of log entries to retrieve (default: 50)'
             }
           },
-          required: ['service_name']
+          required: ['container_name']
         }
       },
       {
         type: 'function',
-        name: 'delete_cloud_service',
-        description: 'Delete a Cloud Run service',
+        name: 'delete_container',
+        description: 'Delete a container on Hetzner VPS',
         parameters: {
           type: 'object',
           properties: {
-            service_name: {
+            container_name: {
               type: 'string',
-              description: 'Name of the service to delete'
+              description: 'Name of the container to delete'
             }
           },
-          required: ['service_name']
+          required: ['container_name']
+        }
+      },
+      // Claude Code Container Tools - Run Claude Code in isolated VPS containers
+      {
+        type: 'function',
+        name: 'spawn_claude_agent',
+        description: 'Spawn a Claude Code agent in a Docker container on Hetzner VPS. The agent runs in YOLO mode with full permissions for autonomous coding tasks.',
+        parameters: {
+          type: 'object',
+          properties: {
+            task: {
+              type: 'string',
+              description: 'The task for Claude Code to execute (e.g., "Create a REST API with Express")'
+            },
+            workspace_path: {
+              type: 'string',
+              description: 'Path to the workspace directory on the VPS'
+            },
+            timeout: {
+              type: 'number',
+              description: 'Timeout in milliseconds (default: 600000 = 10 minutes)'
+            }
+          },
+          required: ['task']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_claude_status',
+        description: 'Get the current status of a Claude Code container agent',
+        parameters: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID from spawn_claude_agent'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_claude_output',
+        description: 'Get the output/logs from a Claude Code container agent',
+        parameters: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID'
+            },
+            lines: {
+              type: 'number',
+              description: 'Number of lines to retrieve (default: 100)'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        type: 'function',
+        name: 'stop_claude_agent',
+        description: 'Stop a running Claude Code container agent',
+        parameters: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID to stop'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        type: 'function',
+        name: 'list_claude_agents',
+        description: 'List all Claude Code container agents (running and stopped)'
+      },
+      // GitHub / Workspace Management Tools
+      {
+        type: 'function',
+        name: 'clone_repo',
+        description: 'Clone a GitHub repository to a workspace on the VPS for editing',
+        parameters: {
+          type: 'object',
+          properties: {
+            repo_url: {
+              type: 'string',
+              description: 'The GitHub repository URL'
+            },
+            workspace_name: {
+              type: 'string',
+              description: 'Name for the workspace (defaults to repo name)'
+            },
+            branch: {
+              type: 'string',
+              description: 'Branch to clone'
+            }
+          },
+          required: ['repo_url']
+        }
+      },
+      {
+        type: 'function',
+        name: 'create_workspace',
+        description: 'Create a new empty workspace, optionally with a new GitHub repo',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name for the workspace'
+            },
+            create_github_repo: {
+              type: 'boolean',
+              description: 'Create a new GitHub repository'
+            }
+          },
+          required: ['workspace_name']
+        }
+      },
+      {
+        type: 'function',
+        name: 'list_workspaces',
+        description: 'List all workspaces on the VPS'
+      },
+      {
+        type: 'function',
+        name: 'push_workspace',
+        description: 'Commit and push changes from a workspace to GitHub',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace'
+            },
+            commit_message: {
+              type: 'string',
+              description: 'Commit message'
+            }
+          },
+          required: ['workspace_name']
         }
       },
       {
@@ -568,17 +760,31 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
       }
     });
 
-    // Accumulate assistant transcript as it streams
-    this.voiceService.on('assistant_transcript_delta', (delta: string) => {
-      this.currentAssistantTranscript += delta;
-      
-      // Check if this is the first delta (start of response)
-      if (this.currentAssistantTranscript.length === delta.length) {
-        logger.info('🎤 Assistant started responding - resuming audio output');
-        this.isProcessingAudio = true;
-        // Resume audio output in case it was interrupted
-        this.voiceService.resumeAudio();
-      }
+    // Accumulate assistant transcript as it streams (CONSOLIDATED HANDLER with mutex)
+    // Note: Only ONE handler to prevent race conditions
+    this.voiceService.on('assistant_transcript_delta', async (delta: string) => {
+      await this.transcriptMutex.withLock(async () => {
+        const isFirstDelta = this.currentAssistantTranscript.length === 0;
+        this.currentAssistantTranscript += delta;
+
+        // Check if this is the first delta (start of response)
+        if (isFirstDelta) {
+          logger.info('🎤 Assistant started responding - resuming audio output');
+          this.isProcessingAudio = true;
+          // Resume audio output in case it was interrupted
+          this.voiceService.resumeAudio();
+        }
+
+        // Clear existing timeout
+        if (this.transcriptFinalizationTimeout) {
+          clearTimeout(this.transcriptFinalizationTimeout);
+        }
+
+        // Set new timeout to finalize response after silence
+        this.transcriptFinalizationTimeout = setTimeout(async () => {
+          await this.finalizeAssistantResponse();
+        }, 500); // Wait 500ms after last transcript delta to consider response complete
+      });
     });
 
     // When audio chunks arrive from assistant
@@ -595,61 +801,6 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
 
     this.voiceService.on('disconnected', () => {
       logger.info('Disconnected from ElevenLabs Conversational AI');
-    });
-
-    // Note: ElevenLabs doesn't have a clear "response_done" event like OpenAI
-    // We'll detect completion based on transcript finalization
-    // Track timeout for detecting end of response
-    let transcriptFinalizationTimeout: NodeJS.Timeout | null = null;
-    
-    this.voiceService.on('assistant_transcript_delta', async (delta: string) => {
-      // Clear existing timeout
-      if (transcriptFinalizationTimeout) {
-        clearTimeout(transcriptFinalizationTimeout);
-      }
-      
-      // Set new timeout to finalize response after silence
-      transcriptFinalizationTimeout = setTimeout(async () => {
-        logger.info('Assistant finished responding');
-        this.isProcessingAudio = false;
-
-        // Send Discord message showing what assistant said
-        if (this.onDiscordMessageCallback && this.channelId && this.currentAssistantTranscript.trim()) {
-          logger.info(`[VOICE RECEIVER] Sending assistant response to channel ${this.channelId}`);
-          await this.onDiscordMessageCallback(
-            this.channelId,
-            `🤖 **Agent**: ${this.currentAssistantTranscript.trim()}`
-          );
-        } else {
-          logger.warn(`[VOICE RECEIVER] Cannot send assistant response - callback: ${!!this.onDiscordMessageCallback}, channelId: ${this.channelId}, transcript: "${this.currentAssistantTranscript.trim()}"`);
-        }
-
-        // CRITICAL: Refresh conversation context after assistant responds
-        // This ensures the agent sees all recent messages including task results
-        if (this.guildId && this.channelId) {
-          logger.info('[Voice Receiver] Refreshing conversation context after assistant response...');
-          setTimeout(() => {
-            this.refreshConversationContext();
-          }, 1000); // Small delay to ensure messages are saved
-        }
-
-        // Invoke callback to save bot response
-        if (this.onMessageCallback && this.botUserId) {
-          const responseText = this.currentAssistantTranscript.trim();
-          if (responseText) {
-            this.onMessageCallback(this.botUserId, 'AgentFlow Bot', responseText, true);
-          }
-        }
-
-        // End the audio stream
-        if (this.currentAudioStream) {
-          this.currentAudioStream.push(null);
-          this.currentAudioStream = null;
-        }
-        
-        // Reset transcript for next response
-        this.currentAssistantTranscript = '';
-      }, 500); // Wait 500ms after last transcript delta to consider response complete
     });
 
     // Note: Function calls are handled by elevenLabsVoice.ts directly via onFunctionCall()
@@ -952,13 +1103,89 @@ Be friendly and helpful. Chat when appropriate, act when needed.`;
   }
 
   /**
+   * Finalize assistant response with mutex protection
+   * Handles Discord messaging, context refresh, and cleanup
+   */
+  private async finalizeAssistantResponse(): Promise<void> {
+    await this.transcriptMutex.withLock(async () => {
+      logger.info('Assistant finished responding');
+      this.isProcessingAudio = false;
+
+      const transcript = this.currentAssistantTranscript.trim();
+
+      // Send Discord message showing what assistant said
+      if (this.onDiscordMessageCallback && this.channelId && transcript) {
+        logger.info(`[VOICE RECEIVER] Sending assistant response to channel ${this.channelId}`);
+        try {
+          await this.onDiscordMessageCallback(
+            this.channelId,
+            `🤖 **Agent**: ${transcript}`
+          );
+        } catch (error) {
+          logger.error('[VOICE RECEIVER] Failed to send assistant response to Discord:', error);
+        }
+      } else {
+        logger.warn(`[VOICE RECEIVER] Cannot send assistant response - callback: ${!!this.onDiscordMessageCallback}, channelId: ${this.channelId}, transcript: "${transcript}"`);
+      }
+
+      // CRITICAL: Refresh conversation context after assistant responds
+      // This ensures the agent sees all recent messages including task results
+      if (this.guildId && this.channelId) {
+        logger.info('[Voice Receiver] Refreshing conversation context after assistant response...');
+        setTimeout(() => {
+          this.refreshConversationContext();
+        }, 1000); // Small delay to ensure messages are saved
+      }
+
+      // Invoke callback to save bot response
+      if (this.onMessageCallback && this.botUserId && transcript) {
+        this.onMessageCallback(this.botUserId, 'AgentFlow Bot', transcript, true);
+      }
+
+      // End the audio stream
+      if (this.currentAudioStream) {
+        this.currentAudioStream.push(null);
+        this.currentAudioStream = null;
+      }
+
+      // Reset transcript for next response
+      this.currentAssistantTranscript = '';
+      this.transcriptFinalizationTimeout = null;
+    });
+  }
+
+  /**
    * Register handler for function calls (to integrate with Claude orchestrator)
+   * Wraps handler with mutex to prevent concurrent function calls
    */
   onFunctionCall(handler: (name: string, args: any) => Promise<any>): void {
-    // Store the callback for use in our internal handler
-    this.onFunctionCallCallback = handler;
+    // Wrap handler with mutex protection
+    const wrappedHandler = async (name: string, args: any): Promise<any> => {
+      // Generate a unique call ID for tracking
+      const callId = `${name}-${Date.now()}`;
+
+      // Prevent duplicate concurrent calls for the same function
+      if (this.pendingFunctionCalls.has(name)) {
+        logger.warn(`[Function Call] Skipping duplicate concurrent call to ${name}`);
+        return { error: 'Function call already in progress', success: false };
+      }
+
+      this.pendingFunctionCalls.add(name);
+
+      try {
+        return await this.functionCallMutex.withLock(async () => {
+          logger.info(`[Function Call] Executing ${name} (${callId})`);
+          return await handler(name, args);
+        });
+      } finally {
+        this.pendingFunctionCalls.delete(name);
+      }
+    };
+
+    // Store the wrapped callback for use in our internal handler
+    this.onFunctionCallCallback = wrappedHandler;
     // Also register with voiceService to pass through
-    this.voiceService.onFunctionCall(handler);
+    this.voiceService.onFunctionCall(wrappedHandler);
   }
 
   /**

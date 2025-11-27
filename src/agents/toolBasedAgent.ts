@@ -3,11 +3,16 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { TrelloService } from '../services/trello';
+import { HetznerDeploymentService } from '../services/hetznerDeployment';
+import { ClaudeContainerService, ClaudeTaskResult } from '../services/claudeContainerService';
 import { TaskDecomposer, TaskAnalysis, SubTask } from '../utils/taskDecomposer';
 import { SmartIterationCalculator } from '../utils/smartIterationCalculator';
 import { globalCache, isCacheable, SmartCache, startCacheCleanup } from '../utils/smartCache';
 import { executeWithRetry, validateToolResult, compressResult, isRateLimited, getRetryAfter } from '../utils/resultValidator';
 import { buildSystemPrompt } from '../prompts/agentPrompts';
+import { IntentClassifier } from '../utils/intentClassifier';
+import { PostgresDatabaseService } from '../services/postgresDatabaseService';
+import { isUsingPostgres, getAgentFlowDatabase } from '../services/databaseFactory';
 
 const execAsync = promisify(exec);
 
@@ -48,14 +53,142 @@ export interface AgentResult {
 export class ToolBasedAgent {
   private client: Anthropic;
   private trelloService?: TrelloService;
+  private hetznerDeployment: HetznerDeploymentService;
+  private claudeContainer: ClaudeContainerService;
   private notificationHandler?: (message: string) => Promise<void>;
   private maxIterations = 15;
   private taskDecomposer: TaskDecomposer;
+  
+  // PostgreSQL database for logging (optional)
+  private pgDb: PostgresDatabaseService | null = null;
+  private currentTaskId: string | null = null;
+  private currentAgentId: string | null = null;
+  private currentGuildId: string | null = null;
+  private currentChannelId: string | null = null;
+
+  // Track active Claude Code container tasks
+  private activeClaudeTasks: Map<string, Promise<ClaudeTaskResult>> = new Map();
 
   constructor(apiKey: string, trelloService?: TrelloService) {
     this.client = new Anthropic({ apiKey });
     this.trelloService = trelloService;
     this.taskDecomposer = new TaskDecomposer(apiKey);
+
+    // Initialize PostgreSQL database if configured
+    if (isUsingPostgres()) {
+      this.pgDb = getAgentFlowDatabase();
+      logger.info('📊 ToolBasedAgent: PostgreSQL logging enabled');
+    }
+
+    // Initialize Hetzner Deployment Service
+    const hetznerIp = process.env.HETZNER_SERVER_IP || '178.156.198.233';
+    const hetznerUser = process.env.HETZNER_SSH_USER || 'root';
+    this.hetznerDeployment = new HetznerDeploymentService(hetznerIp, hetznerUser);
+
+    // Initialize Claude Container Service for remote Claude Code execution
+    this.claudeContainer = new ClaudeContainerService({
+      serverIp: hetznerIp,
+      sshUser: hetznerUser,
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+    });
+
+    // Set up event listeners for Claude container events
+    this.setupClaudeContainerEvents();
+  }
+
+  /**
+   * Set the current task context for logging
+   */
+  setTaskContext(taskId: string, guildId: string, channelId: string): void {
+    this.currentTaskId = taskId;
+    this.currentAgentId = taskId; // Using taskId as agentId for now
+    this.currentGuildId = guildId;
+    this.currentChannelId = channelId;
+  }
+
+  /**
+   * Log agent activity to PostgreSQL
+   */
+  private async logActivity(
+    logType: 'info' | 'warning' | 'error' | 'success' | 'step' | 'tool_call' | 'tool_result',
+    message: string,
+    details?: any
+  ): Promise<void> {
+    if (!this.pgDb || !this.currentAgentId || !this.currentGuildId || !this.currentChannelId) {
+      return; // Skip if no database or no context
+    }
+    
+    try {
+      await this.pgDb.logAgentActivity({
+        agentId: this.currentAgentId,
+        taskId: this.currentTaskId || undefined,
+        guildId: this.currentGuildId,
+        channelId: this.currentChannelId,
+        logType,
+        message,
+        details
+      });
+    } catch (error) {
+      logger.error('Failed to log agent activity to PostgreSQL:', error);
+    }
+  }
+
+  /**
+   * Log tool execution to PostgreSQL
+   */
+  private async logToolExecution(
+    toolName: string,
+    toolInput: any,
+    toolOutput: any,
+    success: boolean,
+    durationMs: number,
+    error?: string
+  ): Promise<void> {
+    if (!this.pgDb || !this.currentTaskId || !this.currentAgentId) {
+      return;
+    }
+    
+    try {
+      await this.pgDb.logToolExecution({
+        taskId: this.currentTaskId,
+        agentId: this.currentAgentId,
+        toolName,
+        toolInput,
+        toolOutput: typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput).substring(0, 5000),
+        success,
+        error,
+        durationMs
+      });
+    } catch (error) {
+      logger.error('Failed to log tool execution to PostgreSQL:', error);
+    }
+  }
+
+  /**
+   * Set up event listeners for Claude container events
+   */
+  private setupClaudeContainerEvents(): void {
+    this.claudeContainer.on('agent:started', async ({ containerId }) => {
+      await this.notify(`🚀 **Claude Agent Started**\nContainer: \`${containerId}\``);
+    });
+
+    this.claudeContainer.on('agent:tool', async ({ containerId, tool }) => {
+      await this.notify(`🔧 **Claude Using Tool:** ${tool}`);
+    });
+
+    this.claudeContainer.on('agent:error', async ({ containerId, error }) => {
+      await this.notify(`⚠️ **Claude Agent Error**\n\`${containerId}\`: ${error}`);
+    });
+
+    this.claudeContainer.on('agent:completed', async ({ containerId, result }) => {
+      const emoji = result.success ? '✅' : '❌';
+      await this.notify(
+        `${emoji} **Claude Agent ${result.success ? 'Completed' : 'Failed'}**\n` +
+        `Container: \`${containerId}\`\n` +
+        `Duration: ${(result.duration / 1000).toFixed(1)}s`
+      );
+    });
   }
 
   setNotificationHandler(handler: (message: string) => Promise<void>): void {
@@ -322,14 +455,395 @@ export class ToolBasedAgent {
       );
     }
 
+    // Add Hetzner deployment tools (always available)
+    tools.push(
+      {
+        name: 'deploy_to_hetzner',
+        description: 'Deploy a Docker container to Hetzner VPS. Syncs code, builds image, and starts container.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            service_name: {
+              type: 'string',
+              description: 'Name for the container (e.g., "my-api-server")'
+            },
+            image_name: {
+              type: 'string',
+              description: 'Name for the Docker image (defaults to service_name)'
+            },
+            build_context: {
+              type: 'string',
+              description: 'Path to the build context directory (defaults to ".")'
+            },
+            port: {
+              type: 'number',
+              description: 'Port to expose (default: 8080)'
+            },
+            env_vars: {
+              type: 'object',
+              description: 'Environment variables to set in the container',
+              additionalProperties: { type: 'string' }
+            }
+          },
+          required: ['service_name']
+        }
+      },
+      {
+        name: 'list_containers',
+        description: 'List all running Docker containers on Hetzner VPS',
+        input_schema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'get_container_logs',
+        description: 'Get recent logs from a Docker container on Hetzner VPS',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_name: {
+              type: 'string',
+              description: 'Name of the container to get logs from'
+            },
+            limit: {
+              type: 'number',
+              description: 'Number of log entries to retrieve (default: 50)'
+            }
+          },
+          required: ['container_name']
+        }
+      },
+      {
+        name: 'delete_container',
+        description: 'Stop and remove a Docker container on Hetzner VPS',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_name: {
+              type: 'string',
+              description: 'Name of the container to delete'
+            }
+          },
+          required: ['container_name']
+        }
+      },
+      {
+        name: 'restart_container',
+        description: 'Restart a Docker container on Hetzner VPS',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_name: {
+              type: 'string',
+              description: 'Name of the container to restart'
+            }
+          },
+          required: ['container_name']
+        }
+      },
+      {
+        name: 'get_container_stats',
+        description: 'Get CPU and memory usage stats for a container on Hetzner VPS',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_name: {
+              type: 'string',
+              description: 'Name of the container'
+            }
+          },
+          required: ['container_name']
+        }
+      }
+    );
+
+    // Add Claude Code container tools (for running Claude Code in isolated containers)
+    tools.push(
+      {
+        name: 'spawn_claude_agent',
+        description: 'Spawn a Claude Code agent in an isolated Docker container on Hetzner VPS. The agent runs in YOLO mode with full permissions and can execute any coding task autonomously. Returns immediately with a container ID - use get_claude_status to monitor progress.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            task: {
+              type: 'string',
+              description: 'The task description for Claude Code to execute (e.g., "Create a REST API with Express")'
+            },
+            workspace_path: {
+              type: 'string',
+              description: 'Path to the workspace directory on the VPS (default: /opt/agentflow/workspace)'
+            },
+            context_files: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'List of file paths to provide as context to Claude'
+            },
+            requirements: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'List of requirements/constraints for the task'
+            },
+            max_iterations: {
+              type: 'number',
+              description: 'Maximum number of iterations (default: unlimited)'
+            },
+            timeout: {
+              type: 'number',
+              description: 'Timeout in milliseconds (default: 600000 = 10 minutes)'
+            }
+          },
+          required: ['task']
+        }
+      },
+      {
+        name: 'get_claude_status',
+        description: 'Get the current status of a Claude Code container agent',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID returned from spawn_claude_agent'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        name: 'get_claude_output',
+        description: 'Get the current output/logs from a Claude Code container agent',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID returned from spawn_claude_agent'
+            },
+            lines: {
+              type: 'number',
+              description: 'Number of lines to retrieve (default: 100)'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        name: 'stop_claude_agent',
+        description: 'Stop a running Claude Code container agent',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID to stop'
+            }
+          },
+          required: ['container_id']
+        }
+      },
+      {
+        name: 'list_claude_agents',
+        description: 'List all Claude Code container agents (running and stopped)',
+        input_schema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'wait_for_claude_agent',
+        description: 'Wait for a Claude Code container agent to complete and return the final result. Use this after spawn_claude_agent if you need to wait for completion.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            container_id: {
+              type: 'string',
+              description: 'The container ID to wait for'
+            },
+            timeout: {
+              type: 'number',
+              description: 'Maximum time to wait in milliseconds (default: 600000 = 10 minutes)'
+            }
+          },
+          required: ['container_id']
+        }
+      }
+    );
+
+    // Add GitHub/Workspace management tools
+    tools.push(
+      {
+        name: 'clone_repo',
+        description: 'Clone a GitHub repository to a workspace on the VPS. The workspace can then be used by spawn_claude_agent.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            repo_url: {
+              type: 'string',
+              description: 'The GitHub repository URL (e.g., "https://github.com/user/repo")'
+            },
+            workspace_name: {
+              type: 'string',
+              description: 'Name for the workspace (defaults to repo name)'
+            },
+            branch: {
+              type: 'string',
+              description: 'Branch to clone (default: default branch)'
+            }
+          },
+          required: ['repo_url']
+        }
+      },
+      {
+        name: 'create_workspace',
+        description: 'Create a new empty workspace with git initialized. Optionally create a new GitHub repository.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name for the workspace'
+            },
+            create_github_repo: {
+              type: 'boolean',
+              description: 'Create a new GitHub repository (default: false)'
+            },
+            repo_visibility: {
+              type: 'string',
+              enum: ['public', 'private'],
+              description: 'Repository visibility (default: private)'
+            }
+          },
+          required: ['workspace_name']
+        }
+      },
+      {
+        name: 'list_workspaces',
+        description: 'List all workspaces on the VPS with their git status',
+        input_schema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'push_workspace',
+        description: 'Commit and push changes from a workspace to GitHub',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace'
+            },
+            commit_message: {
+              type: 'string',
+              description: 'Commit message (default: "Update from Claude Agent")'
+            },
+            branch: {
+              type: 'string',
+              description: 'Branch to push to (default: main)'
+            }
+          },
+          required: ['workspace_name']
+        }
+      },
+      {
+        name: 'create_branch',
+        description: 'Create a new git branch in a workspace',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace'
+            },
+            branch_name: {
+              type: 'string',
+              description: 'Name for the new branch'
+            },
+            push: {
+              type: 'boolean',
+              description: 'Push the branch to remote (default: true)'
+            }
+          },
+          required: ['workspace_name', 'branch_name']
+        }
+      },
+      {
+        name: 'delete_workspace',
+        description: 'Delete a workspace from the VPS',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace to delete'
+            }
+          },
+          required: ['workspace_name']
+        }
+      }
+    );
+
+    // Add Vercel deployment tools
+    tools.push(
+      {
+        name: 'deploy_to_vercel',
+        description: 'Deploy a workspace to Vercel. Use after pushing code changes.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace to deploy'
+            },
+            prod: {
+              type: 'boolean',
+              description: 'Deploy to production (default: false for preview)'
+            },
+            project_name: {
+              type: 'string',
+              description: 'Vercel project name (auto-detected if linked)'
+            }
+          },
+          required: ['workspace_name']
+        }
+      },
+      {
+        name: 'link_to_vercel',
+        description: 'Link a workspace to an existing Vercel project',
+        input_schema: {
+          type: 'object',
+          properties: {
+            workspace_name: {
+              type: 'string',
+              description: 'Name of the workspace to link'
+            },
+            project_name: {
+              type: 'string',
+              description: 'Vercel project name to link to'
+            }
+          },
+          required: ['workspace_name']
+        }
+      }
+    );
+
     return tools;
   }
 
   /**
-   * Execute a tool call (with caching, retry, and validation)
+   * Execute a tool call (with caching, retry, validation, and PostgreSQL logging)
    */
   private async executeTool(toolName: string, toolInput: any): Promise<any> {
     logger.info(`🔧 Executing tool: ${toolName}`);
+    const startTime = Date.now();
+
+    // Log tool call start
+    await this.logActivity('tool_call', `Executing tool: ${toolName}`, { toolInput });
 
     // OPTIMIZATION 1: Check cache first
     const cacheability = isCacheable(toolName, toolInput);
@@ -339,6 +853,9 @@ export class ToolBasedAgent {
       
       if (cached) {
         logger.info(`⚡ CACHE HIT for ${toolName} - instant response!`);
+        const durationMs = Date.now() - startTime;
+        await this.logToolExecution(toolName, toolInput, cached, true, durationMs);
+        await this.logActivity('tool_result', `Cache hit for ${toolName}`, { cached: true, durationMs });
         return cached;
       }
     }
@@ -350,6 +867,8 @@ export class ToolBasedAgent {
         { maxRetries: 2, retryDelay: 1000, backoffMultiplier: 2 },
         `${toolName} call`
       );
+
+      const durationMs = Date.now() - startTime;
 
       // OPTIMIZATION 3: Validate result
       const validation = validateToolResult(result, toolName);
@@ -375,10 +894,25 @@ export class ToolBasedAgent {
         }
       }
 
+      // Log successful tool execution to PostgreSQL
+      const success = result.success !== false;
+      await this.logToolExecution(toolName, toolInput, compressed, success, durationMs);
+      await this.logActivity('tool_result', `Tool ${toolName} completed in ${durationMs}ms`, { 
+        success, 
+        durationMs,
+        resultPreview: JSON.stringify(compressed).substring(0, 200)
+      });
+
       return compressed;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const durationMs = Date.now() - startTime;
       logger.error(`Tool execution failed: ${toolName}`, error);
+      
+      // Log failed tool execution to PostgreSQL
+      await this.logToolExecution(toolName, toolInput, null, false, durationMs, errorMessage);
+      await this.logActivity('error', `Tool ${toolName} failed: ${errorMessage}`, { durationMs, error: errorMessage });
+      
       return { error: errorMessage, success: false };
     }
   }
@@ -427,6 +961,70 @@ export class ToolBasedAgent {
           error: `Tool '${toolName}' not yet implemented. Use execute_bash with curl or Trello API for advanced operations.`,
           suggestion: `Example: execute_bash("curl -X GET 'https://api.trello.com/1/boards/...')"}`
         };
+
+      // Hetzner deployment tools
+      case 'deploy_to_hetzner':
+        return await this.hetznerDeployToVPS(toolInput);
+
+      case 'list_containers':
+        return await this.hetznerListContainers();
+
+      case 'get_container_logs':
+        return await this.hetznerGetLogs(toolInput.container_name, toolInput.limit || 50);
+
+      case 'delete_container':
+        return await this.hetznerDeleteContainer(toolInput.container_name);
+
+      case 'restart_container':
+        return await this.hetznerRestartContainer(toolInput.container_name);
+
+      case 'get_container_stats':
+        return await this.hetznerGetStats(toolInput.container_name);
+
+      // Claude Code container tools
+      case 'spawn_claude_agent':
+        return await this.claudeSpawnAgent(toolInput);
+
+      case 'get_claude_status':
+        return await this.claudeGetStatus(toolInput.container_id);
+
+      case 'get_claude_output':
+        return await this.claudeGetOutput(toolInput.container_id, toolInput.lines || 100);
+
+      case 'stop_claude_agent':
+        return await this.claudeStopAgent(toolInput.container_id);
+
+      case 'list_claude_agents':
+        return await this.claudeListAgents();
+
+      case 'wait_for_claude_agent':
+        return await this.claudeWaitForAgent(toolInput.container_id, toolInput.timeout || 600000);
+
+      // GitHub/Workspace management tools
+      case 'clone_repo':
+        return await this.workspaceCloneRepo(toolInput);
+
+      case 'create_workspace':
+        return await this.workspaceCreate(toolInput);
+
+      case 'list_workspaces':
+        return await this.workspaceList();
+
+      case 'push_workspace':
+        return await this.workspacePush(toolInput);
+
+      case 'create_branch':
+        return await this.workspaceCreateBranch(toolInput);
+
+      case 'delete_workspace':
+        return await this.workspaceDelete(toolInput.workspace_name);
+
+      // Vercel deployment tools
+      case 'deploy_to_vercel':
+        return await this.vercelDeploy(toolInput);
+
+      case 'link_to_vercel':
+        return await this.vercelLink(toolInput);
 
       default:
         throw new Error(`Unknown tool: ${toolName}`);
@@ -606,12 +1204,650 @@ export class ToolBasedAgent {
   }
 
   /**
+   * Hetzner: Deploy to VPS
+   */
+  private async hetznerDeployToVPS(input: {
+    service_name: string;
+    image_name?: string;
+    build_context?: string;
+    port?: number;
+    env_vars?: Record<string, string>;
+  }): Promise<any> {
+    try {
+      // Set up notification callback
+      this.hetznerDeployment.setNotificationCallback(async (event) => {
+        await this.notify(`🚀 **${event.type.toUpperCase()}**: ${event.message}\n${event.details || ''}`);
+      });
+
+      const result = await this.hetznerDeployment.deployToHetzner({
+        serviceName: input.service_name,
+        imageName: input.image_name || input.service_name,
+        buildContext: input.build_context || '.',
+        port: input.port || 8080,
+        envVars: input.env_vars || {}
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Hetzner deployment failed', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Hetzner: List containers
+   */
+  private async hetznerListContainers(): Promise<any> {
+    try {
+      const containers = await this.hetznerDeployment.listContainers();
+      return {
+        success: true,
+        message: containers.length > 0
+          ? `Found ${containers.length} container(s)`
+          : 'No containers found',
+        containers
+      };
+    } catch (error) {
+      logger.error('Failed to list containers', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Hetzner: Get container logs
+   */
+  private async hetznerGetLogs(containerName: string, limit: number): Promise<any> {
+    try {
+      const logs = await this.hetznerDeployment.getContainerLogs(containerName, limit);
+      return {
+        success: true,
+        message: `Retrieved ${logs.length} log entries`,
+        logs
+      };
+    } catch (error) {
+      logger.error('Failed to get container logs', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Hetzner: Delete container
+   */
+  private async hetznerDeleteContainer(containerName: string): Promise<any> {
+    try {
+      const success = await this.hetznerDeployment.deleteContainer(containerName);
+      if (success) {
+        return {
+          success: true,
+          message: `Successfully deleted container: ${containerName}`
+        };
+      } else {
+        return {
+          success: false,
+          error: `Failed to delete container: ${containerName}`
+        };
+      }
+    } catch (error) {
+      logger.error('Failed to delete container', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Hetzner: Restart container
+   */
+  private async hetznerRestartContainer(containerName: string): Promise<any> {
+    try {
+      const success = await this.hetznerDeployment.restartContainer(containerName);
+      if (success) {
+        return {
+          success: true,
+          message: `Successfully restarted container: ${containerName}`
+        };
+      } else {
+        return {
+          success: false,
+          error: `Failed to restart container: ${containerName}`
+        };
+      }
+    } catch (error) {
+      logger.error('Failed to restart container', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Hetzner: Get container stats
+   */
+  private async hetznerGetStats(containerName: string): Promise<any> {
+    try {
+      const stats = await this.hetznerDeployment.getContainerStats(containerName);
+      if (stats) {
+        return {
+          success: true,
+          message: `Container ${containerName} stats`,
+          stats
+        };
+      } else {
+        return {
+          success: false,
+          error: `Failed to get stats for container: ${containerName}`
+        };
+      }
+    } catch (error) {
+      logger.error('Failed to get container stats', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // ========================================
+  // Claude Code Container Tools
+  // ========================================
+
+  /**
+   * Claude Container: Spawn a new Claude Code agent
+   */
+  private async claudeSpawnAgent(input: {
+    task: string;
+    workspace_path?: string;
+    context_files?: string[];
+    requirements?: string[];
+    max_iterations?: number;
+    timeout?: number;
+  }): Promise<any> {
+    try {
+      logger.info(`🤖 Spawning Claude Code agent for task: ${input.task}`);
+
+      // Check if image exists, build if needed
+      const imageExists = await this.claudeContainer.imageExists();
+      if (!imageExists) {
+        logger.info('Building Claude Code Docker image...');
+        await this.notify('🔨 **Building Claude Code Image**\nFirst-time setup, this may take a few minutes...');
+        const buildSuccess = await this.claudeContainer.buildImage();
+        if (!buildSuccess) {
+          return {
+            success: false,
+            error: 'Failed to build Claude Code Docker image. Check VPS logs for details.'
+          };
+        }
+      }
+
+      // Spawn the agent
+      const { containerId, streamPromise } = await this.claudeContainer.spawnAgent(
+        input.task,
+        {
+          workspacePath: input.workspace_path,
+          contextFiles: input.context_files,
+          requirements: input.requirements,
+          maxIterations: input.max_iterations,
+          timeout: input.timeout,
+          notificationHandler: async (msg) => await this.notify(msg)
+        }
+      );
+
+      // Store the stream promise so we can wait for it later
+      this.activeClaudeTasks.set(containerId, streamPromise);
+
+      return {
+        success: true,
+        message: `Claude Code agent spawned successfully`,
+        containerId,
+        task: input.task,
+        status: 'running',
+        note: 'Use get_claude_status to monitor progress, or wait_for_claude_agent to wait for completion'
+      };
+    } catch (error) {
+      logger.error('Failed to spawn Claude agent', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Claude Container: Get agent status
+   */
+  private async claudeGetStatus(containerId: string): Promise<any> {
+    try {
+      const status = await this.claudeContainer.getAgentStatus(containerId);
+      return {
+        success: true,
+        containerId,
+        ...status
+      };
+    } catch (error) {
+      logger.error(`Failed to get Claude agent status: ${containerId}`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Claude Container: Get agent output/logs
+   */
+  private async claudeGetOutput(containerId: string, lines: number): Promise<any> {
+    try {
+      const logs = await this.claudeContainer.getAgentLogs(containerId, lines);
+      return {
+        success: true,
+        containerId,
+        lineCount: logs.length,
+        output: logs.join('\n')
+      };
+    } catch (error) {
+      logger.error(`Failed to get Claude agent output: ${containerId}`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Claude Container: Stop a running agent
+   */
+  private async claudeStopAgent(containerId: string): Promise<any> {
+    try {
+      const success = await this.claudeContainer.stopAgent(containerId);
+      this.activeClaudeTasks.delete(containerId);
+
+      if (success) {
+        return {
+          success: true,
+          message: `Successfully stopped Claude agent: ${containerId}`
+        };
+      } else {
+        return {
+          success: false,
+          error: `Failed to stop Claude agent: ${containerId}`
+        };
+      }
+    } catch (error) {
+      logger.error(`Failed to stop Claude agent: ${containerId}`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Claude Container: List all agents
+   */
+  private async claudeListAgents(): Promise<any> {
+    try {
+      const agents = await this.claudeContainer.listAgents();
+      return {
+        success: true,
+        message: agents.length > 0
+          ? `Found ${agents.length} Claude Code agent(s)`
+          : 'No Claude Code agents found',
+        agents
+      };
+    } catch (error) {
+      logger.error('Failed to list Claude agents', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Claude Container: Wait for agent to complete
+   */
+  private async claudeWaitForAgent(containerId: string, timeout: number): Promise<any> {
+    try {
+      // Check if we have a tracked task
+      const taskPromise = this.activeClaudeTasks.get(containerId);
+
+      if (taskPromise) {
+        // Wait for the existing task
+        const result = await Promise.race([
+          taskPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout waiting for agent after ${timeout}ms`)), timeout)
+          )
+        ]);
+
+        this.activeClaudeTasks.delete(containerId);
+
+        return {
+          success: result.success,
+          containerId,
+          duration: result.duration,
+          exitCode: result.exitCode,
+          output: result.output.substring(0, 5000), // Truncate large outputs
+          error: result.error
+        };
+      }
+
+      // If no tracked task, check if container is still running
+      const status = await this.claudeContainer.getAgentStatus(containerId);
+
+      if (!status.running) {
+        // Container already finished, get logs
+        const logs = await this.claudeContainer.getAgentLogs(containerId, 500);
+        return {
+          success: true,
+          containerId,
+          status: 'completed',
+          output: logs.join('\n').substring(0, 5000)
+        };
+      }
+
+      // Container is running but we don't have the promise - poll until done
+      const startTime = Date.now();
+      while (Date.now() - startTime < timeout) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+        const currentStatus = await this.claudeContainer.getAgentStatus(containerId);
+
+        if (!currentStatus.running) {
+          const logs = await this.claudeContainer.getAgentLogs(containerId, 500);
+          return {
+            success: true,
+            containerId,
+            status: 'completed',
+            duration: Date.now() - startTime,
+            output: logs.join('\n').substring(0, 5000)
+          };
+        }
+      }
+
+      return {
+        success: false,
+        error: `Timeout waiting for agent ${containerId} after ${timeout}ms`
+      };
+    } catch (error) {
+      logger.error(`Failed to wait for Claude agent: ${containerId}`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // ========================================
+  // Workspace / GitHub Management Tools
+  // ========================================
+
+  /**
+   * Clone a repository to a workspace
+   */
+  private async workspaceCloneRepo(input: {
+    repo_url: string;
+    workspace_name?: string;
+    branch?: string;
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.cloneRepo(input.repo_url, {
+        workspaceName: input.workspace_name,
+        branch: input.branch
+      });
+
+      if (result.success) {
+        await this.notify(`📦 **Repository Cloned**\n\`${input.repo_url}\`\nWorkspace: \`${result.workspacePath}\``);
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to clone repository', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Create a new workspace
+   */
+  private async workspaceCreate(input: {
+    workspace_name: string;
+    create_github_repo?: boolean;
+    repo_visibility?: 'public' | 'private';
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.createWorkspace(input.workspace_name, {
+        initGit: true,
+        createGitHubRepo: input.create_github_repo,
+        repoVisibility: input.repo_visibility
+      });
+
+      if (result.success) {
+        let msg = `📁 **Workspace Created**\nPath: \`${result.workspacePath}\``;
+        if (result.repoUrl) {
+          msg += `\nGitHub: ${result.repoUrl}`;
+        }
+        await this.notify(msg);
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to create workspace', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * List all workspaces
+   */
+  private async workspaceList(): Promise<any> {
+    try {
+      const workspaces = await this.claudeContainer.listWorkspaces();
+      return {
+        success: true,
+        message: workspaces.length > 0
+          ? `Found ${workspaces.length} workspace(s)`
+          : 'No workspaces found',
+        workspaces
+      };
+    } catch (error) {
+      logger.error('Failed to list workspaces', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Push workspace changes to GitHub
+   */
+  private async workspacePush(input: {
+    workspace_name: string;
+    commit_message?: string;
+    branch?: string;
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.pushWorkspace(input.workspace_name, {
+        commitMessage: input.commit_message,
+        branch: input.branch
+      });
+
+      if (result.success) {
+        await this.notify(`🚀 **Changes Pushed**\nWorkspace: \`${input.workspace_name}\`\nBranch: \`${input.branch || 'main'}\``);
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to push workspace', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Create a new branch in a workspace
+   */
+  private async workspaceCreateBranch(input: {
+    workspace_name: string;
+    branch_name: string;
+    push?: boolean;
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.createBranch(
+        input.workspace_name,
+        input.branch_name,
+        { push: input.push }
+      );
+
+      if (result.success) {
+        await this.notify(`🌿 **Branch Created**\nWorkspace: \`${input.workspace_name}\`\nBranch: \`${input.branch_name}\``);
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to create branch', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Delete a workspace
+   */
+  private async workspaceDelete(workspaceName: string): Promise<any> {
+    try {
+      const success = await this.claudeContainer.deleteWorkspace(workspaceName);
+
+      if (success) {
+        return {
+          success: true,
+          message: `Successfully deleted workspace: ${workspaceName}`
+        };
+      } else {
+        return {
+          success: false,
+          error: `Failed to delete workspace: ${workspaceName}`
+        };
+      }
+    } catch (error) {
+      logger.error('Failed to delete workspace', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // ========================================
+  // Vercel Deployment Tools
+  // ========================================
+
+  /**
+   * Deploy a workspace to Vercel
+   */
+  private async vercelDeploy(input: {
+    workspace_name: string;
+    prod?: boolean;
+    project_name?: string;
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.deployToVercel(input.workspace_name, {
+        prod: input.prod,
+        projectName: input.project_name
+      });
+
+      if (result.success && result.url) {
+        await this.notify(
+          `🚀 **Deployed to Vercel**\n` +
+          `Workspace: \`${input.workspace_name}\`\n` +
+          `URL: ${result.url}\n` +
+          `Environment: ${input.prod ? 'Production' : 'Preview'}`
+        );
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to deploy to Vercel', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Link a workspace to Vercel
+   */
+  private async vercelLink(input: {
+    workspace_name: string;
+    project_name?: string;
+  }): Promise<any> {
+    try {
+      const result = await this.claudeContainer.linkToVercel(input.workspace_name, {
+        projectName: input.project_name
+      });
+
+      if (result.success) {
+        await this.notify(`🔗 **Linked to Vercel**\nWorkspace: \`${input.workspace_name}\``);
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to link to Vercel', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
    * Execute task with iterative tool calling
    */
   /**
-   * Enhanced executeTask with automatic task decomposition
+   * Enhanced executeTask with automatic task decomposition and intent classification
    */
   async executeTask(task: AgentTask): Promise<AgentResult> {
+    // Step 0: INTENT CLASSIFICATION - Check if this is conversational or an actual task
+    const intentResult = IntentClassifier.classify(task.command);
+    logger.info(`🎯 Intent Classification: ${IntentClassifier.getClassificationSummary(task.command)}`);
+    
+    // Handle conversational messages IMMEDIATELY without task execution
+    if (!intentResult.shouldExecuteTask) {
+      logger.info(`💬 Conversational message detected (${intentResult.intent}) - responding directly`);
+      
+      const response = intentResult.suggestedResponse || "What can I help you with?";
+      await this.notify(response);
+      
+      return {
+        success: true,
+        message: response,
+        iterations: 0,
+        toolCalls: 0
+      };
+    }
+    
     // Step 1: Quick heuristic check (fast, no AI call needed for simple tasks)
     const taskType = (task as any).context?.taskType;
     const quickEstimate = SmartIterationCalculator.calculate(task.command, taskType);
@@ -762,6 +1998,17 @@ export class ToolBasedAgent {
     let toolCalls = 0;
     let continueLoop = true;
 
+    // Set task context for logging
+    const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setTaskContext(taskId, task.context.guildId, task.context.channelId);
+
+    // Log task start
+    await this.logActivity('info', `Task started: ${task.command.substring(0, 100)}`, {
+      command: task.command,
+      maxIterations: maxIter,
+      userId: task.context.userId
+    });
+
     // Initial user message
     conversationHistory.push({
       role: 'user',
@@ -779,6 +2026,9 @@ export class ToolBasedAgent {
         iterations++;
         logger.info(`🔄 Iteration ${iterations}/${maxIter}`);
         await this.notify(`🔄 **Iteration ${iterations}/${maxIter}**\nProcessing...`);
+        
+        // Log iteration start
+        await this.logActivity('step', `Iteration ${iterations}/${maxIter} started`, { iteration: iterations, maxIterations: maxIter });
 
         // Call Claude with tools (WITH TIMEOUT!)
         const TIMEOUT_MS = 60000; // 60 second timeout per iteration
@@ -881,6 +2131,13 @@ export class ToolBasedAgent {
 
           await this.notify(`🏁 **Task Complete**\n${finalMessage}`);
 
+          // Log successful completion
+          await this.logActivity('success', `Task completed successfully`, {
+            iterations,
+            toolCalls,
+            finalMessagePreview: finalMessage.substring(0, 200)
+          });
+
           return {
             success: true,
             message: finalMessage,
@@ -890,6 +2147,9 @@ export class ToolBasedAgent {
         } else if (response.stop_reason === 'max_tokens') {
           logger.warn('⚠️ Hit max tokens limit');
           continueLoop = false;
+
+          // Log max tokens error
+          await this.logActivity('warning', 'Task incomplete - hit token limit', { iterations, toolCalls });
 
           return {
             success: false,
@@ -906,6 +2166,9 @@ export class ToolBasedAgent {
         logger.warn(`⚠️ Hit max iterations (${maxIter})`);
         await this.notify(`⚠️ **Max Iterations Reached**\nCompleted ${iterations} iterations with ${toolCalls} tool calls.`);
 
+        // Log max iterations warning
+        await this.logActivity('warning', `Task incomplete - reached max iterations (${maxIter})`, { iterations, toolCalls });
+
         return {
           success: false,
           message: `Task incomplete - reached max iterations (${maxIter})`,
@@ -916,6 +2179,8 @@ export class ToolBasedAgent {
       }
 
       // Shouldn't reach here
+      await this.logActivity('warning', 'Task ended unexpectedly', { iterations, toolCalls });
+      
       return {
         success: false,
         message: 'Task ended unexpectedly',
@@ -929,6 +2194,14 @@ export class ToolBasedAgent {
       logger.error('❌ Agent execution failed', error);
 
       await this.notify(`❌ **Agent Failed**\n\`\`\`\n${errorMessage}\n\`\`\``);
+
+      // Log error
+      await this.logActivity('error', `Agent execution failed: ${errorMessage}`, { 
+        iterations, 
+        toolCalls,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined
+      });
 
       return {
         success: false,

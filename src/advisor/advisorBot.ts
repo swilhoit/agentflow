@@ -7,7 +7,7 @@ import {
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../utils/logger';
 import { AdvisorTools } from './advisorTools';
-import { getSQLiteDatabase } from '../services/databaseFactory';
+import { isUsingSupabase, getSQLiteDatabase } from '../services/databaseFactory';
 import type { DatabaseService } from '../services/database';
 
 /**
@@ -21,7 +21,7 @@ export class AdvisorBot {
   private anthropic: Anthropic;
   private tools: AdvisorTools;
   private monitoredChannels: Set<string> = new Set();
-  private db: DatabaseService;
+  private db: DatabaseService | null = null;
 
   // Configuration
   private readonly BOT_NAME = 'mr krabs';
@@ -166,9 +166,17 @@ Remember: I love money, and I want you to love (and keep) your money too! Let's 
     // Initialize tools
     this.tools = new AdvisorTools();
 
-    // Initialize database
-    this.db = getSQLiteDatabase();
-    logger.info('💰 Financial Advisor database initialized');
+    // Initialize database (only for SQLite - Supabase features handled separately)
+    if (!isUsingSupabase()) {
+      try {
+        this.db = getSQLiteDatabase();
+        logger.info('💰 Financial Advisor database initialized (SQLite)');
+      } catch (e) {
+        logger.warn('⚠️  Financial Advisor running without local database');
+      }
+    } else {
+      logger.info('💰 Financial Advisor using Supabase - local caching disabled');
+    }
 
     // Set monitored channels
     channels.forEach(channelId => this.monitoredChannels.add(channelId));
@@ -259,27 +267,28 @@ Remember: I love money, and I want you to love (and keep) your money too! Let's 
       if (response) {
         await message.reply(response);
 
-        // Save user message to database
-        this.db.saveMessage({
-          guildId: message.guild!.id,
-          channelId: message.channel.id,
-          userId: message.author.id,
-          username: message.author.tag,
-          message: message.content,
-          messageType: 'text',
-          timestamp: new Date()
-        });
+        // Save messages to database (if available)
+        if (this.db) {
+          this.db.saveMessage({
+            guildId: message.guild!.id,
+            channelId: message.channel.id,
+            userId: message.author.id,
+            username: message.author.tag,
+            message: message.content,
+            messageType: 'text',
+            timestamp: new Date()
+          });
 
-        // Save bot response to database
-        this.db.saveMessage({
-          guildId: message.guild!.id,
-          channelId: message.channel.id,
-          userId: this.client.user!.id,
-          username: this.BOT_NAME, // 'mr krabs'
-          message: response,
-          messageType: 'agent_response',
-          timestamp: new Date()
-        });
+          this.db.saveMessage({
+            guildId: message.guild!.id,
+            channelId: message.channel.id,
+            userId: this.client.user!.id,
+            username: this.BOT_NAME, // 'mr krabs'
+            message: response,
+            messageType: 'agent_response',
+            timestamp: new Date()
+          });
+        }
 
         // Update rate limit
         this.messageRateLimits.set(message.author.id, Date.now());

@@ -24,7 +24,7 @@ export interface CleanupReport {
  * - Orphaned agents
  * - Stale database entries
  * - Temporary files
- * - Cloud Run processes
+ * - Cloud processes (Google Cloud Run user deployments)
  */
 export class CleanupManager {
   private cleanupInterval?: NodeJS.Timeout;
@@ -345,7 +345,7 @@ export class CleanupManager {
   }
 
   /**
-   * Check for running Cloud Run processes
+   * Check for running Cloud Run processes (user deployments, not bot infrastructure)
    */
   private async checkCloudProcesses(): Promise<void> {
     try {

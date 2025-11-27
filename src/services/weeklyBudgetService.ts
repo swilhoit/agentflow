@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase } from './databaseFactory';
+import { getSQLiteDatabase, getDatabaseType } from './databaseFactory';
+import { getPostgresDatabase, PostgresDatabaseService } from './postgresDatabaseService';
 import type { DatabaseService } from './database';
 import { Client, TextChannel } from 'discord.js';
 import * as cron from 'node-cron';
@@ -12,9 +13,13 @@ import * as cron from 'node-cron';
  * - Business/work expenses
  * - Week-over-week trends
  * - Monthly projections
+ *
+ * Supports both SQLite (local) and PostgreSQL (cloud) databases
  */
 export class WeeklyBudgetService {
-  private db: DatabaseService;
+  private sqliteDb?: DatabaseService;
+  private postgresDb?: PostgresDatabaseService;
+  private usePostgres: boolean;
   private discordClient?: Client;
   private channelId: string;
   private weeklyUpdateCron?: cron.ScheduledTask;
@@ -38,7 +43,15 @@ export class WeeklyBudgetService {
     enabled?: boolean;
     weeklyUpdateTime?: string; // Cron format, default "0 20 * * 0" (8 PM Sunday)
   }) {
-    this.db = getSQLiteDatabase();
+    const dbType = getDatabaseType();
+    this.usePostgres = dbType === 'postgres' || dbType === 'supabase';
+
+    if (this.usePostgres) {
+      this.postgresDb = getPostgresDatabase();
+    } else {
+      this.sqliteDb = getSQLiteDatabase();
+    }
+
     this.personalBudgets = {
       groceries: config.groceriesBudget,
       dining: config.diningBudget,
@@ -52,7 +65,7 @@ export class WeeklyBudgetService {
       this.setupWeeklyUpdates(config.weeklyUpdateTime || '0 20 * * 0');
     }
 
-    logger.info(`📅 Weekly Budget Service initialized`);
+    logger.info(`📅 Weekly Budget Service initialized (${this.usePostgres ? 'PostgreSQL' : 'SQLite'} mode)`);
     logger.info(`   Personal Weekly Budget: $${this.getTotalWeeklyPersonalBudget()}`);
     logger.info(`   Monthly Business Budget: $${this.monthlyBusinessBudget}`);
     logger.info(`   Alert channel: ${this.channelId}`);
@@ -123,14 +136,22 @@ export class WeeklyBudgetService {
   /**
    * Get spending for a specific week
    */
-  private getWeekSpending(startDate: string, endDate: string): {
+  private async getWeekSpending(startDate: string, endDate: string): Promise<{
     groceries: { total: number; transactions: any[] };
     dining: { total: number; transactions: any[] };
     other: { total: number; transactions: any[] };
     business: { total: number; transactions: any[] };
     totalPersonal: number;
-  } {
-    const transactions = this.db.getTransactionsByDateRange(startDate, endDate);
+  }> {
+    // Get transactions from appropriate database
+    let transactions: any[];
+    if (this.usePostgres && this.postgresDb) {
+      transactions = await this.postgresDb.getTransactionsByDateRange(startDate, endDate);
+    } else if (this.sqliteDb) {
+      transactions = this.sqliteDb.getTransactionsByDateRange(startDate, endDate);
+    } else {
+      transactions = [];
+    }
 
     // Filter to actual spending
     const excludeKeywords = [
@@ -288,9 +309,9 @@ export class WeeklyBudgetService {
       const previousWeekRange = this.getPreviousWeekRange();
       const monthRange = this.getCurrentMonthRange();
 
-      const currentWeek = this.getWeekSpending(currentWeekRange.startDate, currentWeekRange.endDate);
-      const previousWeek = this.getWeekSpending(previousWeekRange.startDate, previousWeekRange.endDate);
-      const monthToDate = this.getWeekSpending(monthRange.startDate, monthRange.endDate);
+      const currentWeek = await this.getWeekSpending(currentWeekRange.startDate, currentWeekRange.endDate);
+      const previousWeek = await this.getWeekSpending(previousWeekRange.startDate, previousWeekRange.endDate);
+      const monthToDate = await this.getWeekSpending(monthRange.startDate, monthRange.endDate);
 
       const totalWeeklyBudget = this.getTotalWeeklyPersonalBudget();
       const personalPercentUsed = (currentWeek.totalPersonal / totalWeeklyBudget) * 100;

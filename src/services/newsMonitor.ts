@@ -201,9 +201,13 @@ export class NewsMonitor {
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle(article.headline.slice(0, 256))
-      .setDescription(article.summary.slice(0, 4096))
       .setURL(article.url)
       .setTimestamp(article.datetime * 1000);
+
+    // Only set description if summary exists and is not empty
+    if (article.summary && article.summary.trim().length > 0) {
+      embed.setDescription(article.summary.slice(0, 4096));
+    }
 
     if (article.image) {
       embed.setThumbnail(article.image);

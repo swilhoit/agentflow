@@ -37,7 +37,7 @@ async function main() {
     logger.info(`📡 Will monitor ${channels.length} channel(s):`);
     channels.forEach(ch => logger.info(`   - ${ch}`));
 
-    // Start HTTP server FIRST for Cloud Run health checks
+    // Start HTTP server FIRST for container health checks
     const port = parseInt(process.env.ATLAS_PORT || process.env.PORT || '8082');
     const server = http.createServer((req, res) => {
       if (req.url === '/health' || req.url === '/') {

@@ -146,7 +146,7 @@ npm start
 
 **Example Commands:**
 - *"Create a Next.js app with TypeScript"*
-- *"Deploy the latest changes to Cloud Run"*
+- *"Deploy the latest changes to Hetzner"*
 - *"Show me my Trello boards"*
 - *"Analyze the authentication module and suggest improvements"*
 
@@ -172,7 +172,7 @@ Agents have access to:
 - **Terminal Execution**: Run any bash command
 - **Trello Integration**: Create cards, lists, search, update
 - **GitHub Integration**: Manage repos, PRs, issues
-- **Google Cloud**: Deploy to Cloud Run, manage services
+- **Hetzner Cloud**: Deploy containers to VPS, manage services
 - **File Operations**: Read, write, edit files
 - **Task Decomposition**: Break complex tasks into steps
 
@@ -180,7 +180,7 @@ Agents have access to:
 
 - **GitHub Actions**: Auto-deploy on every push to `master`
 - **Docker**: Multi-stage builds for production
-- **Google Cloud Run**: Serverless deployment, scales to zero
+- **Hetzner VPS**: Docker Compose deployment, always-on
 - **Zero-Downtime**: Rolling deployments, health checks
 - **Secrets Management**: All credentials encrypted in GitHub Secrets
 
@@ -336,9 +336,9 @@ Just talk naturally after joining voice:
 - *"Add error handling to the API endpoints"*
 
 **Deployment:**
-- *"Deploy the bot to Cloud Run"*
-- *"Check the status of the production service"*
-- *"Roll back to the previous deployment"*
+- *"Deploy the bot to Hetzner"*
+- *"Check the status of my containers"*
+- *"Show logs for agentflow-bot"*
 
 **Project Management:**
 - *"Show my Trello boards"*
@@ -467,19 +467,19 @@ docker run -p 3001:3001 --env-file .env agentflow
 docker-compose up -d
 ```
 
-### Google Cloud Run (Production)
+### Hetzner VPS (Production)
 
-**Automated Deployment (Recommended):**
+**Deploy All Bots:**
 
 ```bash
-# One-time setup
-./scripts/setup-github-actions.sh
+# Deploy all 3 bots to Hetzner VPS
+./deploy-all-bots.sh
 
-# Configure GitHub Secrets (see GITHUB_ACTIONS_SETUP.md)
-# Then just push to master:
-git push origin master
+# Or restart existing containers
+./finish-setup.sh
 
-# Bot deploys automatically! ✨
+# Check status
+./verify-bots.sh
 ```
 
 **Manual Deployment:**
@@ -759,7 +759,7 @@ Built with:
 - [Anthropic Claude](https://anthropic.com) - World-class AI reasoning
 - [ElevenLabs](https://elevenlabs.io) - Best-in-class conversational AI
 - [Discord.js](https://discord.js.org) - Powerful Discord library
-- [Google Cloud Run](https://cloud.google.com/run) - Serverless deployment
+- [Hetzner Cloud](https://hetzner.cloud) - Reliable VPS hosting
 - [Groq](https://groq.com) - Ultra-fast AI inference
 
 ---

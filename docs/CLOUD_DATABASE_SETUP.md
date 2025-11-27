@@ -1,32 +1,25 @@
 # Cloud Database Setup
 
-AgentFlow is configured for **cloud-first operation**. All data is stored in cloud databases:
+AgentFlow uses **Supabase** as the unified cloud database for all services:
 
-- **Main App**: Google Cloud SQL (PostgreSQL)
+- **Main App (Discord Bots)**: Supabase (PostgreSQL)
 - **Dashboard**: Supabase (PostgreSQL)
 
 ## Required Environment Variables
 
-### Main App (Discord Bot, Agents)
+### All Services (Bot + Dashboard)
 
 ```bash
-# Database Configuration - defaults to cloud
-DATABASE_TYPE=cloudsql
+# Database Configuration - defaults to Supabase
+DATABASE_TYPE=supabase
 
-# Cloud SQL Configuration (PostgreSQL)
-CLOUDSQL_INSTANCE_CONNECTION_NAME=agentflow-discord-bot:us-central1:agentflow-db
-CLOUDSQL_DATABASE=agentflow
-CLOUDSQL_USER=agentflow-user
-CLOUDSQL_PASSWORD=<your_password>
-```
+# Supabase Configuration (PostgreSQL)
+SUPABASE_URL=https://ymxhsdtagnalxebnskst.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key>
 
-### Dashboard (Next.js)
-
-```bash
-# Supabase Configuration
+# Dashboard also uses these (public keys)
 NEXT_PUBLIC_SUPABASE_URL=https://ymxhsdtagnalxebnskst.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your_anon_key>
-SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key>
 
 # Optional: Perplexity API for investment analysis
 PERPLEXITY_API_KEY=<your_perplexity_api_key>
@@ -34,36 +27,28 @@ PERPLEXITY_API_KEY=<your_perplexity_api_key>
 
 ## Database Schema
 
-### Supabase Tables (Dashboard)
+### Supabase Tables
 
-The dashboard uses these Supabase tables:
+All services share these Supabase tables:
 
 | Table | Description |
 |-------|-------------|
 | `profiles` | User profiles and subscriptions |
-| `transactions` | Financial transactions |
-| `teller_accounts` | Connected bank accounts |
-| `teller_enrollments` | Teller API enrollments |
+| `guild_registrations` | Discord server → User mappings |
+| `user_credentials` | Encrypted API keys |
+| `conversations` | Discord chat history |
+| `agent_tasks` | Agent task tracking |
+| `agent_logs` | Agent execution logs |
+| `financial_transactions` | Financial transactions |
+| `bank_accounts` | Connected bank accounts |
+| `teller_accounts` | Teller API accounts |
+| `daily_goals` | Daily productivity goals |
 | `market_data` | Stock/crypto market data |
 | `market_news` | Financial news articles |
 | `weekly_analysis` | Investment thesis analysis |
-| `financial_goals` | User financial goals (including loans) |
 | `user_watchlists` | Stock watchlist |
 | `user_holdings` | Portfolio holdings |
-
-### Cloud SQL Tables (Main App)
-
-The Discord bot uses these Cloud SQL tables:
-
-| Table | Description |
-|-------|-------------|
-| `conversations` | Discord chat history |
-| `agent_logs` | Agent execution logs |
-| `agent_tasks` | Agent task tracking |
-| `daily_goals` | Daily productivity goals |
-| `market_data` | Market data cache |
-| `market_news` | News cache |
-| `weekly_analysis` | AI-generated analysis |
+| `usage_logs` | Usage tracking for billing |
 
 ## Local Development
 
@@ -74,7 +59,7 @@ For local development **without cloud databases**, you can use SQLite:
 DATABASE_TYPE=sqlite
 ```
 
-Note: SQLite mode is only for development. Production should always use cloud databases.
+Note: SQLite mode is only for development. Production should always use Supabase.
 
 ## Verification
 
@@ -88,44 +73,32 @@ Note: SQLite mode is only for development. Production should always use cloud da
 
 Run the bot and check logs for:
 ```
-☁️  Initializing Cloud SQL (PostgreSQL) database...
-✅ Cloud SQL database initialized
+☁️  Initializing Supabase (PostgreSQL) database...
+✅ Supabase database initialized
+   URL: https://ymxhsdtagnalxebnskst.supabase.co
 ```
 
 ## Troubleshooting
 
-### "Cloud SQL credentials not configured"
+### "Supabase credentials not configured"
 
 Make sure all required environment variables are set:
-- `CLOUDSQL_INSTANCE_CONNECTION_NAME`
-- `CLOUDSQL_DATABASE`
-- `CLOUDSQL_USER`
-- `CLOUDSQL_PASSWORD`
+- `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-### "Supabase environment variables missing"
-
-Make sure these are set in your dashboard `.env.local`:
-- `NEXT_PUBLIC_SUPABASE_URL`
+For the dashboard, also set:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ### Database Table Errors
 
-If tables don't exist, run the migration:
+If tables don't exist, run the migrations via Supabase:
 ```bash
-# For Supabase
-# Apply migrations via Supabase dashboard or CLI
+# Apply migrations via Supabase CLI
+npx supabase db push
 
-# For Cloud SQL
-npm run migrate:cloudsql
+# Or apply manually via Supabase dashboard SQL editor
+# using files in supabase/migrations/
 ```
-
-## Migration from Local SQLite
-
-If you previously used local SQLite databases:
-
-1. Data in `agentflow.db` and `financial.db` needs to be migrated
-2. Use `scripts/migrate-to-cloudsql.ts` for Cloud SQL migration
-3. For Supabase, use the migration file in `supabase/migrations/`
 
 ## Security Notes
 
@@ -133,4 +106,9 @@ If you previously used local SQLite databases:
 - Use different credentials for development and production
 - The `SUPABASE_SERVICE_ROLE_KEY` has full database access - keep it secure
 - Rotate credentials if they're ever exposed
+
+
+
+
+
 

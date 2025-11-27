@@ -12,15 +12,43 @@ import { startCacheCleanup, globalCache } from './utils/smartCache';
 import { SupervisorService } from './services/supervisor';
 import { VercelIntegration } from './services/vercelIntegration';
 import { AgentManagerService } from './services/agentManager';
+import { registerDefaultTasks } from './services/agentManagerIntegration';
 import { DeploymentTracker, createDeploymentTrackerFromEnv } from './services/deploymentTracker';
+import { getStartupLogger } from './services/startupLogger';
+import { getServerMonitor, ServerMonitorService } from './services/serverMonitor';
+import { CategoryBudgetService } from './services/categoryBudgetService';
+import { WeeklyBudgetService } from './services/weeklyBudgetService';
+import { TransactionSyncService } from './services/transactionSyncService';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// Initialize startup logger early (before anything else)
+const startupLogger = getStartupLogger();
+
+// Global error handlers for crash logging
+process.on('uncaughtException', async (error) => {
+  logger.error('Uncaught Exception:', error);
+  await startupLogger.logCrash(error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error('Unhandled Rejection:', error);
+  await startupLogger.logCrash(error);
+});
 
 // Process lock file management
 const LOCK_FILE = path.join(process.cwd(), 'data', '.agentflow.lock');
 
 function checkAndCreateLock(): boolean {
   try {
+    // Skip lock file check in Docker containers (PID 1 is always the init process)
+    if (process.pid === 1 || process.env.NODE_ENV === 'production') {
+      logger.info('🐳 Running in container/production mode - skipping lock file check');
+      return true;
+    }
+
     // Ensure data directory exists
     const dataDir = path.dirname(LOCK_FILE);
     if (!fs.existsSync(dataDir)) {
@@ -68,7 +96,13 @@ function removeLock(): void {
 }
 
 async function main() {
+  // Track services initialized for startup success message
+  const servicesInitialized: string[] = [];
+  
   try {
+    // Log startup beginning
+    await startupLogger.logStartupBegin();
+    
     // Set log level from environment
     const logLevel = process.env.LOG_LEVEL?.toUpperCase() || 'INFO';
     logger.setLevel(LogLevel[logLevel as keyof typeof LogLevel] || LogLevel.INFO);
@@ -175,9 +209,11 @@ async function main() {
               timezone: config.marketUpdatesTimezone!,
               enabled: true,
               finnhubApiKey: config.finnhubApiKey,
-              anthropicApiKey: config.anthropicApiKey
+              anthropicApiKey: config.anthropicApiKey,
+              perplexityApiKey: config.perplexityApiKey
             },
-            config.systemNotificationChannelId
+            config.systemNotificationChannelId,
+            process.env.MARKET_UPDATES_CHANNEL_ID
           );
           marketScheduler.start();
           logger.info('📈 Market update scheduler started');
@@ -239,6 +275,104 @@ async function main() {
         }
       });
 
+      // Initialize Mr. Krabs Financial Advisor services (unified tracking)
+      let categoryBudgetService: CategoryBudgetService | undefined;
+      let weeklyBudgetService: WeeklyBudgetService | undefined;
+      let transactionSyncService: TransactionSyncService | undefined;
+
+      const financialChannels = process.env.FINANCIAL_ADVISOR_CHANNELS?.split(',').map(ch => ch.trim());
+      if (financialChannels && financialChannels.length > 0) {
+        try {
+          const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
+          const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
+          const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
+          const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
+
+          // Category Budget Service (daily updates)
+          categoryBudgetService = new CategoryBudgetService({
+            groceriesBudget,
+            diningBudget,
+            otherBudget,
+            channelId: financialChannels[0],
+            enabled: false, // Disable internal cron - AgentManager handles scheduling
+            dailyUpdateTime: '0 9 * * *'
+          });
+          categoryBudgetService.setDiscordClient((bot as DiscordBotRealtime).getClient());
+
+          // Weekly Budget Service (Sunday summaries)
+          weeklyBudgetService = new WeeklyBudgetService({
+            groceriesBudget,
+            diningBudget,
+            otherBudget,
+            monthlyBusinessBudget,
+            channelId: financialChannels[0],
+            enabled: false, // Disable internal cron - AgentManager handles scheduling
+            weeklyUpdateTime: '0 20 * * 0'
+          });
+          weeklyBudgetService.setDiscordClient((bot as DiscordBotRealtime).getClient());
+
+          // Transaction Sync Service (daily sync)
+          transactionSyncService = new TransactionSyncService({
+            enabled: false, // Disable internal cron - AgentManager handles scheduling
+            cronExpression: '0 2 * * *',
+            timezone: 'America/Los_Angeles',
+            daysToSync: 90
+          });
+
+          logger.info('💰 Mr. Krabs Financial Advisor services initialized');
+          logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
+          logger.info(`   🍽️  Dining: $${diningBudget}/week`);
+          logger.info(`   💵 Other: $${otherBudget}/week`);
+          logger.info(`   💼 Business: $${monthlyBusinessBudget}/month`);
+          logger.info(`   📡 Channel: ${financialChannels[0]}`);
+
+          // Register mr-krabs task executor
+          agentManager.registerTaskExecutor('mr-krabs', async (task) => {
+            const taskConfig = task.config ? JSON.parse(task.config) : {};
+            switch (taskConfig.type) {
+              case 'daily_budget':
+                if (categoryBudgetService) {
+                  await categoryBudgetService.sendDailyUpdate();
+                  return { success: true, message: 'Daily budget update sent' };
+                }
+                throw new Error('CategoryBudgetService not initialized');
+              case 'weekly_summary':
+                if (weeklyBudgetService) {
+                  await weeklyBudgetService.sendWeeklySummary();
+                  return { success: true, message: 'Weekly budget summary sent' };
+                }
+                throw new Error('WeeklyBudgetService not initialized');
+              case 'transaction_sync':
+                if (transactionSyncService) {
+                  const result = await transactionSyncService.triggerSync();
+                  return { success: result.success, message: result.message, stats: result.stats };
+                }
+                throw new Error('TransactionSyncService not initialized');
+              default:
+                throw new Error(`Unknown mr-krabs task type: ${taskConfig.type}`);
+            }
+          });
+
+          // Run initial transaction sync
+          logger.info('🔄 Running initial transaction sync...');
+          const initialSync = await transactionSyncService.triggerSync();
+          if (initialSync.success) {
+            logger.info(`✅ Initial sync: ${initialSync.stats?.totalTransactions || 0} transactions from ${initialSync.stats?.accounts || 0} accounts`);
+          } else {
+            logger.warn(`⚠️ Initial sync failed: ${initialSync.message}`);
+          }
+
+        } catch (error) {
+          logger.error('Failed to initialize Mr. Krabs services:', error);
+          logger.warn('Continuing without financial advisor features');
+        }
+      } else {
+        logger.info('FINANCIAL_ADVISOR_CHANNELS not configured - Mr. Krabs services disabled');
+      }
+
+      // Register default recurring tasks (market updates, personal finance, supervisor)
+      registerDefaultTasks(agentManager);
+
       // Start all enabled recurring tasks
       agentManager.startAllTasks();
       logger.info('✅ Agent Manager recurring tasks started');
@@ -290,9 +424,69 @@ async function main() {
         logger.info('DEPLOYMENTS_CHANNEL_ID not configured - unified deployment tracking disabled');
       }
 
+      // Initialize Server Monitor (Hetzner VPS health monitoring)
+      let serverMonitor: ServerMonitorService | null = null;
+      if (process.env.HETZNER_SERVER_IP) {
+        try {
+          serverMonitor = getServerMonitor({
+            serverIp: process.env.HETZNER_SERVER_IP,
+            sshUser: process.env.HETZNER_SSH_USER || 'root',
+            checkIntervalMs: 5 * 60 * 1000, // 5 minutes
+            discordChannelId: process.env.SERVER_MONITOR_CHANNEL_ID || process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
+            autoCleanup: {
+              enabled: true,
+              diskThresholdPercent: 80,
+              dockerCacheThresholdGb: 15,
+            },
+          });
+          serverMonitor.setDiscordClient((bot as DiscordBotRealtime).getClient());
+          serverMonitor.start();
+          logger.info('✅ Server Monitor initialized (Hetzner VPS)');
+
+          // Register monitor tasks with agent manager
+          agentManager.registerTaskExecutor('server-health-check', async () => {
+            if (!serverMonitor) return;
+            await serverMonitor.forceCheck();
+          });
+
+          agentManager.registerTaskExecutor('server-cleanup', async () => {
+            if (!serverMonitor) return;
+            await serverMonitor.cleanupDocker();
+          });
+
+          agentManager.registerTaskExecutor('server-error-scan', async () => {
+            if (!serverMonitor) return;
+            await serverMonitor.checkAllContainersForErrors();
+          });
+        } catch (error) {
+          logger.error('Failed to initialize Server Monitor:', error);
+          logger.warn('Continuing without Server Monitor');
+        }
+      } else {
+        logger.info('HETZNER_SERVER_IP not configured - Server Monitor disabled');
+      }
+
+      // Build services list and set Discord client for startup logger
+      servicesInitialized.push('Discord Bot (Realtime API)');
+      servicesInitialized.push('Orchestrator Server');
+      servicesInitialized.push('Supervisor Service');
+      servicesInitialized.push('Agent Manager');
+      if (marketScheduler) servicesInitialized.push('Market Update Scheduler');
+      if (categoryBudgetService) servicesInitialized.push('Mr. Krabs Financial Advisor');
+      if (vercelIntegration) servicesInitialized.push('Vercel Integration');
+      if (deploymentTracker) servicesInitialized.push('Deployment Tracker');
+      if (serverMonitor) servicesInitialized.push('Server Monitor');
+      
+      // Set Discord client for startup logger and log success
+      startupLogger.setDiscordClient((bot as DiscordBotRealtime).getClient());
+      await startupLogger.logStartupSuccess(servicesInitialized);
+      logger.info('🎉 Startup complete - all services initialized');
+
       // Graceful shutdown
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
+        await startupLogger.logShutdown('SIGINT received');
+        if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
@@ -307,6 +501,8 @@ async function main() {
 
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
+        await startupLogger.logShutdown('SIGTERM received');
+        if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
@@ -438,6 +634,10 @@ async function main() {
 
   } catch (error) {
     logger.error('Failed to start AgentFlow', error);
+    
+    // Log startup failure to database and webhook
+    await startupLogger.logStartupFailure(error as Error);
+    
     process.exit(1);
   }
 }
