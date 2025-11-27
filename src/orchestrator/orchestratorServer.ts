@@ -372,9 +372,57 @@ ${status.result.message}
       }
     }, 2000); // Check every 2 seconds
 
-    // Timeout after 30 minutes
-    setTimeout(() => {
+    // Add stall detection - notify if task running > 5 minutes without completion
+    let lastNotificationTime = Date.now();
+    const stallCheckInterval = setInterval(async () => {
+      const status = this.taskManager.getTaskStatus(taskId);
+      if (!status || status.status !== 'running') {
+        clearInterval(stallCheckInterval);
+        return;
+      }
+
+      const runningTime = Date.now() - status.startedAt.getTime();
+      const minutesRunning = Math.floor(runningTime / 60000);
+      
+      // Notify every 5 minutes if still running
+      if (Date.now() - lastNotificationTime > 5 * 60 * 1000) {
+        lastNotificationTime = Date.now();
+        try {
+          await this.subAgentManager.sendToChannel(
+            channelId,
+            `⏳ **Task Still Running**\n\n` +
+            `**Task ID:** \`${taskId}\`\n` +
+            `**Running for:** ${minutesRunning} minutes\n` +
+            `**Description:** ${status.description.substring(0, 100)}...\n\n` +
+            `_The task is still processing. Use \`!status ${taskId}\` to check details._`
+          );
+        } catch (e) {
+          logger.error(`Failed to send stall notification for task ${taskId}`, e);
+        }
+      }
+    }, 60000); // Check every minute
+
+    // Timeout after 30 minutes - NOTIFY USER!
+    setTimeout(async () => {
       clearInterval(checkInterval);
+      clearInterval(stallCheckInterval);
+      
+      const status = this.taskManager.getTaskStatus(taskId);
+      if (status && status.status === 'running') {
+        // Task is still running after 30 minutes - likely stuck
+        try {
+          await this.subAgentManager.sendToChannel(
+            channelId,
+            `⚠️ **Task Timeout**\n\n` +
+            `**Task ID:** \`${taskId}\`\n` +
+            `Task has been running for 30+ minutes and may be stuck.\n\n` +
+            `**Description:** ${status.description.substring(0, 200)}...\n\n` +
+            `_Use \`!cancel ${taskId}\` to stop it, or wait for it to complete._`
+          );
+        } catch (e) {
+          logger.error(`Failed to send timeout notification for task ${taskId}`, e);
+        }
+      }
     }, 30 * 60 * 1000);
   }
 

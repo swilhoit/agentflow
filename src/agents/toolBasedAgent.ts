@@ -1980,7 +1980,13 @@ export class ToolBasedAgent {
       })
     });
 
-    await this.notify(`🤖 **Agent Started**\n\`\`\`\n${task.command}\n\`\`\``);
+    await this.notify(
+      `🤖 **Agent Started**\n` +
+      `**Task ID:** \`${taskId}\`\n` +
+      `**Max Iterations:** ${maxIter}\n` +
+      `**Command:**\n\`\`\`\n${task.command.substring(0, 500)}${task.command.length > 500 ? '...' : ''}\n\`\`\`\n` +
+      `_I'll keep you updated on progress. If you don't see updates, something may have gone wrong._`
+    );
 
     try {
       while (continueLoop && iterations < maxIter) {
@@ -2109,6 +2115,16 @@ export class ToolBasedAgent {
           logger.warn('⚠️ Hit max tokens limit');
           continueLoop = false;
 
+          // Send detailed notification
+          await this.notify(
+            `⚠️ **Token Limit Reached**\n\n` +
+            `The response was cut off due to the token limit.\n\n` +
+            `**Progress:**\n` +
+            `• Iteration: ${iterations}/${maxIter}\n` +
+            `• Tool calls: ${toolCalls}\n\n` +
+            `_The task may need to be simpler or broken into parts._`
+          );
+
           // Log max tokens error
           await this.logActivity('warning', 'Task incomplete - hit token limit', { iterations, toolCalls });
 
@@ -2125,7 +2141,14 @@ export class ToolBasedAgent {
       // Hit max iterations
       if (iterations >= maxIter) {
         logger.warn(`⚠️ Hit max iterations (${maxIter})`);
-        await this.notify(`⚠️ **Max Iterations Reached**\nCompleted ${iterations} iterations with ${toolCalls} tool calls.`);
+        await this.notify(
+          `⚠️ **Max Iterations Reached**\n\n` +
+          `The task ran for ${iterations} iterations but didn't complete.\n\n` +
+          `**Progress:**\n` +
+          `• Iterations: ${iterations}/${maxIter}\n` +
+          `• Tool calls: ${toolCalls}\n\n` +
+          `_The task may be too complex. Try breaking it into smaller steps or being more specific._`
+        );
 
         // Log max iterations warning
         await this.logActivity('warning', `Task incomplete - reached max iterations (${maxIter})`, { iterations, toolCalls });
@@ -2152,11 +2175,21 @@ export class ToolBasedAgent {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : '';
       logger.error('❌ Agent execution failed', error);
 
-      await this.notify(`❌ **Agent Failed**\n\`\`\`\n${errorMessage}\n\`\`\``);
+      // Send detailed error notification to Discord
+      await this.notify(
+        `❌ **Agent Failed**\n\n` +
+        `**Error:** ${errorMessage}\n\n` +
+        `**Progress at failure:**\n` +
+        `• Iterations completed: ${iterations}/${maxIter}\n` +
+        `• Tool calls made: ${toolCalls}\n\n` +
+        `**Stack trace:**\n\`\`\`\n${errorStack || 'No stack trace available'}\n\`\`\`\n\n` +
+        `_Please try again or simplify your request._`
+      );
 
-      // Log error
+      // Log error to PostgreSQL
       await this.logActivity('error', `Agent execution failed: ${errorMessage}`, { 
         iterations, 
         toolCalls,
