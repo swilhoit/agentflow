@@ -190,35 +190,9 @@ export class TaskManager {
       description
     };
 
-    // TRELLO SYNC: Create card in Inbox
-    if (this.trelloService) {
-      try {
-        // Need to get configuration (passed in or from env)
-        // For now, we'll check process.env directly as a fallback, but ideally config should be passed to TaskManager
-        const boardId = process.env.TRELLO_BOARD_ID;
-        const listId = process.env.TRELLO_INBOX_LIST_ID;
-
-        if (listId) {
-           logger.info(`📋 Syncing task to Trello List: ${listId}`);
-           const card = await this.trelloService.createCard({
-             idList: listId,
-             name: `[${taskId}] ${description.substring(0, 80)}${description.length > 80 ? '...' : ''}`,
-             desc: `**Task ID:** ${taskId}\n**User:** ${task.context.userId}\n**Channel:** ${task.context.channelId}\n\n${description}`
-           });
-           
-           managedTask.trelloCardId = card.id;
-           managedTask.trelloCardUrl = card.shortUrl;
-           logger.info(`✅ Trello Card created: ${card.shortUrl}`);
-           
-           // Notify user
-           if (notificationHandler) {
-             await notificationHandler(task.context.channelId, `📋 **Trello Card Created:** <${card.shortUrl}>`);
-           }
-        }
-      } catch (error) {
-        logger.error('Failed to sync task to Trello:', error);
-      }
-    }
+    // NOTE: Trello is no longer used for automatic task tracking.
+    // Agents use Trello only for long-term project management when explicitly needed.
+    // See trello_create_project, trello_get_project, trello_update_project tools.
 
     this.tasks.set(taskId, managedTask);
 
@@ -257,32 +231,6 @@ export class TaskManager {
 
       if (!result.success) {
         managedTask.error = result.error;
-      }
-
-      // TRELLO SYNC: Update card on completion
-      if (this.trelloService && managedTask.trelloCardId) {
-        try {
-          logger.info(`📋 Updating Trello Card ${managedTask.trelloCardId}...`);
-          
-          // 1. Add comment with result
-          const comment = result.success 
-            ? `✅ **Task Completed**\n\n${result.message}`
-            : `❌ **Task Failed**\n\nError: ${result.error}\n\n${result.message}`;
-          
-          await this.trelloService.addComment(managedTask.trelloCardId, comment);
-
-          // 2. Move to Done list (if success and configured)
-          const doneListId = process.env.TRELLO_DONE_LIST_ID;
-          if (result.success && doneListId) {
-            await this.trelloService.moveCard(managedTask.trelloCardId, doneListId, 'top');
-            logger.info(`✅ Moved Trello card to Done list`);
-          } else if (!result.success) {
-            // Maybe add a "Failed" label? (For now just leaving in Inbox with comment)
-            // await this.trelloService.addLabelToCard(managedTask.trelloCardId, 'red_label_id');
-          }
-        } catch (error) {
-          logger.error('Failed to update Trello card:', error);
-        }
       }
 
       // PERSISTENCE: Update completion status

@@ -65,9 +65,11 @@ export function loadConfig(): BotConfig {
     financialAdvisorChannels: process.env.FINANCIAL_ADVISOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
     // Orchestrator configuration
     orchestratorChannels: process.env.ORCHESTRATOR_CHANNELS?.split(',').filter(id => id.trim().length > 0) || [],
-    // Trello configuration
+    // Trello configuration (Project Management)
     trelloBoardId: process.env.TRELLO_BOARD_ID,
-    trelloInboxListId: process.env.TRELLO_INBOX_LIST_ID,
+    trelloBacklogListId: process.env.TRELLO_BACKLOG_LIST_ID,
+    trelloInProgressListId: process.env.TRELLO_IN_PROGRESS_LIST_ID,
+    trelloNeedsInputListId: process.env.TRELLO_NEEDS_INPUT_LIST_ID,
     trelloDoneListId: process.env.TRELLO_DONE_LIST_ID,
     // Deployment tracking configuration
     deploymentsChannelId: process.env.DEPLOYMENTS_CHANNEL_ID,

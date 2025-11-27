@@ -375,222 +375,181 @@ export class ToolBasedAgent {
     ];
 
     // Add Trello tools if service is available
+    // Project-focused Trello tools - for long-term project tracking, NOT for individual tasks
+    // Use these when: tracking multi-session projects, need human visibility, storing requirements/decisions
+    // DON'T use these for: one-shot commands, quick fixes, internal agent work
     if (this.trelloService) {
       tools.push(
         {
-          name: 'trello_list_boards',
-          description: 'List all Trello boards',
+          name: 'trello_create_project',
+          description: 'Create a new project card for long-term tracking. Use this for multi-session work that needs human visibility, NOT for simple tasks. Creates a structured card with requirements, constraints, and milestones sections.',
           input_schema: {
             type: 'object',
-            properties: {},
+            properties: {
+              projectName: {
+                type: 'string',
+                description: 'Name of the project'
+              },
+              requirements: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of requirements for the project'
+              },
+              constraints: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of constraints or limitations (optional)'
+              },
+              milestones: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of milestones/phases for the project (optional)'
+              },
+              listName: {
+                type: 'string',
+                description: 'Name of list to create card in (defaults to "Projects" or first list)'
+              }
+            },
+            required: ['projectName', 'requirements']
+          }
+        },
+        {
+          name: 'trello_get_project',
+          description: 'Get a project card by name. Returns the structured project data including requirements, constraints, decisions, milestones, and session history. Use this to get context before continuing work on a project.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              projectName: {
+                type: 'string',
+                description: 'Name of the project to retrieve'
+              }
+            },
+            required: ['projectName']
+          }
+        },
+        {
+          name: 'trello_update_project',
+          description: 'Update a project card. Use this to log work sessions, add decisions, update status, or note blockers. Always call this after completing a work session on a tracked project.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              projectName: {
+                type: 'string',
+                description: 'Name of the project to update'
+              },
+              sessionSummary: {
+                type: 'string',
+                description: 'Summary of what was accomplished in this session (added as comment)'
+              },
+              decision: {
+                type: 'string',
+                description: 'A decision that was made (will be added to Decisions section)'
+              },
+              blocker: {
+                type: 'string',
+                description: 'A blocker that needs human attention'
+              },
+              status: {
+                type: 'string',
+                description: 'New status for the project (updates Current Status section)'
+              },
+              moveToList: {
+                type: 'string',
+                description: 'Move project to a different list (e.g., "In Progress", "Done", "Blocked")'
+              }
+            },
+            required: ['projectName']
+          }
+        },
+        {
+          name: 'trello_list_projects',
+          description: 'List all active projects on the board. Returns project names, current list (status), and last activity date.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              listName: {
+                type: 'string',
+                description: 'Filter to projects in a specific list (e.g., "In Progress")'
+              }
+            },
             required: []
           }
         },
         {
-          name: 'trello_get_board',
-          description: 'Get a specific Trello board by name',
+          name: 'trello_add_milestone',
+          description: 'Add a milestone to a project. Creates or updates the Milestones checklist on the project card.',
           input_schema: {
             type: 'object',
             properties: {
-              boardName: {
+              projectName: {
                 type: 'string',
-                description: 'Name of the board to find'
+                description: 'Name of the project'
+              },
+              milestone: {
+                type: 'string',
+                description: 'Description of the milestone to add'
               }
             },
-            required: ['boardName']
+            required: ['projectName', 'milestone']
           }
         },
         {
-          name: 'trello_create_list',
-          description: 'Create a new list on a Trello board',
+          name: 'trello_complete_milestone',
+          description: 'Mark a milestone as completed on a project.',
           input_schema: {
             type: 'object',
             properties: {
-              boardName: {
+              projectName: {
                 type: 'string',
-                description: 'Name of the board'
+                description: 'Name of the project'
               },
-              listName: {
+              milestone: {
                 type: 'string',
-                description: 'Name for the new list'
+                description: 'Description of the milestone to mark as complete (must match exactly)'
               }
             },
-            required: ['boardName', 'listName']
+            required: ['projectName', 'milestone']
           }
         },
         {
-          name: 'trello_create_card',
-          description: 'Create a new card on a Trello list',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board'
-              },
-              listName: {
-                type: 'string',
-                description: 'Name of the list to add the card to'
-              },
-              cardName: {
-                type: 'string',
-                description: 'Title of the card'
-              },
-              description: {
-                type: 'string',
-                description: 'Description for the card (optional)'
-              }
-            },
-            required: ['boardName', 'listName', 'cardName']
-          }
-        },
-        {
-          name: 'trello_list_cards',
-          description: 'List all cards on a Trello board',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board'
-              }
-            },
-            required: ['boardName']
-          }
-        },
-        {
-          name: 'trello_update_card',
-          description: 'Update an existing Trello card (name, description, due date, list, position, labels, members)',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board containing the card'
-              },
-              cardName: {
-                type: 'string',
-                description: 'Current name of the card to update'
-              },
-              newName: {
-                type: 'string',
-                description: 'New name for the card (optional)'
-              },
-              newDescription: {
-                type: 'string',
-                description: 'New description for the card (optional)'
-              },
-              newListName: {
-                type: 'string',
-                description: 'Name of list to move card to (optional)'
-              },
-              dueDate: {
-                type: 'string',
-                description: 'Due date in ISO format (optional)'
-              }
-            },
-            required: ['boardName', 'cardName']
-          }
-        },
-        {
-          name: 'trello_get_lists',
-          description: 'Get all lists on a Trello board',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board'
-              }
-            },
-            required: ['boardName']
-          }
-        },
-        {
-          name: 'trello_search_cards',
-          description: 'Search for cards across boards by text query',
+          name: 'trello_search_projects',
+          description: 'Search for projects by keyword. Useful when you need to find a project but dont know the exact name.',
           input_schema: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
                 description: 'Search query text'
-              },
-              boardName: {
-                type: 'string',
-                description: 'Optional board name to limit search to'
               }
             },
             required: ['query']
           }
         },
         {
-          name: 'trello_add_comment',
-          description: 'Add a comment to a Trello card',
+          name: 'trello_request_human_input',
+          description: 'Create or update a project card requesting human input. Use this when you are blocked and need a decision or clarification from a human.',
           input_schema: {
             type: 'object',
             properties: {
-              boardName: {
+              projectName: {
                 type: 'string',
-                description: 'Name of the board'
+                description: 'Name of the project (will create if doesnt exist)'
               },
-              cardName: {
+              question: {
                 type: 'string',
-                description: 'Name of the card to comment on'
+                description: 'The question or decision needed from human'
               },
-              comment: {
-                type: 'string',
-                description: 'Comment text to add'
-              }
-            },
-            required: ['boardName', 'cardName', 'comment']
-          }
-        },
-        {
-          name: 'trello_archive_card',
-          description: 'Archive (close) a Trello card',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board'
-              },
-              cardName: {
-                type: 'string',
-                description: 'Name of the card to archive'
-              }
-            },
-            required: ['boardName', 'cardName']
-          }
-        },
-        {
-          name: 'trello_add_checklist',
-          description: 'Add a checklist to a Trello card',
-          input_schema: {
-            type: 'object',
-            properties: {
-              boardName: {
-                type: 'string',
-                description: 'Name of the board'
-              },
-              cardName: {
-                type: 'string',
-                description: 'Name of the card'
-              },
-              checklistName: {
-                type: 'string',
-                description: 'Name for the checklist'
-              },
-              items: {
+              options: {
                 type: 'array',
-                description: 'Array of checklist item names (optional)',
-                items: {
-                  type: 'string'
-                }
+                items: { type: 'string' },
+                description: 'Possible options/choices if applicable'
+              },
+              context: {
+                type: 'string',
+                description: 'Relevant context for the decision'
               }
             },
-            required: ['boardName', 'cardName', 'checklistName']
+            required: ['projectName', 'question']
           }
         }
       );
@@ -1066,42 +1025,35 @@ export class ToolBasedAgent {
       case 'execute_bash':
         return await this.executeBash(toolInput.command);
 
-      case 'trello_list_boards':
-        return await this.trelloListBoards();
-
-      case 'trello_get_board':
-        return await this.trelloGetBoard(toolInput.boardName);
-
-      case 'trello_create_list':
-        // Invalidate cache on mutations
+      // Project-focused Trello tools
+      case 'trello_create_project':
         globalCache.invalidatePattern('trello_.*');
-        return await this.trelloCreateList(toolInput.boardName, toolInput.listName);
+        return await this.trelloCreateProject(toolInput);
 
-      case 'trello_create_card':
-        // Invalidate cache on mutations
+      case 'trello_get_project':
+        return await this.trelloGetProject(toolInput.projectName);
+
+      case 'trello_update_project':
         globalCache.invalidatePattern('trello_.*');
-        return await this.trelloCreateCard(
-          toolInput.boardName,
-          toolInput.listName,
-          toolInput.cardName,
-          toolInput.description
-        );
+        return await this.trelloUpdateProject(toolInput);
 
-      case 'trello_list_cards':
-        return await this.trelloListCards(toolInput.boardName);
+      case 'trello_list_projects':
+        return await this.trelloListProjects(toolInput.listName);
 
-      // Extended Trello operations - for now, suggest using execute_bash with curl
-      case 'trello_update_card':
-      case 'trello_get_lists':
-      case 'trello_search_cards':
-      case 'trello_add_comment':
-      case 'trello_archive_card':
-      case 'trello_add_checklist':
-        return {
-          success: false,
-          error: `Tool '${toolName}' not yet implemented. Use execute_bash with curl or Trello API for advanced operations.`,
-          suggestion: `Example: execute_bash("curl -X GET 'https://api.trello.com/1/boards/...')"}`
-        };
+      case 'trello_add_milestone':
+        globalCache.invalidatePattern('trello_.*');
+        return await this.trelloAddMilestone(toolInput.projectName, toolInput.milestone);
+
+      case 'trello_complete_milestone':
+        globalCache.invalidatePattern('trello_.*');
+        return await this.trelloCompleteMilestone(toolInput.projectName, toolInput.milestone);
+
+      case 'trello_search_projects':
+        return await this.trelloSearchProjects(toolInput.query);
+
+      case 'trello_request_human_input':
+        globalCache.invalidatePattern('trello_.*');
+        return await this.trelloRequestHumanInput(toolInput);
 
       // Hetzner deployment tools
       case 'deploy_to_hetzner':
@@ -1242,105 +1194,554 @@ export class ToolBasedAgent {
     }
   }
 
+  // ==================== PROJECT-FOCUSED TRELLO METHODS ====================
+
   /**
-   * Trello: List boards
+   * Get the default board ID from environment
    */
-  private async trelloListBoards(): Promise<any> {
+  private getDefaultBoardId(): string | null {
+    return process.env.TRELLO_BOARD_ID || null;
+  }
+
+  /**
+   * Build structured project description
+   */
+  private buildProjectDescription(input: {
+    requirements: string[];
+    constraints?: string[];
+    decisions?: string[];
+    status?: string;
+    blockers?: string[];
+  }): string {
+    let desc = '## Requirements\n';
+    for (const req of input.requirements) {
+      desc += `- ${req}\n`;
+    }
+
+    if (input.constraints && input.constraints.length > 0) {
+      desc += '\n## Constraints\n';
+      for (const constraint of input.constraints) {
+        desc += `- ${constraint}\n`;
+      }
+    }
+
+    desc += '\n## Decisions\n';
+    if (input.decisions && input.decisions.length > 0) {
+      for (const decision of input.decisions) {
+        desc += `- ${decision}\n`;
+      }
+    } else {
+      desc += '_No decisions recorded yet_\n';
+    }
+
+    desc += '\n## Current Status\n';
+    desc += input.status || '_Not started_';
+    desc += '\n';
+
+    if (input.blockers && input.blockers.length > 0) {
+      desc += '\n## Blockers\n';
+      for (const blocker of input.blockers) {
+        desc += `- ⚠️ ${blocker}\n`;
+      }
+    }
+
+    return desc;
+  }
+
+  /**
+   * Parse structured project description back into components
+   */
+  private parseProjectDescription(desc: string): {
+    requirements: string[];
+    constraints: string[];
+    decisions: string[];
+    status: string;
+    blockers: string[];
+  } {
+    const result = {
+      requirements: [] as string[],
+      constraints: [] as string[],
+      decisions: [] as string[],
+      status: '',
+      blockers: [] as string[]
+    };
+
+    const sections = desc.split(/\n## /);
+    for (const section of sections) {
+      const lines = section.trim().split('\n');
+      const header = lines[0].toLowerCase().replace('#', '').trim();
+      const items = lines.slice(1)
+        .map(l => l.replace(/^- /, '').replace(/^⚠️ /, '').trim())
+        .filter(l => l && !l.startsWith('_'));
+
+      if (header.includes('requirements')) {
+        result.requirements = items;
+      } else if (header.includes('constraints')) {
+        result.constraints = items;
+      } else if (header.includes('decisions')) {
+        result.decisions = items;
+      } else if (header.includes('status')) {
+        result.status = items.join(' ').trim() || lines.slice(1).join(' ').trim();
+      } else if (header.includes('blockers')) {
+        result.blockers = items;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Find a card by name on the default board
+   */
+  private async findProjectCard(projectName: string): Promise<any | null> {
+    if (!this.trelloService) return null;
+
+    const boardId = this.getDefaultBoardId();
+    if (!boardId) return null;
+
+    const cards = await this.trelloService.getCardsOnBoard(boardId);
+    return cards.find((c: any) =>
+      c.name.toLowerCase() === projectName.toLowerCase() ||
+      c.name.toLowerCase().includes(projectName.toLowerCase())
+    ) || null;
+  }
+
+  /**
+   * Create a new project card for long-term tracking
+   */
+  private async trelloCreateProject(input: {
+    projectName: string;
+    requirements: string[];
+    constraints?: string[];
+    milestones?: string[];
+    listName?: string;
+  }): Promise<any> {
     if (!this.trelloService) {
       return { error: 'Trello service not available', success: false };
     }
 
-    const boards = await this.trelloService.getBoards();
+    const boardId = this.getDefaultBoardId();
+    if (!boardId) {
+      return { error: 'TRELLO_BOARD_ID not configured', success: false };
+    }
+
+    // Find or use the specified list
+    const lists = await this.trelloService.getLists(boardId);
+    let targetList = lists.find(l =>
+      l.name.toLowerCase() === (input.listName || 'projects').toLowerCase()
+    );
+
+    // Fall back to first list if not found
+    if (!targetList && lists.length > 0) {
+      targetList = lists[0];
+    }
+
+    if (!targetList) {
+      return { error: 'No lists found on board', success: false };
+    }
+
+    // Build structured description
+    const description = this.buildProjectDescription({
+      requirements: input.requirements,
+      constraints: input.constraints
+    });
+
+    // Create the card
+    const card = await this.trelloService.createCard({
+      idList: targetList.id,
+      name: input.projectName,
+      desc: description
+    });
+
+    // Add milestones checklist if provided
+    if (input.milestones && input.milestones.length > 0) {
+      const checklist = await this.trelloService.addChecklist(card.id, 'Milestones');
+      for (const milestone of input.milestones) {
+        await this.trelloService.addChecklistItem(checklist.id, milestone);
+      }
+    }
+
+    // Add initial comment
+    const timestamp = new Date().toISOString().split('T')[0];
+    await this.trelloService.addComment(card.id, `📋 **[${timestamp}] Project Created**\n\nThis project is now being tracked for long-term management.`);
+
     return {
       success: true,
-      boards: boards.map(b => ({ id: b.id, name: b.name }))
+      project: {
+        id: card.id,
+        name: card.name,
+        url: card.shortUrl,
+        list: targetList.name
+      },
+      message: `Project "${input.projectName}" created successfully`
     };
   }
 
   /**
-   * Trello: Get board by name
+   * Get a project by name with parsed structure
    */
-  private async trelloGetBoard(boardName: string): Promise<any> {
+  private async trelloGetProject(projectName: string): Promise<any> {
     if (!this.trelloService) {
       return { error: 'Trello service not available', success: false };
     }
 
-    const board = await this.trelloService.findBoardByName(boardName);
-    if (!board) {
-      return { error: `Board not found: ${boardName}`, success: false };
+    const card = await this.findProjectCard(projectName);
+    if (!card) {
+      return { error: `Project not found: ${projectName}`, success: false };
     }
 
-    return { success: true, board: { id: board.id, name: board.name } };
-  }
+    // Get full card details including checklists
+    const fullCard = await this.trelloService.getCard(card.id);
 
-  /**
-   * Trello: Create list
-   */
-  private async trelloCreateList(boardName: string, listName: string): Promise<any> {
-    if (!this.trelloService) {
-      return { error: 'Trello service not available', success: false };
-    }
+    // Parse the description
+    const parsed = this.parseProjectDescription(fullCard.desc || '');
 
-    const board = await this.trelloService.findBoardByName(boardName);
-    if (!board) {
-      return { error: `Board not found: ${boardName}`, success: false };
-    }
+    // Get checklists for milestones
+    const boardId = this.getDefaultBoardId();
+    const lists = boardId ? await this.trelloService.getLists(boardId) : [];
+    const currentList = lists.find(l => l.id === fullCard.idList);
 
-    // createList signature is (name, boardId) - NOT (boardId, name)!
-    const list = await this.trelloService.createList(listName, board.id);
-    return { success: true, list: { id: list.id, name: list.name } };
-  }
+    // Get comments for session history
+    const comments = await this.trelloService.getComments(card.id);
+    const sessionHistory = comments
+      .slice(0, 10) // Last 10 comments
+      .map((c: any) => ({
+        date: c.date,
+        text: c.data?.text || ''
+      }));
 
-  /**
-   * Trello: Create card
-   */
-  private async trelloCreateCard(
-    boardName: string,
-    listName: string,
-    cardName: string,
-    description?: string
-  ): Promise<any> {
-    if (!this.trelloService) {
-      return { error: 'Trello service not available', success: false };
-    }
-
-    const board = await this.trelloService.findBoardByName(boardName);
-    if (!board) {
-      return { error: `Board not found: ${boardName}`, success: false };
-    }
-
-    const lists = await this.trelloService.getLists(board.id);
-    const list = lists.find(l => l.name.toLowerCase() === listName.toLowerCase());
-
-    if (!list) {
-      return { error: `List not found: ${listName} on board ${boardName}`, success: false };
-    }
-
-    const card = await this.trelloService.createCard({
-      idList: list.id,
-      name: cardName,
-      desc: description || ''
-    });
-    return { success: true, card: { id: card.id, name: card.name, url: card.url } };
-  }
-
-  /**
-   * Trello: List cards
-   */
-  private async trelloListCards(boardName: string): Promise<any> {
-    if (!this.trelloService) {
-      return { error: 'Trello service not available', success: false };
-    }
-
-    const board = await this.trelloService.findBoardByName(boardName);
-    if (!board) {
-      return { error: `Board not found: ${boardName}`, success: false };
-    }
-
-    const cards = await this.trelloService.getCardsOnBoard(board.id);
     return {
       success: true,
-      cards: cards.map((c: any) => ({ id: c.id, name: c.name, listId: c.idList }))
+      project: {
+        id: fullCard.id,
+        name: fullCard.name,
+        url: fullCard.shortUrl,
+        currentList: currentList?.name || 'Unknown',
+        lastActivity: fullCard.dateLastActivity,
+        requirements: parsed.requirements,
+        constraints: parsed.constraints,
+        decisions: parsed.decisions,
+        currentStatus: parsed.status,
+        blockers: parsed.blockers,
+        sessionHistory,
+        checklistProgress: fullCard.badges ? {
+          total: fullCard.badges.checkItems,
+          completed: fullCard.badges.checkItemsChecked
+        } : null
+      }
+    };
+  }
+
+  /**
+   * Update a project with session summary, decisions, or status
+   */
+  private async trelloUpdateProject(input: {
+    projectName: string;
+    sessionSummary?: string;
+    decision?: string;
+    blocker?: string;
+    status?: string;
+    moveToList?: string;
+  }): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const card = await this.findProjectCard(input.projectName);
+    if (!card) {
+      return { error: `Project not found: ${input.projectName}`, success: false };
+    }
+
+    const updates: string[] = [];
+    const timestamp = new Date().toISOString().split('T')[0];
+
+    // Add session summary as comment
+    if (input.sessionSummary) {
+      await this.trelloService.addComment(card.id, `📝 **[${timestamp}] Session Summary**\n\n${input.sessionSummary}`);
+      updates.push('Added session summary');
+    }
+
+    // Update description with new decision or blocker
+    if (input.decision || input.blocker || input.status) {
+      const fullCard = await this.trelloService.getCard(card.id);
+      const parsed = this.parseProjectDescription(fullCard.desc || '');
+
+      if (input.decision) {
+        parsed.decisions.push(`[${timestamp}] ${input.decision}`);
+        updates.push('Added decision');
+      }
+
+      if (input.blocker) {
+        parsed.blockers.push(input.blocker);
+        updates.push('Added blocker');
+      }
+
+      if (input.status) {
+        parsed.status = input.status;
+        updates.push('Updated status');
+      }
+
+      const newDesc = this.buildProjectDescription(parsed);
+      await this.trelloService.updateCard(card.id, { desc: newDesc });
+    }
+
+    // Move to different list
+    if (input.moveToList) {
+      const boardId = this.getDefaultBoardId();
+      if (boardId) {
+        const lists = await this.trelloService.getLists(boardId);
+        const targetList = lists.find(l =>
+          l.name.toLowerCase() === input.moveToList!.toLowerCase()
+        );
+        if (targetList) {
+          await this.trelloService.moveCard(card.id, targetList.id);
+          updates.push(`Moved to "${targetList.name}"`);
+        }
+      }
+    }
+
+    return {
+      success: true,
+      updates,
+      message: `Project "${input.projectName}" updated: ${updates.join(', ')}`
+    };
+  }
+
+  /**
+   * List all projects on the board
+   */
+  private async trelloListProjects(listName?: string): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const boardId = this.getDefaultBoardId();
+    if (!boardId) {
+      return { error: 'TRELLO_BOARD_ID not configured', success: false };
+    }
+
+    const lists = await this.trelloService.getLists(boardId);
+    const cards = await this.trelloService.getCardsOnBoard(boardId);
+
+    // Filter by list if specified
+    let filteredCards = cards;
+    if (listName) {
+      const targetList = lists.find(l => l.name.toLowerCase() === listName.toLowerCase());
+      if (targetList) {
+        filteredCards = cards.filter((c: any) => c.idList === targetList.id);
+      }
+    }
+
+    // Build project list with list names
+    const projects = filteredCards.map((card: any) => {
+      const cardList = lists.find(l => l.id === card.idList);
+      return {
+        name: card.name,
+        list: cardList?.name || 'Unknown',
+        lastActivity: card.dateLastActivity,
+        url: card.shortUrl
+      };
+    });
+
+    return {
+      success: true,
+      projects,
+      total: projects.length
+    };
+  }
+
+  /**
+   * Add a milestone to a project's checklist
+   */
+  private async trelloAddMilestone(projectName: string, milestone: string): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const card = await this.findProjectCard(projectName);
+    if (!card) {
+      return { error: `Project not found: ${projectName}`, success: false };
+    }
+
+    // Get card to find existing checklist
+    const fullCard = await this.trelloService.getCard(card.id);
+
+    // Find or create Milestones checklist
+    // Note: We need to get checklists from the card - adding method to get them
+    let checklistId: string | null = null;
+
+    try {
+      // Try to get existing checklists
+      const checklistsResponse = await (this.trelloService as any).client.get(`/cards/${card.id}/checklists`);
+      const checklists = checklistsResponse.data || [];
+      const milestonesChecklist = checklists.find((cl: any) => cl.name === 'Milestones');
+
+      if (milestonesChecklist) {
+        checklistId = milestonesChecklist.id;
+      } else {
+        // Create new checklist
+        const newChecklist = await this.trelloService.addChecklist(card.id, 'Milestones');
+        checklistId = newChecklist.id;
+      }
+    } catch {
+      // If getting checklists fails, create a new one
+      const newChecklist = await this.trelloService.addChecklist(card.id, 'Milestones');
+      checklistId = newChecklist.id;
+    }
+
+    if (!checklistId) {
+      return { error: 'Failed to get or create checklist', success: false };
+    }
+
+    // Add the milestone item
+    await this.trelloService.addChecklistItem(checklistId, milestone);
+
+    return {
+      success: true,
+      message: `Added milestone "${milestone}" to project "${projectName}"`
+    };
+  }
+
+  /**
+   * Mark a milestone as completed
+   */
+  private async trelloCompleteMilestone(projectName: string, milestone: string): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const card = await this.findProjectCard(projectName);
+    if (!card) {
+      return { error: `Project not found: ${projectName}`, success: false };
+    }
+
+    try {
+      // Get checklists
+      const checklistsResponse = await (this.trelloService as any).client.get(`/cards/${card.id}/checklists`);
+      const checklists = checklistsResponse.data || [];
+
+      // Find the milestone item across all checklists
+      for (const checklist of checklists) {
+        const item = checklist.checkItems?.find((i: any) =>
+          i.name.toLowerCase() === milestone.toLowerCase()
+        );
+
+        if (item) {
+          // Update the item to checked
+          await (this.trelloService as any).client.put(
+            `/cards/${card.id}/checkItem/${item.id}`,
+            null,
+            { params: { state: 'complete' } }
+          );
+
+          return {
+            success: true,
+            message: `Marked milestone "${milestone}" as complete`
+          };
+        }
+      }
+
+      return { error: `Milestone not found: ${milestone}`, success: false };
+    } catch (error) {
+      return { error: `Failed to complete milestone: ${error}`, success: false };
+    }
+  }
+
+  /**
+   * Search for projects by keyword
+   */
+  private async trelloSearchProjects(query: string): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const boardId = this.getDefaultBoardId();
+    const results = await this.trelloService.searchCards({
+      query,
+      idBoards: boardId ? [boardId] : undefined
+    });
+
+    const lists = boardId ? await this.trelloService.getLists(boardId) : [];
+
+    return {
+      success: true,
+      projects: results.map((card: any) => {
+        const cardList = lists.find(l => l.id === card.idList);
+        return {
+          name: card.name,
+          list: cardList?.name || 'Unknown',
+          url: card.shortUrl
+        };
+      }),
+      total: results.length
+    };
+  }
+
+  /**
+   * Request human input by creating/updating a project card
+   */
+  private async trelloRequestHumanInput(input: {
+    projectName: string;
+    question: string;
+    options?: string[];
+    context?: string;
+  }): Promise<any> {
+    if (!this.trelloService) {
+      return { error: 'Trello service not available', success: false };
+    }
+
+    const boardId = this.getDefaultBoardId();
+    if (!boardId) {
+      return { error: 'TRELLO_BOARD_ID not configured', success: false };
+    }
+
+    // Check if project exists
+    let card = await this.findProjectCard(input.projectName);
+    const timestamp = new Date().toISOString().split('T')[0];
+
+    if (!card) {
+      // Create new card in "Needs Input" or first list
+      const lists = await this.trelloService.getLists(boardId);
+      let targetList = lists.find(l =>
+        l.name.toLowerCase().includes('input') ||
+        l.name.toLowerCase().includes('blocked') ||
+        l.name.toLowerCase().includes('review')
+      ) || lists[0];
+
+      const newCard = await this.trelloService.createCard({
+        idList: targetList.id,
+        name: input.projectName,
+        desc: `## ⚠️ Human Input Required\n\n**Question:** ${input.question}\n\n${input.context ? `**Context:** ${input.context}\n\n` : ''}${input.options ? `**Options:**\n${input.options.map((o, i) => `${i + 1}. ${o}`).join('\n')}` : ''}`
+      });
+      card = newCard;
+    } else {
+      // Add comment requesting input
+      let comment = `⚠️ **[${timestamp}] Human Input Required**\n\n**Question:** ${input.question}`;
+      if (input.context) {
+        comment += `\n\n**Context:** ${input.context}`;
+      }
+      if (input.options && input.options.length > 0) {
+        comment += `\n\n**Options:**\n${input.options.map((o, i) => `${i + 1}. ${o}`).join('\n')}`;
+      }
+
+      await this.trelloService.addComment(card.id, comment);
+
+      // Move to blocked/needs input list if available
+      const lists = await this.trelloService.getLists(boardId);
+      const blockedList = lists.find(l =>
+        l.name.toLowerCase().includes('input') ||
+        l.name.toLowerCase().includes('blocked')
+      );
+      if (blockedList) {
+        await this.trelloService.moveCard(card.id, blockedList.id);
+      }
+    }
+
+    return {
+      success: true,
+      message: `Human input requested on project "${input.projectName}"`,
+      url: card.shortUrl || card.url,
+      question: input.question
     };
   }
 

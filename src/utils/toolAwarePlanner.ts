@@ -40,30 +40,30 @@ const TOOL_REGISTRY: ToolCapability[] = [
     bestFor: ['explore', 'find', 'search', 'list', 'read', 'analyze', 'git', 'npm', 'file', 'directory', 'code']
   },
 
-  // Trello tools - Task management
+  // Trello tools - Project management (long-term only, not individual tasks)
   {
-    name: 'trello_list_boards',
+    name: 'trello_create_project',
+    category: 'creation',
+    description: 'Create project for long-term tracking with requirements and milestones',
+    bestFor: ['project', 'track this', 'long-term', 'multi-session', 'requirements']
+  },
+  {
+    name: 'trello_get_project',
     category: 'exploration',
-    description: 'List all Trello boards',
-    bestFor: ['trello', 'boards', 'projects', 'tasks']
+    description: 'Get project context before continuing work',
+    bestFor: ['continue', 'resume', 'pick up', 'where we left', 'project status']
   },
   {
-    name: 'trello_create_card',
-    category: 'creation',
-    description: 'Create task cards on Trello',
-    bestFor: ['task', 'card', 'todo', 'create', 'track', 'plan']
-  },
-  {
-    name: 'trello_add_checklist',
-    category: 'creation',
-    description: 'Add checklists to cards',
-    bestFor: ['checklist', 'steps', 'subtasks', 'breakdown']
-  },
-  {
-    name: 'trello_update_card',
+    name: 'trello_update_project',
     category: 'modification',
-    description: 'Update card status, move between lists',
-    bestFor: ['update', 'move', 'status', 'progress']
+    description: 'Log session progress, add decisions, note blockers',
+    bestFor: ['session', 'progress', 'decision', 'blocker', 'done for now']
+  },
+  {
+    name: 'trello_request_human_input',
+    category: 'creation',
+    description: 'Request human decision when blocked',
+    bestFor: ['blocked', 'need input', 'decision needed', 'which option', 'unclear']
   },
 
   // Hetzner deployment tools
@@ -208,9 +208,9 @@ export class ToolAwarePlanner {
       return this.createDeploymentPlan(taskDescription, tools);
     }
 
-    // Task management task
-    if (this.isTaskManagementTask(lower)) {
-      return this.createTaskManagementPlan(taskDescription, tools);
+    // Project management task (long-term tracking, not individual tasks)
+    if (this.isProjectManagementTask(lower)) {
+      return this.createProjectManagementPlan(taskDescription, tools);
     }
 
     // Implementation task
@@ -232,8 +232,9 @@ export class ToolAwarePlanner {
     return /deploy|ship|release|launch|publish/.test(desc);
   }
 
-  private isTaskManagementTask(desc: string): boolean {
-    return /trello|card|board|task|todo|plan|organize/.test(desc);
+  private isProjectManagementTask(desc: string): boolean {
+    // Only trigger for actual project-level work, not simple tasks
+    return /track this|project|long.?term|multi.?session|continue.*project|resume.*project|where we left/.test(desc.toLowerCase());
   }
 
   private isImplementationTask(desc: string): boolean {
@@ -356,40 +357,76 @@ export class ToolAwarePlanner {
   }
 
   /**
-   * Task Management Plan
+   * Project Management Plan - For long-term project tracking
    */
-  private createTaskManagementPlan(task: string, tools: ToolCapability[]): ToolAwarePlan {
-    const milestones: ToolAwareMilestone[] = [
-      {
-        id: 'understand_requirements',
-        description: 'Understand task requirements and context',
-        completed: false,
-        suggestedTools: ['trello_list_boards', 'trello_list_cards'],
-        toolStrategy: 'List existing boards and cards to understand current state.'
-      },
-      {
-        id: 'execute_changes',
-        description: 'Execute requested Trello changes',
-        completed: false,
-        suggestedTools: ['trello_create_card', 'trello_update_card', 'trello_add_checklist'],
-        toolStrategy: 'Create/update cards, add checklists, organize as requested.'
-      },
-      {
-        id: 'verify_results',
-        description: 'Verify changes were applied correctly',
-        completed: false,
-        suggestedTools: ['trello_list_cards', 'trello_search_cards'],
-        toolStrategy: 'Query Trello to confirm changes are visible.'
-      }
-    ];
+  private createProjectManagementPlan(task: string, tools: ToolCapability[]): ToolAwarePlan {
+    const lower = task.toLowerCase();
+    const isNewProject = /track this|create.*project|new project|start.*project/.test(lower);
+    const isContinuing = /continue|resume|pick up|where we left/.test(lower);
+
+    const milestones: ToolAwareMilestone[] = [];
+
+    if (isNewProject) {
+      milestones.push(
+        {
+          id: 'gather_requirements',
+          description: 'Identify project requirements and constraints',
+          completed: false,
+          suggestedTools: ['execute_bash'],
+          toolStrategy: 'Clarify what needs to be built, any constraints or limitations.'
+        },
+        {
+          id: 'create_project',
+          description: 'Create project card with structured requirements',
+          completed: false,
+          suggestedTools: ['trello_create_project'],
+          toolStrategy: 'Use trello_create_project with requirements array and milestones.'
+        }
+      );
+    } else if (isContinuing) {
+      milestones.push(
+        {
+          id: 'get_context',
+          description: 'Retrieve project context and history',
+          completed: false,
+          suggestedTools: ['trello_get_project'],
+          toolStrategy: 'Use trello_get_project to get requirements, decisions, and progress.'
+        },
+        {
+          id: 'work_on_project',
+          description: 'Continue work on next milestone',
+          completed: false,
+          suggestedTools: ['execute_bash', 'spawn_claude_agent'],
+          toolStrategy: 'Work on the next uncompleted milestone from the project.'
+        },
+        {
+          id: 'update_progress',
+          description: 'Log session progress to project',
+          completed: false,
+          suggestedTools: ['trello_update_project', 'trello_complete_milestone'],
+          toolStrategy: 'Use trello_update_project with sessionSummary, mark completed milestones.'
+        }
+      );
+    } else {
+      // General project query
+      milestones.push(
+        {
+          id: 'find_project',
+          description: 'Find or list projects',
+          completed: false,
+          suggestedTools: ['trello_list_projects', 'trello_search_projects'],
+          toolStrategy: 'List or search for existing projects.'
+        }
+      );
+    }
 
     return {
-      taskSummary: 'Trello task management',
+      taskSummary: 'Long-term project management',
       complexity: 'moderate',
-      estimatedEffort: 'quick',
-      explorationNeeded: false,
+      estimatedEffort: 'medium',
+      explorationNeeded: isContinuing,
       milestones,
-      toolsRequired: ['trello_list_boards', 'trello_create_card', 'trello_update_card'],
+      toolsRequired: ['trello_get_project', 'trello_create_project', 'trello_update_project'],
       delegationOpportunities: []
     };
   }

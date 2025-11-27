@@ -47,12 +47,27 @@ TASK: ${context.command}
   if (context.hasTrello) {
     prompt += `
 
-4. **Trello REST API**: Fully authenticated
-   - trello_list_boards: List all Trello boards
-   - trello_get_board: Get a specific board by name
-   - trello_create_list: Create a list on a board
-   - trello_create_card: Create a card on a list
-   - trello_list_cards: List all cards on a board`;
+4. **Trello Project Management** (for LONG-TERM projects only, NOT individual tasks):
+   - trello_create_project: Create a project card with requirements, constraints, milestones
+   - trello_get_project: Get project context (requirements, decisions, history) before continuing work
+   - trello_update_project: Log session summary, add decisions, note blockers
+   - trello_list_projects: List all tracked projects
+   - trello_add_milestone: Add a milestone to project checklist
+   - trello_complete_milestone: Mark a milestone complete
+   - trello_search_projects: Find projects by keyword
+   - trello_request_human_input: Request human decision when blocked
+
+   ⚠️ WHEN TO USE TRELLO:
+   - Multi-session projects spanning multiple conversations
+   - Work that needs human visibility/tracking
+   - When blocked and need human input
+   - User explicitly says "track this" or "project"
+
+   ⚠️ WHEN NOT TO USE TRELLO:
+   - Simple one-shot commands
+   - Quick code fixes
+   - Research queries
+   - Internal sub-agent coordination`;
   }
 
   prompt += `
@@ -92,16 +107,31 @@ Example 1 - GitHub:
   Tool: execute_bash
   Command: "gh repo list --limit 5 --json name,url,updatedAt"
 
-Example 2 - Trello:
-  Task: "Create a card on my TODO list"
-  Tool: trello_create_card
-  Params: { boardName: "Personal", listName: "TODO", cardName: "New Task" }
+Example 2 - Starting a tracked project:
+  Task: "Help me build a REST API - track this project"
+  Tool: trello_create_project
+  Params: {
+    projectName: "REST API Project",
+    requirements: ["User authentication", "CRUD endpoints", "Database integration"],
+    milestones: ["Setup project", "Auth endpoints", "CRUD endpoints", "Testing"]
+  }
 
-Example 3 - Multi-step:
-  Task: "Fetch my repos and create Trello cards for each"
-  Step 1: execute_bash("gh repo list --limit 5 --json name")
-  Step 2: For each repo, call trello_create_card(...)
-  Step 3: Provide summary of created cards
+Example 3 - Continuing project work:
+  Task: "Continue working on the REST API project"
+  Step 1: trello_get_project("REST API Project") - get context
+  Step 2: Review requirements, decisions, and what's completed
+  Step 3: Work on next milestone
+  Step 4: trello_update_project({ sessionSummary: "Completed auth endpoints..." })
+
+Example 4 - When blocked:
+  Task: Agent needs human decision on database choice
+  Tool: trello_request_human_input
+  Params: {
+    projectName: "REST API Project",
+    question: "Which database should I use?",
+    options: ["PostgreSQL", "MongoDB", "SQLite"],
+    context: "PostgreSQL for relations, MongoDB for flexibility"
+  }
 
 💡 CRITICAL - READ THIS:
 - You have FULL credentials for GitHub, GCloud, and Trello

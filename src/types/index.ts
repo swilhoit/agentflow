@@ -89,9 +89,11 @@ export interface BotConfig {
   financialAdvisorChannels?: string[];
   // Orchestrator configuration
   orchestratorChannels?: string[];
-  // Trello configuration
+  // Trello configuration (Project Management)
   trelloBoardId?: string;
-  trelloInboxListId?: string;
+  trelloBacklogListId?: string;
+  trelloInProgressListId?: string;
+  trelloNeedsInputListId?: string;
   trelloDoneListId?: string;
   // Deployment tracking configuration
   deploymentsChannelId?: string;
