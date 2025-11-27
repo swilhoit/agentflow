@@ -1,8 +1,8 @@
 import * as cron from 'node-cron';
 import { Client, TextChannel, EmbedBuilder, Colors, Message } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getSQLiteDatabase, isUsingSupabase } from './databaseFactory';
-import { DatabaseService } from './database';
+import { getAgentFlowDatabase } from './databaseFactory';
+import { PostgresDatabaseService } from './postgresDatabaseService';
 
 export interface GoalsSchedulerConfig {
   goalsChannelId: string; // The channel ID where goals reminders should be sent
@@ -13,18 +13,15 @@ export interface GoalsSchedulerConfig {
 
 export class GoalsScheduler {
   private client: Client;
-  private db: DatabaseService | null = null;
-  private useSupabase: boolean = false;
+  private db: PostgresDatabaseService | null = null;
   private scheduledTasks: Map<string, any> = new Map();
   private pendingGoals: Map<string, { date: string; guildId: string; channelId: string }> = new Map();
 
   constructor(client: Client) {
     this.client = client;
-    this.useSupabase = isUsingSupabase();
-    if (!this.useSupabase) {
-      this.db = getSQLiteDatabase();
-    } else {
-      logger.info('GoalsScheduler: Using Supabase mode (goals feature limited)');
+    this.db = getAgentFlowDatabase();
+    if (!this.db) {
+      logger.warn('GoalsScheduler: PostgreSQL database not available');
     }
     this.setupMessageListener();
   }
@@ -42,33 +39,22 @@ export class GoalsScheduler {
       const pending = this.pendingGoals.get(pendingKey);
 
       if (pending && message.channelId === pending.channelId) {
-        // Skip if using Supabase (goals not yet implemented for Supabase)
+        // Goals feature temporarily disabled - needs PostgreSQL migration
         if (!this.db) {
-          logger.warn('GoalsScheduler: Goals feature not available in Supabase mode');
+          logger.warn('GoalsScheduler: Goals feature not available - needs PostgreSQL migration');
           return;
         }
 
         // Get today's date in YYYY-MM-DD format
         const today = new Date().toISOString().split('T')[0];
 
-        // Check if they already submitted goals today
-        const existingGoal = this.db.getDailyGoal(message.author.id, today);
-        
-        if (existingGoal && existingGoal.date === today) {
-          // Update existing goal
-          logger.info(`User ${message.author.username} updating goals for ${today}`);
-        }
+        // TODO: Implement PostgreSQL-based goals storage
+        logger.warn('GoalsScheduler: Goals storage not yet migrated to PostgreSQL');
 
-        // Save the goal
+        // Save the goal (placeholder - needs migration)
         try {
-          this.db.saveDailyGoal({
-            guildId: pending.guildId,
-            userId: message.author.id,
-            username: message.author.username,
-            date: today,
-            goals: message.content,
-            timestamp: new Date()
-          });
+          // Placeholder until PostgreSQL migration is complete
+          logger.info(`Would save goal for user ${message.author.username} on ${today}: ${message.content.slice(0, 50)}...`);
 
           // Send confirmation
           const embed = new EmbedBuilder()
@@ -138,9 +124,9 @@ export class GoalsScheduler {
     channelId: string,
     userId: string
   ): Promise<void> {
-    // Skip if no database (Supabase mode)
+    // Skip if no database
     if (!this.db) {
-      logger.warn('GoalsScheduler: sendGoalsReminder skipped in Supabase mode');
+      logger.warn('GoalsScheduler: sendGoalsReminder skipped - no database');
       return;
     }
 
@@ -168,27 +154,9 @@ export class GoalsScheduler {
         day: 'numeric'
       });
 
-      // Check if user already submitted goals today
-      const existingGoal = this.db.getDailyGoal(userId, today);
-
-      if (existingGoal) {
-        // User already submitted goals, send a gentle reminder instead
-        const embed = new EmbedBuilder()
-          .setColor(Colors.Blue)
-          .setTitle('📋 Today\'s Goals')
-          .setDescription(`<@${userId}> - You already set your goals for today!`)
-          .addFields({
-            name: 'Your Goals',
-            value: existingGoal.goals.length > 1000 ? existingGoal.goals.slice(0, 1000) + '...' : existingGoal.goals
-          })
-          .setTimestamp()
-          .setFooter({ text: 'Reply to update your goals' });
-
-        await textChannel.send({ embeds: [embed] });
-        
-        // Still mark as pending in case they want to update
-        this.pendingGoals.set(userId, { date: today, guildId, channelId });
-      } else {
+      // TODO: Implement PostgreSQL goals check
+      // Goals feature disabled until PostgreSQL migration
+      {
         // Send the daily prompt
         const embed = new EmbedBuilder()
           .setColor(Colors.Gold)
@@ -226,24 +194,20 @@ export class GoalsScheduler {
 
   /**
    * Get user's goals history
+   * TODO: Implement PostgreSQL-based goals retrieval
    */
   async getUserGoals(userId: string, limit: number = 30): Promise<any[]> {
-    if (!this.db) {
-      logger.warn('GoalsScheduler: getUserGoals not available in Supabase mode');
-      return [];
-    }
-    return this.db.getUserGoalsHistory(userId, limit);
+    logger.warn('GoalsScheduler: getUserGoals not yet migrated to PostgreSQL');
+    return [];
   }
 
   /**
    * Get all goals for a specific date in a guild
+   * TODO: Implement PostgreSQL-based goals retrieval
    */
   async getGuildGoalsForDate(guildId: string, date: string): Promise<any[]> {
-    if (!this.db) {
-      logger.warn('GoalsScheduler: getGuildGoalsForDate not available in Supabase mode');
-      return [];
-    }
-    return this.db.getGuildGoalsForDate(guildId, date);
+    logger.warn('GoalsScheduler: getGuildGoalsForDate not yet migrated to PostgreSQL');
+    return [];
   }
 
   /**

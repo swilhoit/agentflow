@@ -115,7 +115,7 @@ export class TaskManager {
         logger.error('Failed to save task to PostgreSQL', e); 
       }
     } else if (!isUsingSupabase()) {
-      // Fallback to SQLite (local dev)
+      // Fallback to SQLite (local dev only)
       try {
         const db = getSQLiteDatabase();
         
@@ -130,29 +130,31 @@ export class TaskManager {
           timestamp: new Date()
         });
 
-      // Save initial task state to DB
-      db.createAgentTask({
-        agentId: taskId,
-        guildId: task.context.guildId,
-        channelId: task.context.channelId,
-        userId: task.context.userId,
-        taskDescription: description,
-        status: 'pending',
-        startedAt: new Date()
-      });
-      logger.info(`💾 Persisted task ${taskId} to database`);
+        // Save initial task state to DB
+        db.createAgentTask({
+          agentId: taskId,
+          guildId: task.context.guildId,
+          channelId: task.context.channelId,
+          userId: task.context.userId,
+          taskDescription: description,
+          status: 'pending',
+          startedAt: new Date()
+        });
+        logger.info(`💾 Persisted task ${taskId} to database`);
 
-      // Load context (recent history)
-      const history = db.getConversationContext(task.context.guildId, task.context.channelId, 10);
-      
-      // Inject into task context
-      task.context.conversationHistory = history;
-      logger.info(`📜 Injected conversation history (${history.length} chars)`);
-      
-    } catch (error) {
-      logger.error('Failed to persist message or load history:', error);
-      // Continue without history if DB fails
-    }
+        // Load context (recent history)
+        const history = db.getConversationContext(task.context.guildId, task.context.channelId, 10);
+        
+        // Inject into task context
+        task.context.conversationHistory = history;
+        logger.info(`📜 Injected conversation history (${history.length} chars)`);
+      } catch (error) {
+        logger.error('Failed to persist message or load history:', error);
+        // Continue without history if DB fails
+      }
+    } else {
+      // Supabase mode - skip SQLite operations
+      logger.info(`💾 Task ${taskId} created (Supabase mode - using cloud storage)`);
     }
 
     // Create a new ToolBasedAgent instance for this task (full isolation!)
@@ -241,7 +243,7 @@ export class TaskManager {
         try {
           await this.pgDb.updateAgentTask(taskId, { status: 'running' });
         } catch (e) { logger.error('Failed to update task status in PostgreSQL', e); }
-      } else if (!isUsingSupabase()) {
+      } else if (!isUsingSupabase() && !isUsingPostgres()) {
         try {
           getSQLiteDatabase().updateAgentTask(taskId, { status: 'running' });
         } catch (e) { logger.error('Failed to update task status in SQLite', e); }
@@ -313,7 +315,7 @@ export class TaskManager {
         } catch (error) {
           logger.error('Failed to save agent response to PostgreSQL:', error);
         }
-      } else if (!isUsingSupabase()) {
+      } else if (!isUsingSupabase() && !isUsingPostgres()) {
         try {
           const db = getSQLiteDatabase();
           db.updateAgentTask(taskId, {
@@ -366,7 +368,7 @@ export class TaskManager {
             error: managedTask.error
           });
         } catch (e) { logger.error('Failed to update task error in PostgreSQL', e); }
-      } else if (!isUsingSupabase()) {
+      } else if (!isUsingSupabase() && !isUsingPostgres()) {
         try {
           getSQLiteDatabase().updateAgentTask(taskId, {
             status: 'failed',
@@ -533,12 +535,12 @@ export class TaskManager {
       }
     }
     
-    if (isUsingSupabase()) {
-      logger.info('🔄 Task restoration skipped (Supabase mode - not yet implemented)');
+    if (isUsingSupabase() || isUsingPostgres()) {
+      logger.info('🔄 Task restoration skipped (cloud mode - managed by PostgreSQL)');
       return;
     }
     
-    // SQLite fallback
+    // SQLite fallback (local dev only)
     try {
       const db = getSQLiteDatabase();
       const activeTasks = db.getAllActiveAgentTasks();

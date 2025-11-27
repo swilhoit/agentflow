@@ -36,6 +36,8 @@ RUN mkdir -p audio temp data
 
 # Set environment variables
 ENV NODE_ENV=production
+# Increase Node.js memory limit to 4GB to prevent OOM crashes during AI analysis
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Expose orchestrator port
 EXPOSE 3001

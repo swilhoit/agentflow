@@ -1855,53 +1855,14 @@ export class ToolBasedAgent {
     logger.info(`⚡ Quick Analysis: ${SmartIterationCalculator.getSummary(quickEstimate)}`);
     logger.info(`   Confidence: ${quickEstimate.confidence}, Recommended: ${quickEstimate.recommended} iterations`);
     
-    // Step 2: For simple tasks with high confidence, skip expensive deep analysis
-    // AGGRESSIVE OPTIMIZATION: Skip deep analysis for anything under 8 iterations with high confidence
-    if (quickEstimate.recommended <= 8 && quickEstimate.confidence === 'high') {
-      logger.info(`⚡ Fast path: Using ${quickEstimate.recommended} iterations (skipping deep analysis)`);
-      await this.notify(`⚡ **Quick Task** (${quickEstimate.recommended} iterations)\n${quickEstimate.reasoning}`);
-      return await this.executeSimpleTask(task, quickEstimate.recommended);
-    }
+    // Step 2: ALWAYS use the fast path - deep analysis was causing memory crashes
+    // The heuristic-based quick estimate is reliable enough for most tasks
+    const iterationLimit = Math.min(quickEstimate.recommended, this.maxIterations);
     
-    // Also skip deep analysis for medium confidence if under 6 iterations
-    if (quickEstimate.recommended <= 6 && quickEstimate.confidence === 'medium') {
-      logger.info(`⚡ Fast path: Using ${quickEstimate.recommended} iterations (medium confidence, skipping deep analysis)`);
-      await this.notify(`⚡ **Quick Task** (${quickEstimate.recommended} iterations)\n${quickEstimate.reasoning}`);
-      return await this.executeSimpleTask(task, quickEstimate.recommended);
-    }
+    logger.info(`⚡ Fast path: Using ${iterationLimit} iterations (heuristic estimate)`);
+    await this.notify(`🚀 **Starting Task** (${iterationLimit} iterations max)\n${quickEstimate.reasoning}`);
     
-    // Step 3: For complex tasks or uncertain cases, do deep AI analysis
-    logger.info(`🔍 Task needs deep analysis - running AI-powered complexity assessment...`);
-    await this.notify(`🔍 **Analyzing Task Complexity**\nDetermining optimal execution strategy...`);
-    
-    const analysis = await this.taskDecomposer.analyzeTask(task.command);
-    
-    logger.info(`📊 Deep Analysis Result: ${analysis.complexity} complexity`);
-    logger.info(`📊 Estimated iterations: ${analysis.estimatedIterations}`);
-    logger.info(`📊 Requires decomposition: ${analysis.requiresDecomposition}`);
-    
-    // Notify user of the detailed plan
-    await this.notify(
-      `📊 **Task Analysis Complete**\n\n` +
-      `**Complexity:** ${analysis.complexity}\n` +
-      `**Estimated Iterations:** ${analysis.estimatedIterations}\n` +
-      `**Strategy:** ${analysis.requiresDecomposition ? `Breaking into ${analysis.subtasks.length} subtasks` : 'Direct execution'}\n\n` +
-      `**Reasoning:** ${analysis.reasoning}`
-    );
-
-    // Step 4: Execute based on complexity
-    if (analysis.requiresDecomposition && analysis.subtasks.length > 0) {
-      logger.info(`🔧 Decomposing task into ${analysis.subtasks.length} subtasks`);
-      return await this.executeDecomposedTask(task, analysis);
-    } else {
-      // Direct execution with optimized iteration limit (CAP AT 15 for simple tasks)
-      let iterationLimit = this.taskDecomposer.calculateIterationLimit(analysis);
-      if (analysis.complexity === 'simple' || analysis.complexity === 'moderate') {
-        iterationLimit = Math.min(iterationLimit, 10); // Cap simple/moderate at 10
-      }
-      logger.info(`⚡ Executing task directly with ${iterationLimit} iteration limit`);
-      return await this.executeSimpleTask(task, iterationLimit);
-    }
+    return await this.executeSimpleTask(task, iterationLimit);
   }
 
   /**
