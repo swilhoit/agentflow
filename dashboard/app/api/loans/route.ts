@@ -54,32 +54,31 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId') || 'default_user';
 
-    // Get all active loans for user from financial_goals table (type = debt)
-    const { data: goalsData, error } = await supabase
-      .from('financial_goals')
+    // Get all active loans for user from loans table
+    const { data: loansData, error } = await supabase
+      .from('loans')
       .select('*')
       .eq('user_id', userId)
-      .eq('goal_type', 'debt')
       .eq('status', 'active')
-      .order('target_amount', { ascending: false });
+      .order('current_balance', { ascending: false });
 
     if (error) throw error;
 
-    // Map financial_goals to loan format
-    const loans: Loan[] = (goalsData || []).map(goal => ({
-      id: goal.id,
-      user_id: goal.user_id,
-      name: goal.goal_name,
-      original_amount: Number(goal.target_amount),
-      current_balance: Number(goal.target_amount) - Number(goal.current_amount || 0),
-      interest_rate: 0, // Default rate
-      monthly_payment: Number(goal.target_amount) / 12, // Estimate
-      start_date: goal.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-      payoff_date: goal.target_date,
-      loan_type: 'other' as const,
-      status: 'active' as const,
-      created_at: goal.created_at,
-      updated_at: goal.updated_at
+    // Map database rows to loan format
+    const loans: Loan[] = (loansData || []).map(loan => ({
+      id: loan.id,
+      user_id: loan.user_id,
+      name: loan.name,
+      original_amount: Number(loan.original_amount),
+      current_balance: Number(loan.current_balance),
+      interest_rate: Number(loan.interest_rate) || 0,
+      monthly_payment: Number(loan.monthly_payment),
+      start_date: loan.start_date,
+      payoff_date: loan.payoff_date,
+      loan_type: loan.loan_type as Loan['loan_type'],
+      status: loan.status as Loan['status'],
+      created_at: loan.created_at,
+      updated_at: loan.updated_at
     }));
 
     // Calculate summary statistics
@@ -168,17 +167,20 @@ export async function POST(request: Request) {
       loan.payoff_date = payoffDate.toISOString().split('T')[0];
     }
 
-    // Insert as a financial_goal with type 'debt'
+    // Insert into loans table
     const { data, error } = await supabase
-      .from('financial_goals')
+      .from('loans')
       .insert({
         user_id: loan.user_id,
-        goal_name: loan.name,
-        goal_type: 'debt',
-        target_amount: loan.original_amount,
-        current_amount: loan.original_amount - loan.current_balance,
-        target_date: loan.payoff_date,
-        status: 'active'
+        name: loan.name,
+        original_amount: loan.original_amount,
+        current_balance: loan.current_balance,
+        interest_rate: loan.interest_rate || 0,
+        monthly_payment: loan.monthly_payment,
+        start_date: loan.start_date,
+        payoff_date: loan.payoff_date,
+        loan_type: loan.loan_type,
+        status: loan.status
       })
       .select('id')
       .single();
@@ -213,7 +215,7 @@ export async function DELETE(request: Request) {
     }
 
     const { error } = await supabase
-      .from('financial_goals')
+      .from('loans')
       .delete()
       .eq('id', loanId);
 
