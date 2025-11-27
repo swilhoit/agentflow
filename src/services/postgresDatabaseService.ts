@@ -13,7 +13,7 @@ export class PostgresDatabaseService {
 
   constructor() {
     this.pool = new Pool({
-      host: process.env.AGENTFLOW_DB_HOST || 'localhost',
+      host: process.env.AGENTFLOW_DB_HOST || '178.156.198.233',
       port: parseInt(process.env.AGENTFLOW_DB_PORT || '5432'),
       user: process.env.AGENTFLOW_DB_USER || 'agentflow',
       password: process.env.AGENTFLOW_DB_PASSWORD || 'agentflow_secure_2024',
@@ -163,6 +163,186 @@ export class PostgresDatabaseService {
       WHERE status = 'failed' 
       AND completed_at >= NOW() - INTERVAL '${hours} hours'
       ORDER BY completed_at DESC
+    `);
+    return result.rows;
+  }
+
+  // ===========================================
+  // AGENT CONFIGURATION (Managed by AgentManager)
+  // ===========================================
+
+  async getAgentConfig(agentName: string): Promise<any | null> {
+    const result = await this.pool.query(
+      'SELECT * FROM agent_configs WHERE agent_name = $1',
+      [agentName]
+    );
+    return result.rows[0] || null;
+  }
+
+  async getAllAgentConfigs(): Promise<any[]> {
+    const result = await this.pool.query(
+      'SELECT * FROM agent_configs ORDER BY display_name'
+    );
+    return result.rows;
+  }
+
+  async upsertAgentConfig(config: {
+    agentName: string;
+    displayName: string;
+    description: string;
+    agentType: 'discord-bot' | 'scheduler' | 'service';
+    status?: 'active' | 'inactive' | 'error';
+    isEnabled?: boolean;
+    channelIds?: string;
+    config?: string;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO agent_configs (agent_name, display_name, description, agent_type, status, is_enabled, channel_ids, config, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      ON CONFLICT (agent_name) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        description = EXCLUDED.description,
+        agent_type = EXCLUDED.agent_type,
+        status = EXCLUDED.status,
+        is_enabled = EXCLUDED.is_enabled,
+        channel_ids = EXCLUDED.channel_ids,
+        config = EXCLUDED.config,
+        updated_at = NOW()
+      RETURNING id
+    `, [
+      config.agentName,
+      config.displayName,
+      config.description,
+      config.agentType,
+      config.status || 'active',
+      config.isEnabled !== false,
+      config.channelIds || null,
+      config.config || null
+    ]);
+    return result.rows[0].id;
+  }
+
+  async updateAgentStatus(agentName: string, status: 'active' | 'inactive' | 'error'): Promise<void> {
+    await this.pool.query(`
+      UPDATE agent_configs 
+      SET status = $1, 
+          last_active_at = CASE WHEN $1 = 'active' THEN NOW() ELSE last_active_at END,
+          updated_at = NOW()
+      WHERE agent_name = $2
+    `, [status, agentName]);
+  }
+
+  // ===========================================
+  // RECURRING TASKS
+  // ===========================================
+
+  async getRecurringTask(taskName: string): Promise<any | null> {
+    const result = await this.pool.query(
+      'SELECT * FROM recurring_tasks WHERE task_name = $1',
+      [taskName]
+    );
+    return result.rows[0] || null;
+  }
+
+  async getAllRecurringTasks(): Promise<any[]> {
+    const result = await this.pool.query(
+      'SELECT * FROM recurring_tasks ORDER BY agent_name, task_name'
+    );
+    return result.rows;
+  }
+
+  async getEnabledRecurringTasks(): Promise<any[]> {
+    const result = await this.pool.query(
+      'SELECT * FROM recurring_tasks WHERE is_enabled = true ORDER BY agent_name, task_name'
+    );
+    return result.rows;
+  }
+
+  async upsertRecurringTask(task: {
+    taskName: string;
+    agentName: string;
+    description: string;
+    cronSchedule: string;
+    timezone?: string;
+    isEnabled?: boolean;
+    config?: string;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO recurring_tasks (task_name, agent_name, description, cron_schedule, timezone, is_enabled, config, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (task_name) DO UPDATE SET
+        agent_name = EXCLUDED.agent_name,
+        description = EXCLUDED.description,
+        cron_schedule = EXCLUDED.cron_schedule,
+        timezone = EXCLUDED.timezone,
+        is_enabled = EXCLUDED.is_enabled,
+        config = EXCLUDED.config,
+        updated_at = NOW()
+      RETURNING id
+    `, [
+      task.taskName,
+      task.agentName,
+      task.description,
+      task.cronSchedule,
+      task.timezone || 'America/New_York',
+      task.isEnabled !== false,
+      task.config || null
+    ]);
+    return result.rows[0].id;
+  }
+
+  async updateTaskLastRun(taskId: number, success: boolean): Promise<void> {
+    await this.pool.query(`
+      UPDATE recurring_tasks
+      SET last_run_at = NOW(),
+          total_runs = total_runs + 1,
+          successful_runs = successful_runs + (CASE WHEN $1 = true THEN 1 ELSE 0 END),
+          failed_runs = failed_runs + (CASE WHEN $1 = false THEN 1 ELSE 0 END),
+          updated_at = NOW()
+      WHERE id = $2
+    `, [success, taskId]);
+  }
+
+  // ===========================================
+  // TASK EXECUTIONS (History)
+  // ===========================================
+
+  async logTaskExecutionHistory(execution: {
+    taskId: number;
+    taskName: string;
+    agentName: string;
+    status: 'success' | 'failed' | 'skipped';
+    startedAt: Date;
+    completedAt?: Date;
+    duration?: number;
+    result?: string;
+    error?: string;
+    metadata?: string;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO task_executions (task_id, task_name, agent_name, status, started_at, completed_at, duration, result, error, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id
+    `, [
+      execution.taskId,
+      execution.taskName,
+      execution.agentName,
+      execution.status,
+      execution.startedAt,
+      execution.completedAt || null,
+      execution.duration || null,
+      execution.result || null,
+      execution.error || null,
+      execution.metadata || null
+    ]);
+    return result.rows[0].id;
+  }
+
+  async getRecentTaskExecutions(hours: number = 24): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM task_executions
+      WHERE started_at >= NOW() - INTERVAL '${hours} hours'
+      ORDER BY started_at DESC
     `);
     return result.rows;
   }

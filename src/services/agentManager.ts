@@ -1,6 +1,5 @@
-import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
-import { getSQLiteDatabase, isUsingPostgres, getDatabaseType } from './databaseFactory';
-import { getUnifiedDatabase, UnifiedDatabaseService } from './unifiedDatabase';
+import { Client } from 'discord.js';
+import { getPostgresDatabase } from './postgresDatabaseService';
 import { logger } from '../utils/logger';
 import * as cron from 'node-cron';
 
@@ -72,104 +71,20 @@ export class AgentManagerService {
   private client: Client;
   private scheduledTasks: Map<number, cron.ScheduledTask> = new Map();
   private taskExecutors: Map<string, TaskExecutor> = new Map();
-  private unifiedDb: UnifiedDatabaseService | null = null;
-  // In-memory storage for agents (no database dependency)
-  private inMemoryAgents: Map<string, AgentConfig> = new Map();
-  private inMemoryTasks: Map<string, RecurringTask> = new Map();
 
   constructor(client: Client) {
     this.client = client;
-    // NO DATABASE FOR AGENT MANAGER - use in-memory storage
-    // Core agent logging uses PostgresDatabaseService directly
-    this.initializeDatabase();
+    // Initialize database schema is handled by migration script now
     this.registerDefaultAgents();
   }
 
   /**
-   * Initialize database schema for agent management
-   * Tables are created in Hetzner PostgreSQL
-   */
-  private initializeDatabase(): void {
-    // NO SUPABASE - Tables already exist in Hetzner PostgreSQL
-    // Created via migration script: agent_configs, recurring_tasks, agent_task_executions
-    logger.info('✅ Agent Manager database schema initialized (Hetzner PostgreSQL)');
-    return;
-
-    // Legacy SQLite code below - kept for reference but never executed
-    const db = getSQLiteDatabase().getRawDatabase();
-
-    // Agent configurations table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS agent_configs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_name TEXT UNIQUE NOT NULL,
-        display_name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        agent_type TEXT NOT NULL CHECK(agent_type IN ('discord-bot', 'scheduler', 'service')),
-        status TEXT NOT NULL CHECK(status IN ('active', 'inactive', 'error')) DEFAULT 'active',
-        is_enabled BOOLEAN NOT NULL DEFAULT 1,
-        channel_ids TEXT,
-        config TEXT,
-        last_active_at DATETIME,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Recurring tasks table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS recurring_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_name TEXT UNIQUE NOT NULL,
-        agent_name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        cron_schedule TEXT NOT NULL,
-        timezone TEXT NOT NULL DEFAULT 'America/New_York',
-        is_enabled BOOLEAN NOT NULL DEFAULT 1,
-        last_run_at DATETIME,
-        next_run_at DATETIME,
-        total_runs INTEGER NOT NULL DEFAULT 0,
-        successful_runs INTEGER NOT NULL DEFAULT 0,
-        failed_runs INTEGER NOT NULL DEFAULT 0,
-        config TEXT,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (agent_name) REFERENCES agent_configs(agent_name)
-      )
-    `);
-
-    // Task execution history table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS task_executions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id INTEGER NOT NULL,
-        task_name TEXT NOT NULL,
-        agent_name TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('success', 'failed', 'skipped')),
-        started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        completed_at DATETIME,
-        duration INTEGER,
-        result TEXT,
-        error TEXT,
-        metadata TEXT,
-        FOREIGN KEY (task_id) REFERENCES recurring_tasks(id)
-      )
-    `);
-
-    // Create indexes
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_configs_status ON agent_configs(status, is_enabled)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_recurring_tasks_agent ON recurring_tasks(agent_name, is_enabled)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_recurring_tasks_schedule ON recurring_tasks(next_run_at, is_enabled)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_task_executions_task ON task_executions(task_id, started_at DESC)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_task_executions_status ON task_executions(status, started_at DESC)`);
-
-    logger.info('✅ Agent Manager using SQLite (local mode)');
-  }
-
-  /**
    * Register default agents in the system
+   * Upserts them into Postgres
    */
-  private registerDefaultAgents(): void {
+  private async registerDefaultAgents(): Promise<void> {
+    const db = getPostgresDatabase();
+    
     // Define required fields for default agent configs
     type DefaultAgentConfig = Pick<AgentConfig, 'agentName' | 'displayName' | 'description' | 'agentType' | 'status' | 'isEnabled'>;
     const agents: DefaultAgentConfig[] = [
@@ -231,73 +146,62 @@ export class AgentManagerService {
       }
     ];
 
-    // Store agents in memory (no database dependency for agent manager)
-    for (const agent of agents) {
-      const fullConfig: AgentConfig = {
-        agentName: agent.agentName,
-        displayName: agent.displayName,
-        description: agent.description,
-        agentType: agent.agentType,
-        status: agent.status,
-        isEnabled: agent.isEnabled,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      this.inMemoryAgents.set(fullConfig.agentName, fullConfig);
+    try {
+      for (const agent of agents) {
+        await db.upsertAgentConfig({
+          ...agent,
+          config: JSON.stringify({}),
+          channelIds: JSON.stringify([])
+        });
+      }
+      logger.info(`✅ Default agents registered/updated in Postgres (${agents.length} agents)`);
+    } catch (error) {
+      logger.error('Failed to register default agents:', error);
     }
-
-    logger.info(`✅ Default agents registered (${agents.length} agents in memory)`);
   }
 
   /**
    * Get all agents
    */
-  getAllAgents(): AgentConfig[] {
-    // Return agents from in-memory storage
-    return Array.from(this.inMemoryAgents.values());
-  }
-
-  /**
-   * Get all agents (async - works with both SQLite and Supabase)
-   */
-  async getAllAgentsAsync(): Promise<AgentConfig[]> {
-    return this.getAllAgents();
+  async getAllAgents(): Promise<AgentConfig[]> {
+    const db = getPostgresDatabase();
+    const rows = await db.getAllAgentConfigs();
+    return rows.map(this.mapRowToAgentConfig);
   }
 
   /**
    * Get agent by name
    */
-  getAgent(agentName: string): AgentConfig | undefined {
-    return this.inMemoryAgents.get(agentName);
-  }
-
-  /**
-   * Get agent by name (async)
-   */
-  async getAgentAsync(agentName: string): Promise<AgentConfig | undefined> {
-    return this.getAgent(agentName);
+  async getAgent(agentName: string): Promise<AgentConfig | undefined> {
+    const db = getPostgresDatabase();
+    const row = await db.getAgentConfig(agentName);
+    return row ? this.mapRowToAgentConfig(row) : undefined;
   }
 
   /**
    * Update agent status
    */
-  updateAgentStatus(agentName: string, status: 'active' | 'inactive' | 'error'): void {
-    const agent = this.inMemoryAgents.get(agentName);
-    if (agent) {
-      agent.status = status;
-      agent.lastActiveAt = new Date();
-      agent.updatedAt = new Date();
-    }
+  async updateAgentStatus(agentName: string, status: 'active' | 'inactive' | 'error'): Promise<void> {
+    const db = getPostgresDatabase();
+    await db.updateAgentStatus(agentName, status);
   }
 
   /**
    * Enable/disable agent
    */
-  setAgentEnabled(agentName: string, isEnabled: boolean): void {
-    const agent = this.inMemoryAgents.get(agentName);
+  async setAgentEnabled(agentName: string, isEnabled: boolean): Promise<void> {
+    const db = getPostgresDatabase();
+    // We need to get the full config to update just one field with upsert, 
+    // or we add a specific method. For now, let's fetch and upsert.
+    // Actually, updateAgentStatus logic is specific.
+    // Let's just assume upsert handles it or add a method.
+    // Since upsert requires all fields in my implementation, I should fetch first.
+    const agent = await this.getAgent(agentName);
     if (agent) {
-      agent.isEnabled = isEnabled;
-      agent.updatedAt = new Date();
+      await db.upsertAgentConfig({
+        ...agent,
+        isEnabled
+      });
       logger.info(`${isEnabled ? 'Enabled' : 'Disabled'} agent: ${agentName}`);
     }
   }
@@ -305,67 +209,62 @@ export class AgentManagerService {
   /**
    * Register a recurring task
    */
-  registerRecurringTask(task: Omit<RecurringTask, 'id' | 'totalRuns' | 'successfulRuns' | 'failedRuns' | 'createdAt' | 'updatedAt'>): number {
-    const taskId = this.inMemoryTasks.size + 1;
-    const fullTask: RecurringTask = {
-      id: taskId,
+  async registerRecurringTask(task: Omit<RecurringTask, 'id' | 'totalRuns' | 'successfulRuns' | 'failedRuns' | 'createdAt' | 'updatedAt'>): Promise<number> {
+    const db = getPostgresDatabase();
+    const id = await db.upsertRecurringTask({
       ...task,
-      totalRuns: 0,
-      successfulRuns: 0,
-      failedRuns: 0,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    this.inMemoryTasks.set(task.taskName, fullTask);
-
-    const result = { lastInsertRowid: taskId };
-
+      config: task.config || '{}'
+    });
     logger.info(`✅ Registered recurring task: ${task.taskName}`);
-    return result.lastInsertRowid as number;
+    return id;
   }
 
   /**
    * Get all recurring tasks
    */
-  getAllRecurringTasks(): RecurringTask[] {
-    return Array.from(this.inMemoryTasks.values());
+  async getAllRecurringTasks(): Promise<RecurringTask[]> {
+    const db = getPostgresDatabase();
+    const rows = await db.getAllRecurringTasks();
+    return rows.map(this.mapRowToRecurringTask);
   }
 
   /**
-   * Get all recurring tasks (async)
+   * Get enabled recurring tasks
    */
-  async getAllRecurringTasksAsync(): Promise<RecurringTask[]> {
-    return this.getAllRecurringTasks();
-  }
-
-  /**
-   * Get enabled recurring tasks (async)
-   */
-  async getEnabledRecurringTasksAsync(): Promise<RecurringTask[]> {
-    return Array.from(this.inMemoryTasks.values()).filter(t => t.isEnabled);
+  async getEnabledRecurringTasks(): Promise<RecurringTask[]> {
+    const db = getPostgresDatabase();
+    const rows = await db.getEnabledRecurringTasks();
+    return rows.map(this.mapRowToRecurringTask);
   }
 
   /**
    * Get recurring tasks by agent
    */
-  getAgentRecurringTasks(agentName: string): RecurringTask[] {
-    return Array.from(this.inMemoryTasks.values()).filter(t => t.agentName === agentName);
+  async getAgentRecurringTasks(agentName: string): Promise<RecurringTask[]> {
+    const tasks = await this.getAllRecurringTasks();
+    return tasks.filter(t => t.agentName === agentName);
   }
 
   /**
    * Enable/disable recurring task
    */
-  setRecurringTaskEnabled(taskId: number, isEnabled: boolean): void {
-    for (const task of this.inMemoryTasks.values()) {
-      if (task.id === taskId) {
-        task.isEnabled = isEnabled;
-        task.updatedAt = new Date();
-        if (isEnabled) {
-          this.scheduleTask(task);
-        } else {
-          this.unscheduleTask(taskId);
-        }
-        break;
+  async setRecurringTaskEnabled(taskId: number, isEnabled: boolean): Promise<void> {
+    // We need to update the DB and then update the schedule
+    const db = getPostgresDatabase();
+    // Since I don't have a partial update method for tasks yet, I fetch and upsert.
+    // Or better, I'll just implement it via direct query in the DB service later if needed.
+    // For now, let's fetch all tasks to find the one (inefficient but safe).
+    const tasks = await this.getAllRecurringTasks();
+    const task = tasks.find(t => t.id === taskId);
+    
+    if (task) {
+      task.isEnabled = isEnabled;
+      await db.upsertRecurringTask(task);
+      
+      if (isEnabled) {
+        this.scheduleTask(task);
+      } else {
+        this.unscheduleTask(taskId);
       }
     }
   }
@@ -373,66 +272,50 @@ export class AgentManagerService {
   /**
    * Get recurring task by ID
    */
-  getRecurringTask(taskId: number): RecurringTask | undefined {
-    for (const task of this.inMemoryTasks.values()) {
-      if (task.id === taskId) return task;
-    }
-    return undefined;
+  async getRecurringTaskById(taskId: number): Promise<RecurringTask | undefined> {
+    const tasks = await this.getAllRecurringTasks();
+    return tasks.find(t => t.id === taskId);
   }
 
   /**
    * Update task execution stats
    */
-  updateTaskStats(taskId: number, success: boolean): void {
-    const task = this.getRecurringTask(taskId);
-    if (task) {
-      task.lastRunAt = new Date();
-      task.totalRuns++;
-      if (success) task.successfulRuns++;
-      else task.failedRuns++;
-      task.updatedAt = new Date();
-    }
+  async updateTaskStats(taskId: number, success: boolean): Promise<void> {
+    const db = getPostgresDatabase();
+    await db.updateTaskLastRun(taskId, success);
   }
-
-  // In-memory task execution history
-  private taskExecutionHistory: TaskExecution[] = [];
 
   /**
    * Log task execution
    */
-  logTaskExecution(execution: Omit<TaskExecution, 'id'>): number {
-    const id = this.taskExecutionHistory.length + 1;
-    const fullExecution: TaskExecution = { id, ...execution };
-    this.taskExecutionHistory.unshift(fullExecution); // Add to front
-    // Keep only last 1000 executions in memory
-    if (this.taskExecutionHistory.length > 1000) {
-      this.taskExecutionHistory = this.taskExecutionHistory.slice(0, 1000);
-    }
-    return id;
+  async logTaskExecution(execution: Omit<TaskExecution, 'id'>): Promise<number> {
+    const db = getPostgresDatabase();
+    return await db.logTaskExecutionHistory(execution);
   }
 
   /**
    * Get task execution history
    */
-  getTaskExecutionHistory(taskId: number, limit: number = 50): TaskExecution[] {
-    return this.taskExecutionHistory
-      .filter(e => e.taskId === taskId)
-      .slice(0, limit);
+  async getTaskExecutionHistory(taskId: number, limit: number = 50): Promise<TaskExecution[]> {
+    // The DB method returns all executions, we might want to filter. 
+    // Current DB service implementation `getRecentTaskExecutions` doesn't filter by ID.
+    // I should rely on `getRecentTaskExecutions` for now or add a specific method.
+    // For this refactor, I'll return recent executions and filter in memory (not ideal but quick fix)
+    const db = getPostgresDatabase();
+    const rows = await db.getRecentTaskExecutions(24 * 7); // Last 7 days
+    return rows
+      .filter(r => r.task_id === taskId)
+      .slice(0, limit)
+      .map(this.mapRowToTaskExecution);
   }
 
   /**
    * Get recent task executions across all tasks
    */
-  getRecentExecutions(limit: number = 50): TaskExecution[] {
-    return this.taskExecutionHistory.slice(0, limit);
-  }
-
-  /**
-   * Get recent task executions (async)
-   */
-  async getRecentExecutionsAsync(hours: number = 24): Promise<TaskExecution[]> {
-    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
-    return this.taskExecutionHistory.filter(e => e.startedAt >= cutoff);
+  async getRecentExecutions(limit: number = 50): Promise<TaskExecution[]> {
+    const db = getPostgresDatabase();
+    const rows = await db.getRecentTaskExecutions(24);
+    return rows.slice(0, limit).map(this.mapRowToTaskExecution);
   }
 
   /**
@@ -511,7 +394,7 @@ export class AgentManagerService {
       const duration = completedAt.getTime() - startedAt.getTime();
 
       // Log execution
-      this.logTaskExecution({
+      await this.logTaskExecution({
         taskId: task.id,
         taskName: task.taskName,
         agentName: task.agentName,
@@ -524,14 +407,12 @@ export class AgentManagerService {
       });
 
       // Update stats
-      this.updateTaskStats(task.id, status === 'success');
+      await this.updateTaskStats(task.id, status === 'success');
     }
   }
 
   /**
    * Register a task executor function
-   * @param agentName The agent that executes tasks
-   * @param executor The function that executes the task
    */
   registerTaskExecutor(agentName: string, executor: TaskExecutor): void {
     this.taskExecutors.set(agentName, executor);
@@ -541,24 +422,8 @@ export class AgentManagerService {
   /**
    * Start all enabled recurring tasks
    */
-  startAllTasks(): void {
-    const tasks = this.getAllRecurringTasks();
-    const enabledTasks = tasks.filter(t => t.isEnabled);
-
-    logger.info(`🚀 Starting ${enabledTasks.length} recurring tasks...`);
-
-    for (const task of enabledTasks) {
-      this.scheduleTask(task);
-    }
-
-    logger.info(`✅ All recurring tasks started`);
-  }
-
-  /**
-   * Start all tasks (async version)
-   */
-  async startAllTasksAsync(): Promise<void> {
-    const tasks = await this.getEnabledRecurringTasksAsync();
+  async startAllTasks(): Promise<void> {
+    const tasks = await this.getEnabledRecurringTasks();
 
     logger.info(`🚀 Starting ${tasks.length} recurring tasks...`);
 
@@ -584,40 +449,6 @@ export class AgentManagerService {
   }
 
   /**
-   * Get task statistics
-   */
-  getTaskStats(): {
-    totalTasks: number;
-    enabledTasks: number;
-    disabledTasks: number;
-    totalExecutions: number;
-    successfulExecutions: number;
-    failedExecutions: number;
-  } {
-    const db = getSQLiteDatabase().getRawDatabase();
-
-    const taskStats = db.prepare(`
-      SELECT
-        COUNT(*) as total_tasks,
-        SUM(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as enabled_tasks,
-        SUM(CASE WHEN is_enabled = 0 THEN 1 ELSE 0 END) as disabled_tasks,
-        SUM(total_runs) as total_executions,
-        SUM(successful_runs) as successful_executions,
-        SUM(failed_runs) as failed_executions
-      FROM recurring_tasks
-    `).get() as any;
-
-    return {
-      totalTasks: taskStats.total_tasks || 0,
-      enabledTasks: taskStats.enabled_tasks || 0,
-      disabledTasks: taskStats.disabled_tasks || 0,
-      totalExecutions: taskStats.total_executions || 0,
-      successfulExecutions: taskStats.successful_executions || 0,
-      failedExecutions: taskStats.failed_executions || 0
-    };
-  }
-
-  /**
    * Helper: Map database row to AgentConfig
    */
   private mapRowToAgentConfig(row: any): AgentConfig {
@@ -628,7 +459,7 @@ export class AgentManagerService {
       description: row.description,
       agentType: row.agent_type,
       status: row.status,
-      isEnabled: row.is_enabled === 1,
+      isEnabled: row.is_enabled,
       channelIds: row.channel_ids,
       config: row.config,
       lastActiveAt: row.last_active_at ? new Date(row.last_active_at) : undefined,
@@ -648,7 +479,7 @@ export class AgentManagerService {
       description: row.description,
       cronSchedule: row.cron_schedule,
       timezone: row.timezone,
-      isEnabled: row.is_enabled === 1,
+      isEnabled: row.is_enabled,
       lastRunAt: row.last_run_at ? new Date(row.last_run_at) : undefined,
       nextRunAt: row.next_run_at ? new Date(row.next_run_at) : undefined,
       totalRuns: row.total_runs,

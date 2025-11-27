@@ -2,6 +2,10 @@
 
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Zap, Lock, AlertCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 function LoginPageContent() {
   const [password, setPassword] = useState('');
@@ -10,7 +14,7 @@ function LoginPageContent() {
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -19,26 +23,26 @@ function LoginPageContent() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
+
     try {
       const res = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-      
+
       const data = await res.json();
-      
+
       if (data.success) {
         const from = searchParams.get('from') || '/';
         router.push(from);
         router.refresh();
       } else {
-        setError('ACCESS DENIED');
+        setError('Invalid password. Please try again.');
         setPassword('');
       }
     } catch (err) {
-      setError('CONNECTION ERROR');
+      setError('Connection error. Please check your network.');
     } finally {
       setLoading(false);
     }
@@ -49,145 +53,82 @@ function LoginPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated background grid */}
-      <div className="absolute inset-0 opacity-5">
-        <div 
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(0, 255, 136, 0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(0, 255, 136, 0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '50px 50px',
-          }}
-        />
-      </div>
-      
-      {/* Scanning line animation */}
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      {/* Background Pattern */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div 
-          className="absolute w-full h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-50"
+        <div
+          className="absolute inset-0 opacity-[0.02]"
           style={{
-            animation: 'scan 3s linear infinite',
+            backgroundImage: `radial-gradient(hsl(var(--primary)) 1px, transparent 1px)`,
+            backgroundSize: '32px 32px',
           }}
         />
       </div>
-      
-      <style jsx>{`
-        @keyframes scan {
-          0% { top: 0; }
-          100% { top: 100%; }
-        }
-        @keyframes blink {
-          0%, 50%, 100% { opacity: 1; }
-          25%, 75% { opacity: 0; }
-        }
-        @keyframes glitch {
-          0%, 100% { transform: translate(0); }
-          20% { transform: translate(-2px, 2px); }
-          40% { transform: translate(-2px, -2px); }
-          60% { transform: translate(2px, 2px); }
-          80% { transform: translate(2px, -2px); }
-        }
-      `}</style>
-      
-      <div className="w-full max-w-md relative">
-        {/* Terminal window */}
-        <div className="border border-border bg-card shadow-2xl">
-          {/* Terminal header */}
-          <div className="border-b border-border px-4 py-2 flex items-center gap-2">
-            <div className="flex gap-1.5">
-              <div className="w-3 h-3 rounded-full bg-destructive/60" />
-              <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-              <div className="w-3 h-3 rounded-full bg-accent/60" />
-            </div>
-            <span className="font-mono text-xs text-muted-foreground ml-2">AGENTFLOW_AUTH_v2.0</span>
-          </div>
-          
-          {/* Terminal content */}
-          <div className="p-8">
-            {/* ASCII Art Logo */}
-            <pre className="font-mono text-xs text-accent mb-6 leading-tight select-none">
-{`   ___   _____  _____ _   _ _____ 
-  / _ \\ /  ___|/  ___| \\ | |_   _|
- / /_\\ \\\\ \`--. \\ \`--.|  \\| | | |  
- |  _  | \`--. \\ \\--. \\ . \` | | |  
- | | | |/\\__/ //\\__/ / |\\  | | |  
- \\_| |_/\\____/ \\____/\\_| \\_/ \\_/  
-                                  
-       ███████╗██╗      ██████╗ ██╗    ██╗
-       ██╔════╝██║     ██╔═══██╗██║    ██║
-       █████╗  ██║     ██║   ██║██║ █╗ ██║
-       ██╔══╝  ██║     ██║   ██║██║███╗██║
-       ██║     ███████╗╚██████╔╝╚███╔███╔╝
-       ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ `}
-            </pre>
-            
-            {/* System messages */}
-            <div className="font-mono text-xs space-y-1 mb-6 text-muted-foreground">
-              <p>{'>'} SYSTEM BOOT SEQUENCE COMPLETE</p>
-              <p>{'>'} INITIALIZING SECURITY PROTOCOL...</p>
-              <p>{'>'} AWAITING AUTHENTICATION</p>
-              <p className="text-accent">{'>'} ENTER ACCESS CODE_<span style={{ animation: 'blink 1s infinite' }}>█</span></p>
-            </div>
-            
-            {/* Login form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="font-mono text-xs text-muted-foreground block mb-2">
-                  PASSWORD://
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-background border border-border px-4 py-3 font-mono text-sm focus:outline-none focus:border-accent transition-colors"
-                  placeholder="••••••••"
-                  autoFocus
-                  disabled={loading}
-                />
+
+      <div className="w-full max-w-sm relative">
+        {/* Card */}
+        <div className="bg-card border border-border rounded-xl p-8 shadow-lg">
+          {/* Logo */}
+          <div className="flex justify-center mb-8">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Zap className="w-5 h-5 text-primary" />
               </div>
-              
-              {error && (
-                <div 
-                  className="font-mono text-xs text-destructive border border-destructive/30 bg-destructive/10 px-4 py-2"
-                  style={{ animation: 'glitch 0.3s ease' }}
-                >
-                  ⚠ {error}
-                </div>
-              )}
-              
-              <button
-                type="submit"
-                disabled={loading || !password}
-                className="w-full border border-accent bg-accent/10 text-accent font-mono text-sm py-3 hover:bg-accent hover:text-background transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
-              >
-                {loading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="animate-pulse">AUTHENTICATING</span>
-                    <span style={{ animation: 'blink 0.5s infinite' }}>...</span>
-                  </span>
-                ) : (
-                  '[AUTHENTICATE]'
-                )}
-              </button>
-            </form>
-            
-            {/* Footer */}
-            <div className="mt-6 pt-4 border-t border-border">
-              <p className="font-mono text-xs text-muted-foreground text-center">
-                SECURE CONNECTION • TLS 1.3 ENCRYPTED
-              </p>
+              <span className="text-xl font-semibold">AgentFlow</span>
             </div>
           </div>
+
+          {/* Welcome Text */}
+          <div className="text-center mb-6">
+            <h1 className="text-lg font-semibold mb-1">Welcome back</h1>
+            <p className="text-sm text-muted-foreground">
+              Enter your password to continue
+            </p>
+          </div>
+
+          {/* Login Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="relative">
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                disabled={loading}
+                leftIcon={<Lock className="w-4 h-4" />}
+                className="h-11"
+                autoFocus
+              />
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={loading || !password}
+              className="w-full h-11"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                  Signing in...
+                </span>
+              ) : (
+                'Sign in'
+              )}
+            </Button>
+          </form>
         </div>
-        
-        {/* Decorative elements */}
-        <div className="absolute -top-4 -left-4 w-8 h-8 border-l-2 border-t-2 border-accent/30" />
-        <div className="absolute -top-4 -right-4 w-8 h-8 border-r-2 border-t-2 border-accent/30" />
-        <div className="absolute -bottom-4 -left-4 w-8 h-8 border-l-2 border-b-2 border-accent/30" />
-        <div className="absolute -bottom-4 -right-4 w-8 h-8 border-r-2 border-b-2 border-accent/30" />
+
+        {/* Footer */}
+        <p className="text-center text-xs text-muted-foreground mt-6">
+          Secure connection • End-to-end encrypted
+        </p>
       </div>
     </div>
   );
@@ -195,20 +136,14 @@ function LoginPageContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="font-mono text-sm text-muted-foreground">Loading...</div>
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+        </div>
+      }
+    >
       <LoginPageContent />
     </Suspense>
   );
 }
-
-
-
-
-
-
-
-

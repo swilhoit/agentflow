@@ -6,6 +6,7 @@ import { IntelligentChannelNotifier } from './intelligentChannelNotifier';
 import { NewsMonitor, NewsArticle } from './newsMonitor';
 import { WeeklyThesisAnalyzer } from './weeklyThesisAnalyzer';
 import { PerplexityMarketService } from './perplexityMarketService';
+import { EventBus, EventType } from './eventBus';
 
 export interface ScheduleConfig {
   // Cron expression for daily updates (default: 9:00 AM ET weekdays)
@@ -243,6 +244,14 @@ export class MarketUpdateScheduler {
       // Post thesis reminder
       await this.postThesisReminder(channelId);
 
+      // Emit event to the Boardroom
+      EventBus.getInstance().publish(
+        EventType.MARKET_UPDATE,
+        'MarketScheduler',
+        'info',
+        { type: 'daily_update', summary: 'Daily market update posted' }
+      );
+
     } catch (error) {
       logger.error('Failed to run daily update', error);
 
@@ -416,6 +425,15 @@ The portfolio tracks the energy revolution powering AI with exposure to:
         }
 
         logger.info(`✅ Posted ${articlesToAnalyze.length} AI-analyzed news alerts`);
+
+        // Emit high priority event for AI-analyzed significant news
+        EventBus.getInstance().publish(
+          EventType.MARKET_UPDATE,
+          'MarketScheduler',
+          'high',
+          { type: 'news_alert', count: articlesToAnalyze.length, articles: articlesToAnalyze.map(a => a.symbol) }
+        );
+
       } else if (significantArticles.length > 0) {
         // Fallback: Send basic news summary without AI analysis
         const summaryEmbed = this.newsMonitor.generateNewsSummary(newsBySymbol);

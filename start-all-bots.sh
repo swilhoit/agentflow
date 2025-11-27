@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Start All Bots - Runs both Main Bot and Atlas Bot simultaneously
-# This script starts both bots in separate processes
+# Start Unified AgentFlow System
+# Now runs Main Bot, Atlas, and Advisor in a single process for efficiency.
 
-echo "🤖 Starting AgentFlow Bots..."
+echo "🤖 Starting Unified AgentFlow System..."
 echo ""
 
 # Check if .env exists
@@ -21,59 +21,30 @@ if [ -z "$DISCORD_TOKEN" ]; then
     exit 1
 fi
 
-if [ -z "$ATLAS_DISCORD_TOKEN" ]; then
-    echo "❌ Error: ATLAS_DISCORD_TOKEN not set in .env"
-    exit 1
-fi
-
 if [ -z "$ANTHROPIC_API_KEY" ]; then
     echo "❌ Error: ANTHROPIC_API_KEY not set in .env"
     exit 1
 fi
 
 echo "✅ Environment variables loaded"
+echo "📊 System Integrity: Unified"
 echo ""
 
-# Function to cleanup on exit
-cleanup() {
-    echo ""
-    echo "🛑 Stopping all bots..."
-    kill $MAIN_BOT_PID 2>/dev/null
-    kill $ATLAS_BOT_PID 2>/dev/null
-    exit 0
-}
+if [ -n "$ATLAS_DISCORD_TOKEN" ]; then
+    echo "🌏 Atlas Bot: Enabled (Integrated)"
+else
+    echo "⚪ Atlas Bot: Disabled (No Token)"
+fi
 
-trap cleanup SIGINT SIGTERM
-
-# Start main bot
-echo "🚀 Starting Main Bot (General Assistant)..."
-npm start &
-MAIN_BOT_PID=$!
-echo "   PID: $MAIN_BOT_PID"
-
-# Wait a moment
-sleep 2
-
-# Start Atlas bot
-echo "🌏 Starting Atlas Bot (Market Intelligence)..."
-npm run atlas &
-ATLAS_BOT_PID=$!
-echo "   PID: $ATLAS_BOT_PID"
+if [ -n "$ADVISOR_DISCORD_TOKEN" ]; then
+    echo "💰 Advisor Bot: Enabled (Integrated)"
+else
+    echo "⚪ Advisor Bot: Disabled (No Token)"
+fi
 
 echo ""
-echo "✅ Both bots started successfully!"
-echo ""
-echo "📊 Status:"
-echo "   Main Bot (General):  PID $MAIN_BOT_PID"
-echo "   Atlas Bot (Markets): PID $ATLAS_BOT_PID"
-echo ""
-echo "📝 Atlas monitors these channels:"
-echo "   #crypto (1339709679537750036)"
-echo "   #finance (1439869363502055474)"
-echo "   #global-ai (1439887464524283924)"
-echo ""
-echo "⚠️  Press Ctrl+C to stop both bots"
+echo "🚀 Launching process..."
 echo ""
 
-# Wait for both processes
-wait $MAIN_BOT_PID $ATLAS_BOT_PID
+# Run the unified entry point
+npm run dev

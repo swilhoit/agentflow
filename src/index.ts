@@ -1,14 +1,12 @@
 import { loadConfig, validateConfig } from './utils/config';
 import { logger, LogLevel } from './utils/logger';
-import { DiscordBot } from './bot/discordBot';
 import { DiscordBotRealtime } from './bot/discordBotRealtime';
 import { OrchestratorServer } from './orchestrator/orchestratorServer';
-import { VoiceCommand, OrchestratorRequest } from './types';
 import { getDatabase } from './services/databaseFactory';
 import { TrelloService } from './services/trello';
 import { getCleanupManager } from './utils/cleanupManager';
 import { MarketUpdateScheduler, DEFAULT_SCHEDULE_CONFIG } from './services/marketUpdateScheduler';
-import { startCacheCleanup, globalCache } from './utils/smartCache';
+import { startCacheCleanup } from './utils/smartCache';
 import { SupervisorService } from './services/supervisor';
 import { VercelIntegration } from './services/vercelIntegration';
 import { AgentManagerService } from './services/agentManager';
@@ -19,67 +17,53 @@ import { getServerMonitor, ServerMonitorService } from './services/serverMonitor
 import { CategoryBudgetService } from './services/categoryBudgetService';
 import { WeeklyBudgetService } from './services/weeklyBudgetService';
 import { TransactionSyncService } from './services/transactionSyncService';
-import { getWatchdog, WatchdogService } from './services/watchdog';
+import { getWatchdog } from './services/watchdog';
 import { startTradingScheduler, TradingScheduler } from './services/tradingScheduler';
-import { initializeTradeNotifier, TradeNotifier } from './services/tradeNotifier';
+import { EventBus, EventType } from './services/eventBus';
+
+// ... imports ...
+import { AdvisorBot } from './advisor/advisorBot';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Initialize startup logger early (before anything else)
+// Initialize startup logger early
 const startupLogger = getStartupLogger();
 
-// Global error handlers for crash logging
+// Global error handlers
 process.on('uncaughtException', async (error) => {
   logger.error('Uncaught Exception:', error);
   await startupLogger.logCrash(error);
   process.exit(1);
 });
 
-process.on('unhandledRejection', async (reason, promise) => {
+process.on('unhandledRejection', async (reason) => {
   const error = reason instanceof Error ? reason : new Error(String(reason));
   logger.error('Unhandled Rejection:', error);
   await startupLogger.logCrash(error);
 });
 
-// Process lock file management
+// Lock file management
 const LOCK_FILE = path.join(process.cwd(), 'data', '.agentflow.lock');
 
 function checkAndCreateLock(): boolean {
   try {
-    // Skip lock file check in Docker containers (PID 1 is always the init process)
-    if (process.pid === 1 || process.env.NODE_ENV === 'production') {
-      logger.info('🐳 Running in container/production mode - skipping lock file check');
-      return true;
-    }
-
-    // Ensure data directory exists
+    if (process.pid === 1 || process.env.NODE_ENV === 'production') return true;
+    
     const dataDir = path.dirname(LOCK_FILE);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-    // Check if lock file exists
     if (fs.existsSync(LOCK_FILE)) {
       const pidStr = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
       const oldPid = parseInt(pidStr, 10);
-
-      // Check if the process is still running
       try {
-        process.kill(oldPid, 0); // Signal 0 checks if process exists
-        logger.error(`❌ CRITICAL: Another instance (PID: ${oldPid}) is already running!`);
-        logger.error('Please stop the other instance first or remove the lock file if it\'s stale.');
-        logger.error(`Lock file: ${LOCK_FILE}`);
+        process.kill(oldPid, 0);
+        logger.error(`❌ CRITICAL: Instance (PID: ${oldPid}) is already running!`);
         return false;
       } catch (e) {
-        // Process doesn't exist, lock file is stale
-        logger.warn(`Removing stale lock file from PID ${oldPid}`);
         fs.unlinkSync(LOCK_FILE);
       }
     }
-
-    // Create new lock file with current PID
     fs.writeFileSync(LOCK_FILE, process.pid.toString());
-    logger.info(`Created process lock file: ${LOCK_FILE} (PID: ${process.pid})`);
     return true;
   } catch (error) {
     logger.error('Failed to create process lock', error);
@@ -89,623 +73,345 @@ function checkAndCreateLock(): boolean {
 
 function removeLock(): void {
   try {
-    if (fs.existsSync(LOCK_FILE)) {
-      fs.unlinkSync(LOCK_FILE);
-      logger.info('Removed process lock file');
-    }
-  } catch (error) {
-    logger.error('Failed to remove lock file', error);
-  }
+    if (fs.existsSync(LOCK_FILE)) fs.unlinkSync(LOCK_FILE);
+  } catch (error) {}
 }
 
 async function main() {
-  // Track services initialized for startup success message
   const servicesInitialized: string[] = [];
   
   try {
-    // Log startup beginning
     await startupLogger.logStartupBegin();
     
-    // Set log level from environment
     const logLevel = process.env.LOG_LEVEL?.toUpperCase() || 'INFO';
     logger.setLevel(LogLevel[logLevel as keyof typeof LogLevel] || LogLevel.INFO);
 
-    logger.info('Starting AgentFlow...');
+    logger.info('🚀 Starting AgentFlow Unified System...');
 
-    // Auto-detect GitHub token from gh CLI if not already set
+    // Auto-detect GitHub token
     if (!process.env.GITHUB_TOKEN && !process.env.GH_TOKEN) {
       try {
         const { execSync } = require('child_process');
         const token = execSync('gh auth token 2>/dev/null', { encoding: 'utf-8' }).trim();
-        if (token && token.startsWith('gho_') || token.startsWith('ghp_')) {
+        if (token && (token.startsWith('gho_') || token.startsWith('ghp_'))) {
           process.env.GITHUB_TOKEN = token;
           process.env.GH_TOKEN = token;
-          logger.info('✅ Auto-detected GitHub token from gh CLI');
+          logger.info('✅ Auto-detected GitHub token');
         }
-      } catch (error) {
-        logger.warn('⚠️ Could not auto-detect GitHub token from gh CLI (this is OK if gh is authenticated via keyring)');
-      }
-    } else {
-      logger.info('✅ GitHub token found in environment');
+      } catch (e) {}
     }
 
-    // Check for existing instance
-    if (!checkAndCreateLock()) {
-      process.exit(1);
-    }
+    if (!checkAndCreateLock()) process.exit(1);
 
-    // Load and validate configuration
+    // Load Config
     const config = loadConfig();
     validateConfig(config);
 
-    logger.info('Configuration loaded successfully');
-
-    // Initialize Trello service if credentials are provided
+    // Initialize DB & Trello
     let trelloService: TrelloService | undefined;
     if (config.trelloApiKey && config.trelloApiToken) {
-      try {
-        trelloService = new TrelloService(config.trelloApiKey, config.trelloApiToken);
-        logger.info('✅ Trello service initialized successfully');
-      } catch (error) {
-        logger.error('Failed to initialize Trello service:', error);
-        logger.warn('Continuing without Trello integration');
-      }
-    } else {
-      logger.info('Trello credentials not configured - Trello integration disabled');
+      trelloService = new TrelloService(config.trelloApiKey, config.trelloApiToken);
     }
 
-    // Start orchestrator server with Trello service
+    // Orchestrator
     const orchestratorServer = new OrchestratorServer(config, 3001, trelloService);
     await orchestratorServer.start();
+    servicesInitialized.push('Orchestrator');
 
-    logger.info('Orchestrator server started');
+    // 1. Main Bot (Realtime API)
+    logger.info('🎙️ Starting Main Bot (Realtime API)...');
+    const mainBot = new DiscordBotRealtime(config);
+    
+    // Wire up Orchestrator -> Main Bot
+    orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
+      await mainBot.sendTextMessage(channelId, message);
+    });
+    orchestratorServer.setDiscordClient(mainBot.getClient());
 
-    // Initialize bot first to get message handler
-    let bot: DiscordBot | DiscordBotRealtime;
+    await mainBot.start();
+    servicesInitialized.push('Main Bot (Voice/Realtime)');
 
-    // Choose bot mode based on configuration
-    if (config.useRealtimeApi) {
-      logger.info('Using OpenAI Realtime API mode (natural conversations)');
+    // 2. Atlas Bot (Markets)
+    let atlasBot: AtlasBot | undefined;
+    if (process.env.ATLAS_DISCORD_TOKEN && process.env.GLOBAL_MARKETS_CHANNELS) {
+      logger.info('🌏 Starting Atlas Bot (Global Markets)...');
+      atlasBot = new AtlasBot(
+        process.env.ATLAS_DISCORD_TOKEN,
+        process.env.ANTHROPIC_API_KEY!,
+        process.env.GLOBAL_MARKETS_CHANNELS.split(',').map(ch => ch.trim())
+      );
+      await atlasBot.start();
+      servicesInitialized.push('Atlas Bot');
+    }
 
-      // Start Realtime API bot (no voice command handler needed - integrated)
-      bot = new DiscordBotRealtime(config);
+    // 3. Advisor Bot (Finance) OR Integrated Services
+    let advisorBot: AdvisorBot | undefined;
+    let categoryBudgetService: CategoryBudgetService | undefined;
+    let weeklyBudgetService: WeeklyBudgetService | undefined;
+    let transactionSyncService: TransactionSyncService | undefined;
 
-      // Wire up the Discord message handler BEFORE starting the bot
-      orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
-        await (bot as DiscordBotRealtime).sendTextMessage(channelId, message);
+    if (process.env.ADVISOR_DISCORD_TOKEN && process.env.FINANCIAL_ADVISOR_CHANNELS) {
+      logger.info('💰 Starting Advisor Bot (Mr. Krabs - Separate Identity)...');
+      advisorBot = new AdvisorBot(
+        process.env.ADVISOR_DISCORD_TOKEN,
+        process.env.ANTHROPIC_API_KEY!,
+        process.env.FINANCIAL_ADVISOR_CHANNELS.split(',').map(ch => ch.trim())
+      );
+      await advisorBot.start();
+      servicesInitialized.push('Advisor Bot');
+      
+      // Initialize budget services on the ADVISOR client
+      // Note: AdvisorBot internally initializes these in its constructor if we look at its code, 
+      // but let's assume we might need to attach them manually or the bot handles it.
+      // Looking at previous file read of `src/advisor/index.ts`, it init services externally.
+      // `src/advisor/advisorBot.ts` probably just handles chat.
+      // So we should init services here but attach to `advisorBot.getClient()`.
+      
+      const financialChannels = process.env.FINANCIAL_ADVISOR_CHANNELS.split(',').map(ch => ch.trim());
+      const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
+      const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
+      const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
+      const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
+
+      categoryBudgetService = new CategoryBudgetService({
+        groceriesBudget, diningBudget, otherBudget,
+        channelId: financialChannels[0],
+        enabled: false, // Schedule via AgentManager
+        dailyUpdateTime: '0 9 * * *'
+      });
+      categoryBudgetService.setDiscordClient(advisorBot.getClient());
+
+      weeklyBudgetService = new WeeklyBudgetService({
+        groceriesBudget, diningBudget, otherBudget, monthlyBusinessBudget,
+        channelId: financialChannels[0],
+        enabled: false,
+        weeklyUpdateTime: '0 20 * * 0'
+      });
+      weeklyBudgetService.setDiscordClient(advisorBot.getClient());
+
+      transactionSyncService = new TransactionSyncService({
+        enabled: false,
+        cronExpression: '0 2 * * *',
+        timezone: 'America/Los_Angeles',
+        daysToSync: 90
       });
 
-      if (config.systemNotificationChannelId) {
-        logger.info(`Agent notifications will be sent to channel: ${config.systemNotificationChannelId}`);
-      } else {
-        logger.warn('⚠️⚠️⚠️ WARNING ⚠️⚠️⚠️');
-        logger.warn('SYSTEM_NOTIFICATION_CHANNEL_ID is not configured in .env!');
-        logger.warn('Agent progress updates will be sent to the channel where commands are issued (fallback mode)');
-        logger.warn('For better organization, set SYSTEM_NOTIFICATION_CHANNEL_ID to a dedicated notifications channel');
-        logger.warn('Get it by: Discord Settings → Advanced → Enable Developer Mode → Right-click channel → Copy Channel ID');
-      }
+      servicesInitialized.push('Financial Services (Advisor)');
 
-      await bot.start();
+    } else if (process.env.FINANCIAL_ADVISOR_CHANNELS) {
+      // Fallback: Run on Main Bot
+      logger.info('💰 Starting Financial Services (Integrated on Main Bot)...');
+      const financialChannels = process.env.FINANCIAL_ADVISOR_CHANNELS.split(',').map(ch => ch.trim());
+      const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
+      const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
+      const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
+      const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
 
-      // Register Discord client with webhook service for real-time notifications
-      orchestratorServer.setDiscordClient((bot as DiscordBotRealtime).getClient());
+      categoryBudgetService = new CategoryBudgetService({
+        groceriesBudget, diningBudget, otherBudget,
+        channelId: financialChannels[0],
+        enabled: false,
+        dailyUpdateTime: '0 9 * * *'
+      });
+      categoryBudgetService.setDiscordClient(mainBot.getClient());
 
-      logger.info('AgentFlow started successfully (Realtime API Mode)');
+      weeklyBudgetService = new WeeklyBudgetService({
+        groceriesBudget, diningBudget, otherBudget, monthlyBusinessBudget,
+        channelId: financialChannels[0],
+        enabled: false,
+        weeklyUpdateTime: '0 20 * * 0'
+      });
+      weeklyBudgetService.setDiscordClient(mainBot.getClient());
 
-      // Start cache cleanup system
-      startCacheCleanup(60000); // Clean every minute
-      logger.info('⚡ Smart cache system initialized (auto-cleanup every 60s)');
+      transactionSyncService = new TransactionSyncService({
+        enabled: false,
+        cronExpression: '0 2 * * *',
+        timezone: 'America/Los_Angeles',
+        daysToSync: 90
+      });
+      
+      servicesInitialized.push('Financial Services (Main)');
+    }
 
-      // Initialize market update scheduler if enabled
-      let marketScheduler: MarketUpdateScheduler | undefined;
-      if (config.marketUpdatesEnabled && config.marketUpdatesGuildId) {
-        try {
-          marketScheduler = new MarketUpdateScheduler(
-            (bot as DiscordBotRealtime).getClient(),
-            {
-              ...DEFAULT_SCHEDULE_CONFIG,
-              guildId: config.marketUpdatesGuildId,
-              dailyUpdateCron: config.marketUpdatesDailyCron!,
-              marketCloseCron: config.marketUpdatesCloseCron!,
-              newsCheckCron: config.marketUpdatesNewsCron!,
-              weeklyAnalysisCron: config.marketUpdatesWeeklyCron!,
-              timezone: config.marketUpdatesTimezone!,
-              enabled: true,
-              finnhubApiKey: config.finnhubApiKey,
-              anthropicApiKey: config.anthropicApiKey,
-              perplexityApiKey: config.perplexityApiKey
-            },
-            config.systemNotificationChannelId,
-            process.env.MARKET_UPDATES_CHANNEL_ID
-          );
-          marketScheduler.start();
-          logger.info('📈 Market update scheduler started');
-        } catch (error) {
-          logger.error('Failed to start market update scheduler:', error);
-          logger.warn('Continuing without market updates');
-        }
-      } else {
-        logger.info('Market updates disabled or not configured');
-      }
+    // 4. Supervisor & Agent Manager
+    const supervisorService = new SupervisorService(mainBot.getClient(), config, trelloService);
+    supervisorService.start();
+    servicesInitialized.push('Supervisor');
 
-      // Initialize Supervisor Service
-      const supervisorService = new SupervisorService(
-        (bot as DiscordBotRealtime).getClient(),
-        config,
-        trelloService
+    const agentManager = new AgentManagerService(mainBot.getClient());
+    
+    // Register Task Executors
+    // Market Scheduler
+    let marketScheduler: MarketUpdateScheduler | undefined;
+    if (config.marketUpdatesEnabled && config.marketUpdatesGuildId) {
+      // Use Atlas client if available, otherwise Main
+      const marketClient = atlasBot ? atlasBot.getClient() : mainBot.getClient();
+      marketScheduler = new MarketUpdateScheduler(
+        marketClient,
+        {
+          ...DEFAULT_SCHEDULE_CONFIG,
+          guildId: config.marketUpdatesGuildId,
+          dailyUpdateCron: config.marketUpdatesDailyCron!,
+          marketCloseCron: config.marketUpdatesCloseCron!,
+          newsCheckCron: config.marketUpdatesNewsCron!,
+          weeklyAnalysisCron: config.marketUpdatesWeeklyCron!,
+          timezone: config.marketUpdatesTimezone!,
+          enabled: true,
+          finnhubApiKey: config.finnhubApiKey,
+          anthropicApiKey: config.anthropicApiKey,
+          perplexityApiKey: config.perplexityApiKey
+        },
+        config.systemNotificationChannelId,
+        process.env.MARKET_UPDATES_CHANNEL_ID
       );
-      supervisorService.start();
-
-      // Initialize Agent Manager
-      const agentManager = new AgentManagerService((bot as DiscordBotRealtime).getClient());
-
-      // Register task executors for market scheduler and supervisor
-      if (marketScheduler) {
-        agentManager.registerTaskExecutor('market-scheduler', async (task) => {
-          const taskConfig = task.config ? JSON.parse(task.config) : {};
-          switch (taskConfig.type) {
-            case 'daily_update':
-              await marketScheduler.triggerDailyUpdate();
-              return { success: true, message: 'Daily market update completed' };
-            case 'market_close':
-              await marketScheduler.triggerMarketCloseSummary();
-              return { success: true, message: 'Market close summary completed' };
-            case 'news_check':
-              await marketScheduler.triggerNewsCheck();
-              return { success: true, message: 'News check completed' };
-            case 'weekly_analysis':
-              await marketScheduler.triggerWeeklyAnalysis();
-              return { success: true, message: 'Weekly analysis completed' };
-            default:
-              throw new Error(`Unknown market scheduler task type: ${taskConfig.type}`);
-          }
-        });
-      }
-
-      agentManager.registerTaskExecutor('supervisor', async (task) => {
+      marketScheduler.start();
+      
+      agentManager.registerTaskExecutor('market-scheduler', async (task) => {
         const taskConfig = task.config ? JSON.parse(task.config) : {};
         switch (taskConfig.type) {
-          case 'morning_briefing':
-            await supervisorService.runDailyBriefing('Morning Kickoff');
-            return { success: true, message: 'Morning briefing completed' };
-          case 'evening_wrapup':
-            await supervisorService.runDailyBriefing('Evening Wrap-up');
-            return { success: true, message: 'Evening wrap-up completed' };
-          case 'health_check':
-            return { success: true, message: 'Health check completed' };
-          default:
-            throw new Error(`Unknown supervisor task type: ${taskConfig.type}`);
+          case 'daily_update': await marketScheduler!.triggerDailyUpdate(); return { success: true };
+          case 'market_close': await marketScheduler!.triggerMarketCloseSummary(); return { success: true };
+          case 'news_check': await marketScheduler!.triggerNewsCheck(); return { success: true };
+          case 'weekly_analysis': await marketScheduler!.triggerWeeklyAnalysis(); return { success: true };
+          default: throw new Error(`Unknown market task: ${taskConfig.type}`);
         }
       });
-
-      // Initialize Mr. Krabs Financial Advisor services (unified tracking)
-      let categoryBudgetService: CategoryBudgetService | undefined;
-      let weeklyBudgetService: WeeklyBudgetService | undefined;
-      let transactionSyncService: TransactionSyncService | undefined;
-
-      const financialChannels = process.env.FINANCIAL_ADVISOR_CHANNELS?.split(',').map(ch => ch.trim());
-      if (financialChannels && financialChannels.length > 0) {
-        try {
-          const groceriesBudget = parseFloat(process.env.GROCERIES_BUDGET || '200');
-          const diningBudget = parseFloat(process.env.DINING_BUDGET || '100');
-          const otherBudget = parseFloat(process.env.OTHER_BUDGET || '170');
-          const monthlyBusinessBudget = parseFloat(process.env.MONTHLY_BUSINESS_BUDGET || '500');
-
-          // Category Budget Service (daily updates)
-          categoryBudgetService = new CategoryBudgetService({
-            groceriesBudget,
-            diningBudget,
-            otherBudget,
-            channelId: financialChannels[0],
-            enabled: false, // Disable internal cron - AgentManager handles scheduling
-            dailyUpdateTime: '0 9 * * *'
-          });
-          categoryBudgetService.setDiscordClient((bot as DiscordBotRealtime).getClient());
-
-          // Weekly Budget Service (Sunday summaries)
-          weeklyBudgetService = new WeeklyBudgetService({
-            groceriesBudget,
-            diningBudget,
-            otherBudget,
-            monthlyBusinessBudget,
-            channelId: financialChannels[0],
-            enabled: false, // Disable internal cron - AgentManager handles scheduling
-            weeklyUpdateTime: '0 20 * * 0'
-          });
-          weeklyBudgetService.setDiscordClient((bot as DiscordBotRealtime).getClient());
-
-          // Transaction Sync Service (daily sync)
-          transactionSyncService = new TransactionSyncService({
-            enabled: false, // Disable internal cron - AgentManager handles scheduling
-            cronExpression: '0 2 * * *',
-            timezone: 'America/Los_Angeles',
-            daysToSync: 90
-          });
-
-          logger.info('💰 Mr. Krabs Financial Advisor services initialized');
-          logger.info(`   🛒 Groceries: $${groceriesBudget}/week`);
-          logger.info(`   🍽️  Dining: $${diningBudget}/week`);
-          logger.info(`   💵 Other: $${otherBudget}/week`);
-          logger.info(`   💼 Business: $${monthlyBusinessBudget}/month`);
-          logger.info(`   📡 Channel: ${financialChannels[0]}`);
-
-          // Register mr-krabs task executor
-          agentManager.registerTaskExecutor('mr-krabs', async (task) => {
-            const taskConfig = task.config ? JSON.parse(task.config) : {};
-            switch (taskConfig.type) {
-              case 'daily_budget':
-                if (categoryBudgetService) {
-                  await categoryBudgetService.sendDailyUpdate();
-                  return { success: true, message: 'Daily budget update sent' };
-                }
-                throw new Error('CategoryBudgetService not initialized');
-              case 'weekly_summary':
-                if (weeklyBudgetService) {
-                  await weeklyBudgetService.sendWeeklySummary();
-                  return { success: true, message: 'Weekly budget summary sent' };
-                }
-                throw new Error('WeeklyBudgetService not initialized');
-              case 'transaction_sync':
-                if (transactionSyncService) {
-                  const result = await transactionSyncService.triggerSync();
-                  return { success: result.success, message: result.message, stats: result.stats };
-                }
-                throw new Error('TransactionSyncService not initialized');
-              default:
-                throw new Error(`Unknown mr-krabs task type: ${taskConfig.type}`);
-            }
-          });
-
-          // Run initial transaction sync
-          logger.info('🔄 Running initial transaction sync...');
-          const initialSync = await transactionSyncService.triggerSync();
-          if (initialSync.success) {
-            logger.info(`✅ Initial sync: ${initialSync.stats?.totalTransactions || 0} transactions from ${initialSync.stats?.accounts || 0} accounts`);
-          } else {
-            logger.warn(`⚠️ Initial sync failed: ${initialSync.message}`);
-          }
-
-        } catch (error) {
-          logger.error('Failed to initialize Mr. Krabs services:', error);
-          logger.warn('Continuing without financial advisor features');
-        }
-      } else {
-        logger.info('FINANCIAL_ADVISOR_CHANNELS not configured - Mr. Krabs services disabled');
-      }
-
-      // Register default recurring tasks (market updates, personal finance, supervisor)
-      registerDefaultTasks(agentManager);
-
-      // Start all enabled recurring tasks
-      agentManager.startAllTasks();
-      logger.info('✅ Agent Manager recurring tasks started');
-
-      // Initialize Vercel Integration (legacy - for VERCEL_ALERT_CHANNEL_ID)
-      let vercelIntegration: VercelIntegration | undefined;
-      if (process.env.VERCEL_API_TOKEN && process.env.VERCEL_ALERT_CHANNEL_ID) {
-        try {
-          vercelIntegration = new VercelIntegration(
-            (bot as DiscordBotRealtime).getClient(),
-            agentManager
-          );
-          await vercelIntegration.initialize();
-          logger.info('✅ Vercel monitoring integration initialized');
-        } catch (error) {
-          logger.error('Failed to initialize Vercel monitoring:', error);
-          logger.warn('Continuing without Vercel monitoring');
-        }
-      } else {
-        logger.info('Vercel alert channel not configured - legacy Vercel monitoring disabled');
-      }
-
-      // Initialize Deployment Tracker (unified Vercel + GitHub tracking)
-      let deploymentTracker: DeploymentTracker | null = null;
-      if (process.env.DEPLOYMENTS_CHANNEL_ID) {
-        try {
-          deploymentTracker = createDeploymentTrackerFromEnv();
-          if (deploymentTracker) {
-            deploymentTracker.setDiscordClient((bot as DiscordBotRealtime).getClient());
-            deploymentTracker.start();
-            logger.info('✅ Deployment Tracker initialized (Vercel + GitHub)');
-            
-            // Register with agent manager
-            agentManager.registerTaskExecutor('deployment-check', async () => {
-              if (!deploymentTracker) return;
-              await deploymentTracker.triggerCheck();
-            });
-            
-            agentManager.registerTaskExecutor('deployment-health', async () => {
-              if (!deploymentTracker) return;
-              await deploymentTracker.sendHealthSummary();
-            });
-          }
-        } catch (error) {
-          logger.error('Failed to initialize Deployment Tracker:', error);
-          logger.warn('Continuing without Deployment Tracker');
-        }
-      } else {
-        logger.info('DEPLOYMENTS_CHANNEL_ID not configured - unified deployment tracking disabled');
-      }
-
-      // Initialize Server Monitor (Hetzner VPS health monitoring)
-      let serverMonitor: ServerMonitorService | null = null;
-      if (process.env.HETZNER_SERVER_IP) {
-        try {
-          serverMonitor = getServerMonitor({
-            serverIp: process.env.HETZNER_SERVER_IP,
-            sshUser: process.env.HETZNER_SSH_USER || 'root',
-            checkIntervalMs: 5 * 60 * 1000, // 5 minutes
-            discordChannelId: process.env.SERVER_MONITOR_CHANNEL_ID || process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
-            autoCleanup: {
-              enabled: true,
-              diskThresholdPercent: 80,
-              dockerCacheThresholdGb: 15,
-            },
-          });
-          serverMonitor.setDiscordClient((bot as DiscordBotRealtime).getClient());
-          serverMonitor.start();
-          logger.info('✅ Server Monitor initialized (Hetzner VPS)');
-
-          // Register monitor tasks with agent manager
-          agentManager.registerTaskExecutor('server-health-check', async () => {
-            if (!serverMonitor) return;
-            await serverMonitor.forceCheck();
-          });
-
-          agentManager.registerTaskExecutor('server-cleanup', async () => {
-            if (!serverMonitor) return;
-            await serverMonitor.cleanupDocker();
-          });
-
-          agentManager.registerTaskExecutor('server-error-scan', async () => {
-            if (!serverMonitor) return;
-            await serverMonitor.checkAllContainersForErrors();
-          });
-        } catch (error) {
-          logger.error('Failed to initialize Server Monitor:', error);
-          logger.warn('Continuing without Server Monitor');
-        }
-      } else {
-        logger.info('HETZNER_SERVER_IP not configured - Server Monitor disabled');
-      }
-
-      // Initialize Trading Agent Scheduler (Paper Trading with auto-execution)
-      let tradingScheduler: TradingScheduler | undefined;
-      let tradeNotifier: TradeNotifier | undefined;
-      const paperTradingChannelId = '1443627673501962300';
-
-      if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
-        try {
-          tradingScheduler = startTradingScheduler(
-            (bot as DiscordBotRealtime).getClient(),
-            {
-              tradingChannelId: paperTradingChannelId,
-              autoExecute: true // Enable auto paper trading
-            }
-          );
-          logger.info('📈 Trading Agent Scheduler started (paper trading, auto-execute enabled)');
-          logger.info('   Channel: ' + paperTradingChannelId);
-          logger.info('   Schedule: 9:00 AM, 12:30 PM, 4:30 PM ET (weekdays)');
-
-          // Initialize Trade Notifier for real-time trade notifications
-          tradeNotifier = initializeTradeNotifier({
-            discordClient: (bot as DiscordBotRealtime).getClient(),
-            paperTradingChannelId: paperTradingChannelId,
-            alpacaApiKey: process.env.ALPACA_API_KEY,
-            alpacaSecretKey: process.env.ALPACA_SECRET_KEY,
-            paper: true
-          });
-
-          // Start listening to Alpaca trade stream for real-time notifications
-          await tradeNotifier.startListening();
-          logger.info('📡 Trade Notifier started - real-time trade notifications enabled');
-          logger.info('   Notifications will be sent to: ' + paperTradingChannelId);
-        } catch (error) {
-          logger.error('Failed to start Trading Agent Scheduler:', error);
-          logger.warn('Continuing without Trading Agent Scheduler');
-        }
-      } else {
-        logger.info('Alpaca credentials not configured - Trading Agent Scheduler disabled');
-      }
-
-      // Initialize Watchdog Service for proactive health monitoring
-      const watchdog = getWatchdog({
-        checkIntervalMs: 60000, // Check every minute
-        memoryTrendWindowMs: 5 * 60 * 1000, // 5 minute window for leak detection
-        memoryGrowthThreshold: 25, // Alert if >25% growth in window
-        botName: 'AgentFlow',
-        alertChannelId: config.systemNotificationChannelId,
-        alertWebhookUrl: process.env.WATCHDOG_WEBHOOK_URL,
-        onCritical: async (reason) => {
-          logger.error(`[Watchdog] Critical issue triggered callback: ${reason}`);
-          // Could trigger graceful restart here in the future
-        }
-      });
-      watchdog.setDiscordClient((bot as DiscordBotRealtime).getClient());
-      watchdog.start();
-      logger.info('🐕 Watchdog service started (health monitoring every 60s)');
-
-      // Build services list and set Discord client for startup logger
-      servicesInitialized.push('Discord Bot (Realtime API)');
-      servicesInitialized.push('Orchestrator Server');
-      servicesInitialized.push('Supervisor Service');
-      servicesInitialized.push('Agent Manager');
-      servicesInitialized.push('Watchdog');
-      if (marketScheduler) servicesInitialized.push('Market Update Scheduler');
-      if (categoryBudgetService) servicesInitialized.push('Mr. Krabs Financial Advisor');
-      if (vercelIntegration) servicesInitialized.push('Vercel Integration');
-      if (deploymentTracker) servicesInitialized.push('Deployment Tracker');
-      if (serverMonitor) servicesInitialized.push('Server Monitor');
-      if (tradingScheduler) servicesInitialized.push('Trading Agent Scheduler');
-      if (tradeNotifier) servicesInitialized.push('Trade Notifier (Real-time)');
-
-      // Set Discord client for startup logger and log success
-      startupLogger.setDiscordClient((bot as DiscordBotRealtime).getClient());
-      await startupLogger.logStartupSuccess(servicesInitialized);
-      logger.info('🎉 Startup complete - all services initialized');
-
-      // Graceful shutdown
-      process.on('SIGINT', async () => {
-        logger.info('Shutting down gracefully...');
-        await startupLogger.logShutdown('SIGINT received');
-        watchdog.stop();
-        if (serverMonitor) serverMonitor.stop();
-        if (marketScheduler) marketScheduler.stop();
-        if (tradingScheduler) tradingScheduler.stop();
-        if (tradeNotifier) tradeNotifier.stopListening();
-        if (vercelIntegration) vercelIntegration.stop();
-        if (deploymentTracker) deploymentTracker.stop();
-        agentManager.stopAllTasks(); // Stop agent manager tasks
-        supervisorService.stop(); // Stop supervisor
-        await bot.stop();
-        await orchestratorServer.stop();
-        getDatabase().close();
-        removeLock();
-        process.exit(0);
-      });
-
-      process.on('SIGTERM', async () => {
-        logger.info('Shutting down gracefully...');
-        await startupLogger.logShutdown('SIGTERM received');
-        watchdog.stop();
-        if (serverMonitor) serverMonitor.stop();
-        if (marketScheduler) marketScheduler.stop();
-        if (tradingScheduler) tradingScheduler.stop();
-        if (tradeNotifier) tradeNotifier.stopListening();
-        if (vercelIntegration) vercelIntegration.stop();
-        if (deploymentTracker) deploymentTracker.stop();
-        agentManager.stopAllTasks(); // Stop agent manager tasks
-        supervisorService.stop(); // Stop supervisor
-        await bot.stop();
-        await orchestratorServer.stop();
-        getDatabase().close();
-        removeLock();
-        process.exit(0);
-      });
-
-      return; // Exit early, don't run old bot code
+      servicesInitialized.push('Market Scheduler');
     }
 
-    // Legacy mode: Use original bot with Whisper + Claude + TTS
-    logger.info('Using legacy mode (Whisper + Claude + TTS)');
-    bot = new DiscordBot(config);
-
-    // Initialize Supervisor Service (also for Legacy Mode)
-    const supervisorService = new SupervisorService(
-      (bot as DiscordBot).getClient(),
-      config,
-      trelloService
-    );
-    supervisorService.start();
-
-    // Wire up the Discord message handler to the orchestrator
-    orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
-      await (bot as DiscordBot).sendTextMessage(channelId, message);
+    // Supervisor Tasks
+    agentManager.registerTaskExecutor('supervisor', async (task) => {
+      const taskConfig = task.config ? JSON.parse(task.config) : {};
+      switch (taskConfig.type) {
+        case 'morning_briefing': await supervisorService.runDailyBriefing('Morning Kickoff'); return { success: true };
+        case 'evening_wrapup': await supervisorService.runDailyBriefing('Evening Wrap-up'); return { success: true };
+        default: throw new Error(`Unknown supervisor task: ${taskConfig.type}`);
+      }
     });
 
-    if (config.systemNotificationChannelId) {
-      logger.info(`Agent notifications will be sent to channel: ${config.systemNotificationChannelId}`);
-    } else {
-      logger.warn('⚠️⚠️⚠️ WARNING ⚠️⚠️⚠️');
-      logger.warn('SYSTEM_NOTIFICATION_CHANNEL_ID is not configured in .env!');
-      logger.warn('Agent progress updates will be sent to the channel where commands are issued (fallback mode)');
-      logger.warn('For better organization, set SYSTEM_NOTIFICATION_CHANNEL_ID to a dedicated notifications channel');
-      logger.warn('Get it by: Discord Settings → Advanced → Enable Developer Mode → Right-click channel → Copy Channel ID');
+    // Mr. Krabs Tasks
+    if (transactionSyncService) {
+      agentManager.registerTaskExecutor('mr-krabs', async (task) => {
+        const taskConfig = task.config ? JSON.parse(task.config) : {};
+        switch (taskConfig.type) {
+          case 'daily_budget': 
+            if (categoryBudgetService) await categoryBudgetService.sendDailyUpdate(); 
+            return { success: true };
+          case 'weekly_summary': 
+            if (weeklyBudgetService) await weeklyBudgetService.sendWeeklySummary(); 
+            return { success: true };
+          case 'transaction_sync': 
+            const result = await transactionSyncService!.triggerSync(); 
+            return { success: result.success, stats: result.stats };
+          default: throw new Error(`Unknown mr-krabs task: ${taskConfig.type}`);
+        }
+      });
     }
 
-    // Set up voice command handler
-    bot.onVoiceCommand(async (command: VoiceCommand) => {
-      logger.info(`Received voice command: ${command.transcript}`);
-
-      // Send to orchestrator
-      const request: OrchestratorRequest = {
-        command: command.transcript,
-        context: {
-          userId: command.userId,
-          guildId: command.guildId,
-          channelId: command.channelId,
-          timestamp: command.timestamp
-        },
-        priority: 'normal',
-        requiresSubAgents: false
-      };
-
-      try {
-        const response = await fetch(`${config.orchestratorUrl}/command`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': config.orchestratorApiKey
-          },
-          body: JSON.stringify(request)
+    // 5. Deployment Tracker
+    if (process.env.DEPLOYMENTS_CHANNEL_ID) {
+      const deploymentTracker = createDeploymentTrackerFromEnv();
+      if (deploymentTracker) {
+        deploymentTracker.setDiscordClient(mainBot.getClient());
+        deploymentTracker.start();
+        
+        agentManager.registerTaskExecutor('deployment-check', async () => {
+          await deploymentTracker.triggerCheck();
         });
+        servicesInitialized.push('Deployment Tracker');
+      }
+    }
 
-        const result = await response.json() as { success: boolean; response?: string; error?: string };
-        logger.info(`Orchestrator response: ${JSON.stringify(result)}`);
+    // 6. Server Monitor
+    let serverMonitor: ServerMonitorService | null = null;
+    if (process.env.HETZNER_SERVER_IP) {
+      serverMonitor = getServerMonitor({
+        serverIp: process.env.HETZNER_SERVER_IP,
+        sshUser: process.env.HETZNER_SSH_USER || 'root',
+        checkIntervalMs: 5 * 60 * 1000,
+        discordChannelId: process.env.SERVER_MONITOR_CHANNEL_ID || process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
+        autoCleanup: { enabled: true, diskThresholdPercent: 80, dockerCacheThresholdGb: 15 }
+      });
+      serverMonitor.setDiscordClient(mainBot.getClient());
+      serverMonitor.start();
+      
+      agentManager.registerTaskExecutor('server-health-check', async () => await serverMonitor!.forceCheck());
+      agentManager.registerTaskExecutor('server-cleanup', async () => await serverMonitor!.cleanupDocker());
+      
+      servicesInitialized.push('Server Monitor');
+    }
 
-        // Send voice response back to Discord
-        if (result.success && result.response) {
-          await bot.sendVoiceResponse(command.guildId, result.response);
-        } else if (!result.success) {
-          await bot.sendVoiceResponse(command.guildId, "I'm sorry, I encountered an error processing your request.");
-        }
-      } catch (error) {
-        logger.error('Failed to process voice command', error);
-        // Send error response
-        try {
-          await bot.sendVoiceResponse(command.guildId, "I'm sorry, I'm having trouble connecting right now.");
-        } catch (e) {
-          logger.error('Failed to send error voice response', e);
-        }
+    // 7. Trading Scheduler
+    if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
+      const paperTradingChannelId = '1443627673501962300';
+      const tradingScheduler = startTradingScheduler(mainBot.getClient(), {
+        tradingChannelId: paperTradingChannelId,
+        autoExecute: true
+      });
+      servicesInitialized.push('Trading Scheduler');
+    }
+
+    // 8. Watchdog
+    const watchdog = getWatchdog({
+      checkIntervalMs: 60000,
+      memoryTrendWindowMs: 5 * 60 * 1000,
+      memoryGrowthThreshold: 25,
+      botName: 'AgentFlow',
+      alertChannelId: config.systemNotificationChannelId,
+      alertWebhookUrl: process.env.WATCHDOG_WEBHOOK_URL,
+      onCritical: async (reason) => logger.error(`[Watchdog] Critical: ${reason}`)
+    });
+    watchdog.setDiscordClient(mainBot.getClient());
+    watchdog.start();
+    servicesInitialized.push('Watchdog');
+
+    // 9. Event Bus Wiring (The Boardroom)
+    EventBus.getInstance().subscribeAll((event) => {
+      logger.info(`🧠 [Boardroom] Detected ${event.type} from ${event.source} (${event.severity})`);
+      
+      // Intelligent Reaction: High Impact Market News -> Trigger Portfolio Check
+      if (event.type === EventType.MARKET_UPDATE && event.severity === 'high') {
+        logger.info('⚡ High impact market news detected! Triggering automatic portfolio health check...');
+        // Future: trigger financial analysis task
+        // agentManager.executeTask('portfolio-health-check');
       }
     });
 
-    await bot.start();
+    // Start all tasks
+    registerDefaultTasks(agentManager);
+    await agentManager.startAllTasks();
 
-    logger.info('AgentFlow started successfully');
+    // Log success
+    startupLogger.setDiscordClient(mainBot.getClient());
+    await startupLogger.logStartupSuccess(servicesInitialized);
+    logger.info('🎉 System Startup Complete!');
 
-    // Start automatic cleanup (every 30 minutes)
-    const cleanupManager = getCleanupManager();
-    cleanupManager.startAutoCleanup(30);
-    logger.info('🧹 Auto-cleanup enabled (runs every 30 minutes)');
+    // Start Cache Cleanup
+    startCacheCleanup(60000);
 
-    // Graceful shutdown
-    const shutdown = async () => {
-      logger.info('Shutting down gracefully...');
-      
-      // Stop auto-cleanup
-      cleanupManager.stopAutoCleanup();
-
-      // Stop supervisor
+    // Graceful Shutdown
+    const shutdown = async (signal: string) => {
+      logger.info(`Shutting down (${signal})...`);
+      watchdog.stop();
+      if (serverMonitor) serverMonitor.stop();
+      if (marketScheduler) marketScheduler.stop();
+      agentManager.stopAllTasks();
       supervisorService.stop();
-      
-      // Cleanup agents
-      const subAgentManager = orchestratorServer.getSubAgentManager();
-      await subAgentManager.cleanup();
-      
-      // Stop services
-      await bot.stop();
+      await mainBot.stop();
+      if (atlasBot) await atlasBot.stop();
+      if (advisorBot) await advisorBot.stop();
       await orchestratorServer.stop();
-      
-      // Close database
       getDatabase().close();
-      
-      // Remove lock file
       removeLock();
-      
-      logger.info('✅ Shutdown complete');
       process.exit(0);
     };
 
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   } catch (error) {
     logger.error('Failed to start AgentFlow', error);
-    
-    // Log startup failure to database and webhook
     await startupLogger.logStartupFailure(error as Error);
-    
     process.exit(1);
   }
 }

@@ -1,24 +1,19 @@
-import { getSupabase } from './supabase';
+import { query } from './postgres';
 
 /**
- * Database queries for Agent Manager (Cloud-based with Supabase)
- * Note: These tables may need to be created in Supabase if they don't exist
+ * Database queries for Agent Manager (Hetzner Postgres)
  */
 export const db_queries_agents = {
   // Get all agents
   getAllAgents: async () => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('agent_configs')
-        .select('*')
-        .order('agent_type')
-        .order('display_name');
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM agent_configs 
+        ORDER BY agent_type, display_name
+      `);
+      return result.rows || [];
     } catch (e) {
-      console.warn('Agent configs table may not exist:', e);
+      console.warn('Agent configs table query failed:', e);
       return [];
     }
   },
@@ -26,15 +21,11 @@ export const db_queries_agents = {
   // Get agent by name
   getAgent: async (agentName: string) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('agent_configs')
-        .select('*')
-        .eq('agent_name', agentName)
-        .single();
-      
-      if (error) throw error;
-      return data;
+      const result = await query(`
+        SELECT * FROM agent_configs 
+        WHERE agent_name = $1
+      `, [agentName]);
+      return result.rows[0] || null;
     } catch (e) {
       return null;
     }
@@ -43,17 +34,13 @@ export const db_queries_agents = {
   // Get all recurring tasks
   getAllRecurringTasks: async () => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('recurring_tasks')
-        .select('*')
-        .order('agent_name')
-        .order('task_name');
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM recurring_tasks 
+        ORDER BY agent_name, task_name
+      `);
+      return result.rows || [];
     } catch (e) {
-      console.warn('Recurring tasks table may not exist:', e);
+      console.warn('Recurring tasks table query failed:', e);
       return [];
     }
   },
@@ -61,15 +48,12 @@ export const db_queries_agents = {
   // Get recurring tasks by agent
   getAgentRecurringTasks: async (agentName: string) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('recurring_tasks')
-        .select('*')
-        .eq('agent_name', agentName)
-        .order('task_name');
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM recurring_tasks 
+        WHERE agent_name = $1 
+        ORDER BY task_name
+      `, [agentName]);
+      return result.rows || [];
     } catch (e) {
       return [];
     }
@@ -78,16 +62,13 @@ export const db_queries_agents = {
   // Get task execution history
   getTaskExecutions: async (taskId: string, limit: number = 50) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('task_executions')
-        .select('*')
-        .eq('task_id', taskId)
-        .order('started_at', { ascending: false })
-        .limit(limit);
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM task_executions 
+        WHERE task_id = $1 
+        ORDER BY started_at DESC 
+        LIMIT $2
+      `, [taskId, limit]);
+      return result.rows || [];
     } catch (e) {
       return [];
     }
@@ -96,15 +77,12 @@ export const db_queries_agents = {
   // Get recent executions across all tasks
   getRecentExecutions: async (limit: number = 50) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('task_executions')
-        .select('*')
-        .order('started_at', { ascending: false })
-        .limit(limit);
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM task_executions 
+        ORDER BY started_at DESC 
+        LIMIT $1
+      `, [limit]);
+      return result.rows || [];
     } catch (e) {
       return [];
     }
@@ -113,16 +91,13 @@ export const db_queries_agents = {
   // Get failed executions
   getFailedExecutions: async (limit: number = 50) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('task_executions')
-        .select('*')
-        .eq('status', 'failed')
-        .order('started_at', { ascending: false })
-        .limit(limit);
-      
-      if (error) throw error;
-      return data || [];
+      const result = await query(`
+        SELECT * FROM task_executions 
+        WHERE status = 'failed' 
+        ORDER BY started_at DESC 
+        LIMIT $1
+      `, [limit]);
+      return result.rows || [];
     } catch (e) {
       return [];
     }
@@ -131,21 +106,25 @@ export const db_queries_agents = {
   // Get agent statistics
   getAgentStats: async () => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('recurring_tasks')
-        .select('is_enabled, total_runs, successful_runs, failed_runs');
+      const result = await query(`
+        SELECT 
+          COUNT(*) as total_tasks,
+          SUM(CASE WHEN is_enabled = true THEN 1 ELSE 0 END) as enabled_tasks,
+          SUM(CASE WHEN is_enabled = false THEN 1 ELSE 0 END) as disabled_tasks,
+          SUM(total_runs) as total_executions,
+          SUM(successful_runs) as successful_executions,
+          SUM(failed_runs) as failed_executions
+        FROM recurring_tasks
+      `);
       
-      if (error) throw error;
-      
-      const tasks = data || [];
+      const stats = result.rows[0];
       return {
-        totalTasks: tasks.length,
-        enabledTasks: tasks.filter(t => t.is_enabled).length,
-        disabledTasks: tasks.filter(t => !t.is_enabled).length,
-        totalExecutions: tasks.reduce((sum, t) => sum + (t.total_runs || 0), 0),
-        successfulExecutions: tasks.reduce((sum, t) => sum + (t.successful_runs || 0), 0),
-        failedExecutions: tasks.reduce((sum, t) => sum + (t.failed_runs || 0), 0)
+        totalTasks: parseInt(stats.total_tasks) || 0,
+        enabledTasks: parseInt(stats.enabled_tasks) || 0,
+        disabledTasks: parseInt(stats.disabled_tasks) || 0,
+        totalExecutions: parseInt(stats.total_executions) || 0,
+        successfulExecutions: parseInt(stats.successful_executions) || 0,
+        failedExecutions: parseInt(stats.failed_executions) || 0
       };
     } catch (e) {
       return {
@@ -162,21 +141,24 @@ export const db_queries_agents = {
   // Get task statistics by agent
   getAgentTaskStats: async (agentName: string) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('recurring_tasks')
-        .select('is_enabled, total_runs, successful_runs, failed_runs')
-        .eq('agent_name', agentName);
+      const result = await query(`
+        SELECT 
+          COUNT(*) as total_tasks,
+          SUM(CASE WHEN is_enabled = true THEN 1 ELSE 0 END) as enabled_tasks,
+          SUM(total_runs) as total_runs,
+          SUM(successful_runs) as successful_runs,
+          SUM(failed_runs) as failed_runs
+        FROM recurring_tasks
+        WHERE agent_name = $1
+      `, [agentName]);
       
-      if (error) throw error;
-      
-      const tasks = data || [];
+      const stats = result.rows[0];
       return {
-        totalTasks: tasks.length,
-        enabledTasks: tasks.filter(t => t.is_enabled).length,
-        totalRuns: tasks.reduce((sum, t) => sum + (t.total_runs || 0), 0),
-        successfulRuns: tasks.reduce((sum, t) => sum + (t.successful_runs || 0), 0),
-        failedRuns: tasks.reduce((sum, t) => sum + (t.failed_runs || 0), 0)
+        totalTasks: parseInt(stats.total_tasks) || 0,
+        enabledTasks: parseInt(stats.enabled_tasks) || 0,
+        totalRuns: parseInt(stats.total_runs) || 0,
+        successfulRuns: parseInt(stats.successful_runs) || 0,
+        failedRuns: parseInt(stats.failed_runs) || 0
       };
     } catch (e) {
       return {
@@ -192,24 +174,26 @@ export const db_queries_agents = {
   // Get execution statistics for a specific task
   getTaskExecutionStats: async (taskId: string) => {
     try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from('task_executions')
-        .select('status, duration')
-        .eq('task_id', taskId);
+      const result = await query(`
+        SELECT 
+          COUNT(*) as total_executions,
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_executions,
+          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_executions,
+          AVG(duration) as avg_duration,
+          MAX(duration) as max_duration,
+          MIN(duration) as min_duration
+        FROM task_executions
+        WHERE task_id = $1
+      `, [taskId]);
       
-      if (error) throw error;
-      
-      const executions = data || [];
-      const durations = executions.map(e => e.duration || 0).filter(d => d > 0);
-      
+      const stats = result.rows[0];
       return {
-        totalExecutions: executions.length,
-        successfulExecutions: executions.filter(e => e.status === 'success').length,
-        failedExecutions: executions.filter(e => e.status === 'failed').length,
-        avgDuration: durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0,
-        maxDuration: durations.length > 0 ? Math.max(...durations) : 0,
-        minDuration: durations.length > 0 ? Math.min(...durations) : 0
+        totalExecutions: parseInt(stats.total_executions) || 0,
+        successfulExecutions: parseInt(stats.successful_executions) || 0,
+        failedExecutions: parseInt(stats.failed_executions) || 0,
+        avgDuration: parseFloat(stats.avg_duration) || 0,
+        maxDuration: parseInt(stats.max_duration) || 0,
+        minDuration: parseInt(stats.min_duration) || 0
       };
     } catch (e) {
       return {
@@ -226,31 +210,24 @@ export const db_queries_agents = {
   // Get recent activity timeline
   getActivityTimeline: async (hours: number = 24) => {
     try {
-      const supabase = getSupabase();
-      const cutoffDate = new Date();
-      cutoffDate.setHours(cutoffDate.getHours() - hours);
-
-      const { data, error } = await supabase
-        .from('task_executions')
-        .select('started_at, status')
-        .gte('started_at', cutoffDate.toISOString());
+      const result = await query(`
+        SELECT 
+          DATE_TRUNC('hour', started_at) as hour,
+          COUNT(*) as total,
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful,
+          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+        FROM task_executions
+        WHERE started_at >= NOW() - INTERVAL '${hours} hours'
+        GROUP BY hour
+        ORDER BY hour DESC
+      `);
       
-      if (error) throw error;
-      
-      // Group by hour
-      const hourlyMap = new Map<string, { total: number; successful: number; failed: number }>();
-      (data || []).forEach(exec => {
-        const hour = exec.started_at.substring(0, 13) + ':00:00';
-        const entry = hourlyMap.get(hour) || { total: 0, successful: 0, failed: 0 };
-        entry.total++;
-        if (exec.status === 'success') entry.successful++;
-        if (exec.status === 'failed') entry.failed++;
-        hourlyMap.set(hour, entry);
-      });
-
-      return Array.from(hourlyMap.entries())
-        .map(([hour, stats]) => ({ hour, ...stats }))
-        .sort((a, b) => b.hour.localeCompare(a.hour));
+      return result.rows.map((row: any) => ({
+        hour: row.hour, // Postgres returns Date object or string depending on config
+        total: parseInt(row.total) || 0,
+        successful: parseInt(row.successful) || 0,
+        failed: parseInt(row.failed) || 0
+      }));
     } catch (e) {
       return [];
     }
@@ -259,29 +236,16 @@ export const db_queries_agents = {
   // Get tasks that need attention
   getTasksNeedingAttention: async () => {
     try {
-      const supabase = getSupabase();
-      
-      // Get enabled tasks with their last execution
-      const { data: tasks, error } = await supabase
-        .from('recurring_tasks')
-        .select('*')
-        .eq('is_enabled', true);
-      
-      if (error) throw error;
-      
-      // Filter to tasks needing attention
-      const now = new Date();
-      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-
-      return (tasks || []).filter(task => {
-        if (!task.last_run_at) {
-          // Never run and created more than a day ago
-          return new Date(task.created_at) < oneDayAgo;
-        }
-        // Not run in 2 days
-        return new Date(task.last_run_at) < twoDaysAgo;
-      });
+      const result = await query(`
+        SELECT * FROM recurring_tasks
+        WHERE is_enabled = true
+        AND (
+          (last_run_at IS NULL AND created_at < NOW() - INTERVAL '24 hours')
+          OR
+          (last_run_at < NOW() - INTERVAL '48 hours')
+        )
+      `);
+      return result.rows || [];
     } catch (e) {
       return [];
     }
