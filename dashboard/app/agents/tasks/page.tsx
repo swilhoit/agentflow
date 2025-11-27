@@ -1,10 +1,24 @@
-import { ThemeToggle } from '@/components/theme-toggle';
 import Link from 'next/link';
+import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { db_queries_agents } from '@/lib/database-agents';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  Calendar,
+  Clock,
+  CheckCircle,
+  AlertTriangle,
+  ArrowLeft,
+  Zap,
+  Bot,
+  Activity,
+  LayoutDashboard,
+  Settings
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
-// Helper to format cron schedule to human readable
 function formatCronSchedule(cron: string): string {
   const patterns: Record<string, string> = {
     '0 9 * * 1-5': 'Weekdays at 9:00 AM',
@@ -16,7 +30,6 @@ function formatCronSchedule(cron: string): string {
     '0 * * * *': 'Every hour',
     '0 8 * * *': 'Daily at 8:00 AM'
   };
-
   return patterns[cron] || cron;
 }
 
@@ -25,7 +38,6 @@ export default async function RecurringTasksPage() {
   const stats = await db_queries_agents.getAgentStats();
   const tasksNeedingAttention = await db_queries_agents.getTasksNeedingAttention();
 
-  // Group tasks by agent
   const tasksByAgent = allTasks.reduce((acc: Record<string, any[]>, task: any) => {
     if (!acc[task.agent_name]) {
       acc[task.agent_name] = [];
@@ -34,111 +46,130 @@ export default async function RecurringTasksPage() {
     return acc;
   }, {} as Record<string, any[]>);
 
-  // Pre-fetch all agent stats
   const agentNames = Object.keys(tasksByAgent);
   const agentStatsArray = await Promise.all(
     agentNames.map(name => db_queries_agents.getAgentTaskStats(name))
   );
   const agentStatsMap = new Map(agentNames.map((name, i) => [name, agentStatsArray[i]]));
 
-  // Pre-fetch all task execution stats
   const taskStatsArray = await Promise.all(
     allTasks.map(task => db_queries_agents.getTaskExecutionStats(task.id))
   );
   const taskStatsMap = new Map(allTasks.map((task, i) => [task.id, taskStatsArray[i]]));
 
   return (
-    <div className="min-h-screen p-8">
-      <div className="max-w-7xl mx-auto">
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <Link href="/agents" className="text-sm text-muted-foreground hover:text-foreground">
-              ← Back to Agents
-            </Link>
-            <h1 className="text-3xl font-bold mt-2">📅 Recurring Tasks</h1>
-            <p className="text-muted-foreground mt-1">
-              Manage scheduled tasks and automation
-            </p>
+        <div>
+          <Link href="/agents" className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2">
+            <ArrowLeft className="w-3 h-3" />
+            Back to Agents
+          </Link>
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Calendar className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground">Recurring Tasks</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Manage scheduled tasks and automation
+              </p>
+            </div>
           </div>
-          <ThemeToggle />
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="border border-border bg-card p-6">
-            <div className="text-sm text-muted-foreground mb-2">TOTAL TASKS</div>
-            <div className="text-3xl font-bold">{stats.totalTasks}</div>
-            <div className="text-xs text-primary mt-1">
-              {stats.enabledTasks} enabled
-            </div>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Calendar className="w-4 h-4" />
+                <span className="text-xs font-medium">Total Tasks</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">{stats.totalTasks}</div>
+              <div className="text-xs text-primary mt-1">{stats.enabledTasks} enabled</div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-sm text-muted-foreground mb-2">TOTAL EXECUTIONS</div>
-            <div className="text-3xl font-bold">{stats.totalExecutions}</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              All-time runs
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Zap className="w-4 h-4" />
+                <span className="text-xs font-medium">Total Executions</span>
+              </div>
+              <div className="text-2xl font-semibold tabular-nums">{stats.totalExecutions}</div>
+              <div className="text-xs text-muted-foreground mt-1">All-time runs</div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-sm text-muted-foreground mb-2">SUCCESS RATE</div>
-            <div className="text-3xl font-bold text-primary">
-              {stats.totalExecutions > 0
-                ? Math.round((stats.successfulExecutions / stats.totalExecutions) * 100)
-                : 0}%
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              {stats.successfulExecutions} successful
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <CheckCircle className="w-4 h-4 text-success" />
+                <span className="text-xs font-medium">Success Rate</span>
+              </div>
+              <div className="text-2xl font-semibold text-success tabular-nums">
+                {stats.totalExecutions > 0
+                  ? Math.round((stats.successfulExecutions / stats.totalExecutions) * 100)
+                  : 0}%
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">{stats.successfulExecutions} successful</div>
+            </CardContent>
+          </Card>
 
-          <div className="border border-border bg-card p-6">
-            <div className="text-sm text-muted-foreground mb-2">NEEDS ATTENTION</div>
-            <div className={`text-3xl font-bold ${tasksNeedingAttention.length > 0 ? 'text-destructive' : 'text-primary'}`}>
-              {tasksNeedingAttention.length}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Failed or stale
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <AlertTriangle className={cn("w-4 h-4", tasksNeedingAttention.length > 0 ? 'text-destructive' : '')} />
+                <span className="text-xs font-medium">Needs Attention</span>
+              </div>
+              <div className={cn(
+                "text-2xl font-semibold tabular-nums",
+                tasksNeedingAttention.length > 0 ? 'text-destructive' : 'text-success'
+              )}>
+                {tasksNeedingAttention.length}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">Failed or stale</div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Tasks Needing Attention */}
         {tasksNeedingAttention.length > 0 && (
-          <div className="border border-destructive bg-card p-6 mb-8">
-            <h2 className="text-xl font-bold mb-4 text-destructive">⚠️ Tasks Needing Attention</h2>
-            <div className="space-y-3">
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2 text-destructive">
+                <AlertTriangle className="w-4 h-4" />
+                Tasks Needing Attention
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
               {tasksNeedingAttention.map((task) => (
-                <div key={task.id} className="border border-destructive p-4">
+                <div key={task.id} className="p-4 rounded-lg border border-destructive/30 bg-background">
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <div className="font-bold">{task.task_name}</div>
+                      <div className="font-medium text-sm">{task.task_name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {task.agent_name} • {formatCronSchedule(task.cron_schedule)}
+                        {task.agent_name} · {formatCronSchedule(task.cron_schedule)}
                       </div>
                     </div>
-                    <span className="text-xs px-2 py-1 border border-destructive text-destructive">
-                      {task.last_status || 'never run'}
-                    </span>
+                    <Badge variant="destructive">{task.last_status || 'never run'}</Badge>
                   </div>
                   {task.last_error && (
-                    <div className="text-sm text-destructive mb-2">
-                      Error: {task.last_error}
-                    </div>
+                    <div className="text-sm text-destructive mb-2">Error: {task.last_error}</div>
                   )}
                   <div className="text-xs text-muted-foreground">
                     Last run: {task.last_run_at ? new Date(task.last_run_at).toLocaleString() : 'Never'}
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Tasks by Agent */}
-        <div className="space-y-8">
+        <div className="space-y-6">
           {Object.entries(tasksByAgent).map(([agentName, tasks]: [string, any]) => {
             const agentStats = agentStatsMap.get(agentName) || { totalRuns: 0, successfulRuns: 0, failedRuns: 0, totalTasks: 0, enabledTasks: 0 };
             const successRate = agentStats.totalRuns > 0
@@ -146,27 +177,24 @@ export default async function RecurringTasksPage() {
               : 0;
 
             return (
-              <div key={agentName} className="border border-border bg-card p-6">
-                <div className="flex justify-between items-start mb-4">
+              <Card key={agentName}>
+                <CardHeader className="flex flex-row items-start justify-between pb-3">
                   <div>
-                    <h2 className="text-xl font-bold">{agentName}</h2>
-                    <div className="text-sm text-muted-foreground mt-1">
-                      {tasks.length} task{tasks.length !== 1 ? 's' : ''} •{' '}
-                      {agentStats.totalRuns} total runs •{' '}
-                      <span className={successRate >= 90 ? 'text-primary' : successRate >= 70 ? 'text-accent' : 'text-destructive'}>
+                    <CardTitle className="text-base">{agentName}</CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {tasks.length} task{tasks.length !== 1 ? 's' : ''} · {agentStats.totalRuns} total runs ·{' '}
+                      <span className={cn(
+                        successRate >= 90 ? 'text-success' : successRate >= 70 ? 'text-warning' : 'text-destructive'
+                      )}>
                         {successRate}% success rate
                       </span>
-                    </div>
+                    </p>
                   </div>
-                  <Link
-                    href={`/agents/tasks/${agentName}`}
-                    className="text-sm text-primary hover:underline"
-                  >
+                  <Link href={`/agents/tasks/${agentName}`} className="text-xs text-primary hover:underline">
                     View Details →
                   </Link>
-                </div>
-
-                <div className="space-y-3">
+                </CardHeader>
+                <CardContent className="space-y-3">
                   {tasks.map((task: any) => {
                     const taskStats = taskStatsMap.get(task.id) || { totalExecutions: 0, successfulExecutions: 0, failedExecutions: 0, avgDuration: 0, maxDuration: 0, minDuration: 0 };
                     const taskSuccessRate = taskStats.totalExecutions > 0
@@ -174,21 +202,15 @@ export default async function RecurringTasksPage() {
                       : 0;
 
                     return (
-                      <div key={task.id} className="border border-border p-4">
+                      <div key={task.id} className="p-4 rounded-lg border border-border">
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex-1">
-                            <div className="font-bold">{task.task_name}</div>
-                            <div className="text-sm text-muted-foreground mt-1">
-                              {task.description}
-                            </div>
+                            <div className="font-medium text-sm">{task.task_name}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{task.description}</div>
                           </div>
-                          <div className="flex gap-2">
-                            <span className={`text-xs px-2 py-1 border ${
-                              task.is_enabled ? 'border-primary text-primary' : 'border-border text-muted-foreground'
-                            }`}>
-                              {task.is_enabled ? 'enabled' : 'disabled'}
-                            </span>
-                          </div>
+                          <Badge variant={task.is_enabled ? 'default' : 'secondary'}>
+                            {task.is_enabled ? 'enabled' : 'disabled'}
+                          </Badge>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-xs">
@@ -200,24 +222,21 @@ export default async function RecurringTasksPage() {
                           <div>
                             <div className="text-muted-foreground">Last Run</div>
                             <div className="font-medium">
-                              {task.last_run_at
-                                ? new Date(task.last_run_at).toLocaleString()
-                                : 'Never'}
+                              {task.last_run_at ? new Date(task.last_run_at).toLocaleString() : 'Never'}
                             </div>
                           </div>
                           <div>
                             <div className="text-muted-foreground">Total Runs</div>
-                            <div className="font-medium">
+                            <div className="font-medium tabular-nums">
                               {task.total_runs} ({task.successful_runs} ✓ / {task.failed_runs} ✗)
                             </div>
                           </div>
                           <div>
                             <div className="text-muted-foreground">Success Rate</div>
-                            <div className={`font-medium ${
-                              taskSuccessRate >= 90 ? 'text-primary' :
-                              taskSuccessRate >= 70 ? 'text-accent' :
-                              'text-destructive'
-                            }`}>
+                            <div className={cn(
+                              "font-medium tabular-nums",
+                              taskSuccessRate >= 90 ? 'text-success' : taskSuccessRate >= 70 ? 'text-warning' : 'text-destructive'
+                            )}>
                               {taskSuccessRate}%
                             </div>
                           </div>
@@ -226,53 +245,45 @@ export default async function RecurringTasksPage() {
                         {taskStats.avgDuration > 0 && (
                           <div className="mt-2 text-xs text-muted-foreground">
                             Avg duration: {(taskStats.avgDuration / 1000).toFixed(1)}s
-                            {taskStats.maxDuration > 0 && ` • Max: ${(taskStats.maxDuration / 1000).toFixed(1)}s`}
+                            {taskStats.maxDuration > 0 && ` · Max: ${(taskStats.maxDuration / 1000).toFixed(1)}s`}
                           </div>
                         )}
                       </div>
                     );
                   })}
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             );
           })}
         </div>
 
         {/* Quick Actions */}
-        <div className="mt-8 border border-border bg-card p-6">
-          <h2 className="text-xl font-bold mb-4">⚙️ Quick Actions</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Link
-              href="/agents/executions"
-              className="border border-border p-4 hover:bg-muted transition-colors text-center"
-            >
-              <div className="text-2xl mb-2">⚡</div>
-              <div className="text-sm font-medium">View All Executions</div>
-            </Link>
-            <Link
-              href="/agents"
-              className="border border-border p-4 hover:bg-muted transition-colors text-center"
-            >
-              <div className="text-2xl mb-2">🤖</div>
-              <div className="text-sm font-medium">Back to Agents</div>
-            </Link>
-            <Link
-              href="/agents/logs"
-              className="border border-border p-4 hover:bg-muted transition-colors text-center"
-            >
-              <div className="text-2xl mb-2">📋</div>
-              <div className="text-sm font-medium">Agent Logs</div>
-            </Link>
-            <Link
-              href="/dashboard"
-              className="border border-border p-4 hover:bg-muted transition-colors text-center"
-            >
-              <div className="text-2xl mb-2">📊</div>
-              <div className="text-sm font-medium">Dashboard</div>
-            </Link>
-          </div>
-        </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Settings className="w-4 h-4" />
+              Quick Actions
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <QuickAction href="/agents/executions" icon={<Zap className="w-5 h-5" />} label="View All Executions" />
+              <QuickAction href="/agents" icon={<Bot className="w-5 h-5" />} label="Back to Agents" />
+              <QuickAction href="/agents/logs" icon={<Activity className="w-5 h-5" />} label="Agent Logs" />
+              <QuickAction href="/" icon={<LayoutDashboard className="w-5 h-5" />} label="Dashboard" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </div>
+    </DashboardLayout>
+  );
+}
+
+function QuickAction({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
+  return (
+    <Link href={href} className="p-4 rounded-lg border border-border bg-background hover:bg-muted/50 transition-colors text-center group">
+      <div className="flex justify-center mb-2 text-muted-foreground group-hover:text-primary transition-colors">{icon}</div>
+      <p className="text-sm font-medium">{label}</p>
+    </Link>
   );
 }

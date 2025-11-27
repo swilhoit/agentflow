@@ -1,9 +1,30 @@
 'use client';
 
 import { formatCurrency, formatPercentage } from '@/lib/utils';
-import { ThemeToggle } from '@/components/theme-toggle';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  DollarSign,
+  CreditCard,
+  PiggyBank,
+  Flame,
+  ArrowRight,
+  TrendingUp,
+  TrendingDown,
+  Bot,
+  Wallet,
+  Building2,
+  Target,
+  Cloud,
+  Database,
+  BarChart3,
+  Receipt,
+  Activity
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,218 +131,280 @@ export default function DashboardOverview() {
 
   if (loading) {
     return (
-      <div className="min-h-screen p-8 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">📊</div>
-          <div className="text-xl">Loading dashboard...</div>
+      <DashboardLayout>
+        <div className="p-8 flex items-center justify-center min-h-[60vh]">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-muted-foreground">Loading dashboard...</p>
+          </div>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="min-h-screen p-8">
-      <div className="max-w-7xl mx-auto">
+    <DashboardLayout>
+      <div className="p-8 space-y-8">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <BarChart3 className="w-6 h-6 text-primary" />
+          </div>
           <div>
-            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-              ← Back to Home
-            </Link>
-            <h1 className="text-3xl font-bold mt-2">Dashboard Overview</h1>
-            <p className="text-muted-foreground mt-1">
-              Real-time data from Supabase cloud database
+            <h1 className="text-2xl font-semibold text-foreground">Dashboard Overview</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Real-time data from your connected accounts
             </p>
           </div>
-          <ThemeToggle />
         </div>
 
         {/* Financial Summary */}
-        <div className="mb-8">
-          <h2 className="text-xl font-bold mb-4">💰 Financial Summary (This Month)</h2>
+        <div>
+          <h2 className="text-base font-semibold mb-4 flex items-center gap-2">
+            <DollarSign className="w-4 h-4" />
+            Financial Summary (This Month)
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="border border-border bg-card p-6">
-              <div className="text-sm text-muted-foreground mb-2">TOTAL INCOME</div>
-              <div className="text-2xl font-bold">{formatCurrency(income)}</div>
-              <div className={`text-xs mt-1 ${incomeChange >= 0 ? 'text-primary' : 'text-destructive'}`}>
-                {formatPercentage(incomeChange, 1)} vs last month
-              </div>
-            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                  <TrendingUp className="w-4 h-4 text-success" />
+                  <span className="text-xs font-medium">Total Income</span>
+                </div>
+                <div className="text-2xl font-semibold tabular-nums">{formatCurrency(income)}</div>
+                <div className={cn(
+                  "text-xs mt-1 flex items-center gap-1",
+                  incomeChange >= 0 ? 'text-success' : 'text-destructive'
+                )}>
+                  {incomeChange >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {formatPercentage(incomeChange, 1)} vs last month
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="border border-border bg-card p-6">
-              <div className="text-sm text-muted-foreground mb-2">TOTAL SPENT</div>
-              <div className="text-2xl font-bold">{formatCurrency(expenses)}</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {transactionCount} transactions
-              </div>
-            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                  <CreditCard className="w-4 h-4" />
+                  <span className="text-xs font-medium">Total Spent</span>
+                </div>
+                <div className="text-2xl font-semibold tabular-nums">{formatCurrency(expenses)}</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {transactionCount} transactions
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="border border-border bg-card p-6">
-              <div className="text-sm text-muted-foreground mb-2">NET SAVINGS</div>
-              <div className={`text-2xl font-bold ${netSavings >= 0 ? 'text-primary' : 'text-destructive'}`}>
-                {formatCurrency(netSavings)}
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {savingsRate.toFixed(1)}% savings rate
-              </div>
-            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                  <PiggyBank className={cn("w-4 h-4", netSavings >= 0 ? 'text-success' : 'text-destructive')} />
+                  <span className="text-xs font-medium">Net Savings</span>
+                </div>
+                <div className={cn(
+                  "text-2xl font-semibold tabular-nums",
+                  netSavings >= 0 ? 'text-success' : 'text-destructive'
+                )}>
+                  {formatCurrency(netSavings)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {savingsRate.toFixed(1)}% savings rate
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="border border-border bg-card p-6">
-              <div className="text-sm text-muted-foreground mb-2">BURN RATE</div>
-              <div className="text-2xl font-bold">{formatCurrency(burnRate)}/day</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {daysElapsed} days tracked
-              </div>
-            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                  <Flame className="w-4 h-4 text-warning" />
+                  <span className="text-xs font-medium">Burn Rate</span>
+                </div>
+                <div className="text-2xl font-semibold tabular-nums">{formatCurrency(burnRate)}/day</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {daysElapsed} days tracked
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Transactions */}
-          <div className="border border-border bg-card p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold">Recent Transactions</h3>
-              <Link href="/finances" className="text-sm text-primary hover:underline">
-                View All →
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Receipt className="w-4 h-4" />
+                Recent Transactions
+              </CardTitle>
+              <Link href="/finances" className="text-xs text-primary hover:underline flex items-center gap-1">
+                View All <ArrowRight className="w-3 h-3" />
               </Link>
-            </div>
-            <div className="space-y-3">
+            </CardHeader>
+            <CardContent className="space-y-3">
               {recentTransactions.length > 0 ? (
                 recentTransactions.map((txn, idx) => (
                   <div key={idx} className="flex justify-between items-start border-b border-border pb-3 last:border-0">
                     <div className="flex-1">
                       <div className="font-medium text-sm">{txn.description}</div>
                       <div className="text-xs text-muted-foreground">
-                        {txn.date} • {txn.account_name || 'Unknown Account'}
+                        {txn.date} · {txn.account_name || 'Unknown Account'}
                       </div>
                     </div>
-                    <div className={`font-mono font-bold ${txn.amount >= 0 ? 'text-primary' : 'text-foreground'}`}>
+                    <div className={cn(
+                      "font-semibold tabular-nums",
+                      txn.amount >= 0 ? 'text-success' : 'text-foreground'
+                    )}>
                       {txn.amount >= 0 ? '+' : ''}{formatCurrency(txn.amount)}
                     </div>
                   </div>
                 ))
               ) : (
-                <div className="text-sm text-muted-foreground text-center py-4">
+                <div className="text-sm text-muted-foreground text-center py-8">
                   No transactions found
                 </div>
               )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {/* Agent Activity */}
-          <div className="border border-border bg-card p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold">Agent Activity</h3>
-              <Link href="/agents" className="text-sm text-primary hover:underline">
-                View All →
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Bot className="w-4 h-4" />
+                Agent Activity
+              </CardTitle>
+              <Link href="/agents" className="text-xs text-primary hover:underline flex items-center gap-1">
+                View All <ArrowRight className="w-3 h-3" />
               </Link>
-            </div>
-            <div className="mb-4">
-              <div className="text-sm text-muted-foreground mb-2">Active Agents</div>
-              <div className="text-3xl font-bold">{activeAgents.length}</div>
-            </div>
-            <div className="space-y-3">
-              {recentAgents.length > 0 ? (
-                recentAgents.map((agent, idx) => (
-                  <div key={idx} className="border-b border-border pb-3 last:border-0">
-                    <div className="flex justify-between items-start mb-1">
-                      <div className="font-medium text-sm line-clamp-1">{agent.task_description}</div>
-                      <span className={`text-xs px-2 py-1 border ${
-                        agent.status === 'completed' ? 'border-primary text-primary' :
-                        agent.status === 'failed' ? 'border-destructive text-destructive' :
-                        agent.status === 'running' ? 'border-accent text-accent' :
-                        'border-border text-muted-foreground'
-                      }`}>
-                        {agent.status}
-                      </span>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4">
+                <div className="text-xs text-muted-foreground mb-1">Active Agents</div>
+                <div className="text-3xl font-semibold tabular-nums">{activeAgents.length}</div>
+              </div>
+              <div className="space-y-3">
+                {recentAgents.length > 0 ? (
+                  recentAgents.map((agent, idx) => (
+                    <div key={idx} className="border-b border-border pb-3 last:border-0">
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="font-medium text-sm line-clamp-1">{agent.task_description}</div>
+                        <Badge
+                          variant={
+                            agent.status === 'completed' ? 'success' :
+                            agent.status === 'failed' ? 'destructive' :
+                            agent.status === 'running' ? 'default' : 'secondary'
+                          }
+                        >
+                          {agent.status}
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Started: {new Date(agent.started_at).toLocaleString()}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Started: {new Date(agent.started_at).toLocaleString()}
-                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground text-center py-4">
+                    No recent agent activity
                   </div>
-                ))
-              ) : (
-                <div className="text-sm text-muted-foreground text-center py-4">
-                  No recent agent activity
-                </div>
-              )}
-            </div>
-          </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Market Snapshot */}
           {marketData.length > 0 && (
-            <div className="border border-border bg-card p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold">Market Snapshot</h3>
-                <Link href="/investments" className="text-sm text-primary hover:underline">
-                  View All →
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  Market Snapshot
+                </CardTitle>
+                <Link href="/investments" className="text-xs text-primary hover:underline flex items-center gap-1">
+                  View All <ArrowRight className="w-3 h-3" />
                 </Link>
-              </div>
-              <div className="space-y-3">
+              </CardHeader>
+              <CardContent className="space-y-3">
                 {marketData.map((stock, idx) => (
                   <div key={idx} className="flex justify-between items-center border-b border-border pb-3 last:border-0">
                     <div>
-                      <div className="font-bold">{stock.symbol}</div>
+                      <div className="font-semibold">{stock.symbol}</div>
                       <div className="text-xs text-muted-foreground">{stock.name}</div>
                     </div>
                     <div className="text-right">
-                      <div className="font-mono font-bold">${Number(stock.price).toFixed(2)}</div>
-                      <div className={`text-xs ${Number(stock.change_percent) >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                      <div className="font-semibold tabular-nums">${Number(stock.price).toFixed(2)}</div>
+                      <div className={cn(
+                        "text-xs flex items-center gap-1 justify-end",
+                        Number(stock.change_percent) >= 0 ? 'text-success' : 'text-destructive'
+                      )}>
+                        {Number(stock.change_percent) >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                         {Number(stock.change_percent) >= 0 ? '+' : ''}{Number(stock.change_percent).toFixed(2)}%
                       </div>
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           )}
 
-          {/* Quick Links */}
-          <div className="border border-border bg-card p-6">
-            <h3 className="text-lg font-bold mb-4">Quick Actions</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <Link
-                href="/finances/income"
-                className="border border-border p-4 hover:bg-muted transition-colors text-center"
-              >
-                <div className="text-2xl mb-2">💵</div>
-                <div className="text-sm font-medium">Income Tracker</div>
-              </Link>
-              <Link
-                href="/finances/business"
-                className="border border-border p-4 hover:bg-muted transition-colors text-center"
-              >
-                <div className="text-2xl mb-2">🏢</div>
-                <div className="text-sm font-medium">Business Expenses</div>
-              </Link>
-              <Link
-                href="/loans"
-                className="border border-border p-4 hover:bg-muted transition-colors text-center"
-              >
-                <div className="text-2xl mb-2">💳</div>
-                <div className="text-sm font-medium">Loan Tracker</div>
-              </Link>
-              <Link
-                href="/goals"
-                className="border border-border p-4 hover:bg-muted transition-colors text-center"
-              >
-                <div className="text-2xl mb-2">🎯</div>
-                <div className="text-sm font-medium">Daily Goals</div>
-              </Link>
-            </div>
-          </div>
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Quick Actions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3">
+                <QuickAction
+                  href="/finances/income"
+                  icon={<Wallet className="w-5 h-5" />}
+                  label="Income Tracker"
+                />
+                <QuickAction
+                  href="/finances/business"
+                  icon={<Building2 className="w-5 h-5" />}
+                  label="Business Expenses"
+                />
+                <QuickAction
+                  href="/loans"
+                  icon={<CreditCard className="w-5 h-5" />}
+                  label="Loan Tracker"
+                />
+                <QuickAction
+                  href="/goals"
+                  icon={<Target className="w-5 h-5" />}
+                  label="Daily Goals"
+                />
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Database Info */}
-        <div className="mt-8 border border-primary bg-card p-4">
-          <div className="text-sm text-primary font-bold mb-2">☁️ Connected to Supabase Cloud Database</div>
-          <div className="text-xs text-muted-foreground">
-            Using PostgreSQL via Supabase • Project: <code className="bg-muted px-1 py-0.5">personal-finance</code>
-            <br />
-            No local database files used • All data is stored in the cloud
+        <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+          <div className="flex items-center gap-2 mb-1">
+            <Cloud className="w-4 h-4 text-primary" />
+            <span className="text-sm font-medium text-primary">Connected to Supabase Cloud Database</span>
+          </div>
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Database className="w-3 h-3" />
+            Using PostgreSQL via Supabase · All data is stored in the cloud
           </div>
         </div>
       </div>
-    </div>
+    </DashboardLayout>
+  );
+}
+
+function QuickAction({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="p-4 rounded-lg border border-border bg-background hover:bg-muted/50 transition-colors text-center group"
+    >
+      <div className="flex justify-center mb-2 text-muted-foreground group-hover:text-primary transition-colors">
+        {icon}
+      </div>
+      <p className="text-sm font-medium">{label}</p>
+    </Link>
   );
 }
