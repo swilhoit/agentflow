@@ -26,7 +26,7 @@ export default async function RecurringTasksPage() {
   const tasksNeedingAttention = await db_queries_agents.getTasksNeedingAttention();
 
   // Group tasks by agent
-  const tasksByAgent = allTasks.reduce((acc, task) => {
+  const tasksByAgent = allTasks.reduce((acc: Record<string, any[]>, task: any) => {
     if (!acc[task.agent_name]) {
       acc[task.agent_name] = [];
     }

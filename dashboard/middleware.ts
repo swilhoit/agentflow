@@ -15,14 +15,14 @@ export function middleware(request: NextRequest) {
   }
   
   // Check for auth cookie
-  const authCookie = request.cookies.get('agentflow-auth');
+  // const authCookie = request.cookies.get('agentflow-auth');
   
-  if (!authCookie || authCookie.value !== 'authenticated') {
-    // Redirect to login page
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('from', pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+  // if (!authCookie || authCookie.value !== 'authenticated') {
+  //   // Redirect to login page
+  //   const loginUrl = new URL('/login', request.url);
+  //   loginUrl.searchParams.set('from', pathname);
+  //   return NextResponse.redirect(loginUrl);
+  // }
   
   return NextResponse.next();
 }
