@@ -1,7 +1,6 @@
 {
   "version": 2,
-  "buildCommand": null,
-  "installCommand": null,
-  "outputDirectory": null,
-  "ignoreCommand": "exit 0"
+  "rootDirectory": "dashboard",
+  "framework": "nextjs",
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- dashboard/"
 }
