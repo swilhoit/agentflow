@@ -48,6 +48,12 @@ export interface CognitiveExecutionResult {
     complexityTier: string;
     complexityScore: number;
   };
+  // Optimization stats
+  cacheStats?: {
+    hits: number;
+    totalCalls: number;
+    hitRate: string;
+  };
 }
 
 export interface ToolExecutor {
@@ -68,12 +74,18 @@ export class CognitiveToolExecutor {
   private modelRouter: SmartModelRouter;
   private taskComplexity: ComplexityAnalysis | null = null;
 
+  // OPTIMIZATION: Command result cache to avoid repeated executions
+  private commandCache: Map<string, { result: string; timestamp: number }> = new Map();
+  private readonly CACHE_TTL_MS = 300000;  // 5 minutes cache validity
+  private readonly MAX_CACHE_SIZE = 50;
+
   // Execution state
   private context: EnvironmentContext | null = null;
   private plan: StrategicPlan | null = null;
   private currentPhaseIndex = 0;
   private iteration = 0;
   private toolCalls = 0;
+  private cachedToolCalls = 0;  // Track cache hits
 
   // Configuration
   private config = {
@@ -85,7 +97,10 @@ export class CognitiveToolExecutor {
     verboseLogging: true,
     enableSmartModelSwitching: true,  // Use dynamic model selection
     maxContextTokens: 150000,  // Leave room for response (200k limit)
-    contextTruncationStrategy: 'smart' as 'smart' | 'simple'
+    contextTruncationStrategy: 'smart' as 'smart' | 'simple',
+    // OPTIMIZATION: Output limits
+    maxToolOutputChars: 8000,  // Truncate tool outputs at source
+    enableCommandCache: true   // Cache repeated commands
   };
 
   constructor(apiKey: string, toolExecutor: ToolExecutor) {
@@ -198,7 +213,8 @@ export class CognitiveToolExecutor {
           escalations: this.modelRouter.getEscalationCount(),
           complexityTier: this.taskComplexity.complexity,
           complexityScore: this.taskComplexity.score
-        } : undefined
+        } : undefined,
+        cacheStats: this.getCacheStats()
       };
 
     } catch (error) {
@@ -222,7 +238,8 @@ export class CognitiveToolExecutor {
           escalations: this.modelRouter.getEscalationCount(),
           complexityTier: this.taskComplexity.complexity,
           complexityScore: this.taskComplexity.score
-        } : undefined
+        } : undefined,
+        cacheStats: this.getCacheStats()
       };
     }
   }
@@ -680,15 +697,47 @@ export class CognitiveToolExecutor {
       };
 
       for (const toolUse of toolUses) {
-        this.toolCalls++;
         const startTime = Date.now();
 
+        // OPTIMIZATION: Generate cache key for cacheable commands
+        const cacheKey = this.getCacheKey(toolUse.name, toolUse.input);
+        const cachedResult = cacheKey ? this.getFromCache(cacheKey) : null;
+
+        if (cachedResult) {
+          // Cache hit - use cached result
+          this.cachedToolCalls++;
+          logger.info(`   📦 Cache hit for ${toolUse.name} (saved API call)`);
+
+          (toolResults.content as Anthropic.ToolResultBlockParam[]).push({
+            type: 'tool_result',
+            tool_use_id: toolUse.id,
+            content: cachedResult
+          });
+
+          await this.notify(`📦 **Tool: ${toolUse.name}** (cached)`);
+          continue;
+        }
+
+        this.toolCalls++;
         await this.notify(`🔧 **Tool: ${toolUse.name}**`);
 
         try {
           const result = await this.toolExecutor(toolUse.name, toolUse.input);
           const duration = Date.now() - startTime;
           const success = !result.error && !result.failed;
+
+          // OPTIMIZATION: Truncate large outputs at source
+          let resultStr = JSON.stringify(result);
+          if (resultStr.length > this.config.maxToolOutputChars) {
+            const truncatedResult = this.truncateToolOutput(result);
+            resultStr = JSON.stringify(truncatedResult);
+            logger.info(`   ✂️ Output truncated: ${JSON.stringify(result).length} → ${resultStr.length} chars`);
+          }
+
+          // Cache the result for future use
+          if (cacheKey && success) {
+            this.addToCache(cacheKey, resultStr);
+          }
 
           // Record for self-monitoring
           const insights = this.extractInsights(result, toolUse.name);
@@ -708,7 +757,7 @@ export class CognitiveToolExecutor {
           (toolResults.content as Anthropic.ToolResultBlockParam[]).push({
             type: 'tool_result',
             tool_use_id: toolUse.id,
-            content: JSON.stringify(result)
+            content: resultStr
           });
 
           await this.notify(`✅ Tool completed (${duration}ms)`);
@@ -923,6 +972,121 @@ _${plan.approach.reasoning}_`;
       const clean = message.replace(/\*\*/g, '').replace(/`/g, '').substring(0, 150);
       logger.info(`📢 ${clean}`);
     }
+  }
+
+  // ========================================================================
+  // OPTIMIZATION: Caching and Output Truncation
+  // ========================================================================
+
+  /**
+   * Generate a cache key for cacheable tool calls
+   * Only cache deterministic read operations
+   */
+  private getCacheKey(toolName: string, input: any): string | null {
+    if (!this.config.enableCommandCache) return null;
+
+    // Only cache read-only operations
+    const cacheableTools = ['execute_bash', 'read_file', 'list_directory', 'search_files'];
+    if (!cacheableTools.includes(toolName)) return null;
+
+    // For bash, only cache read-only commands
+    if (toolName === 'execute_bash') {
+      const cmd = input?.command || '';
+      const readOnlyPrefixes = ['cat ', 'head ', 'tail ', 'ls ', 'find ', 'grep ', 'wc ', 'du ', 'file ', 'stat '];
+      const isReadOnly = readOnlyPrefixes.some(prefix => cmd.trim().startsWith(prefix));
+      if (!isReadOnly) return null;
+    }
+
+    return `${toolName}:${JSON.stringify(input)}`;
+  }
+
+  /**
+   * Get result from cache if valid
+   */
+  private getFromCache(key: string): string | null {
+    const cached = this.commandCache.get(key);
+    if (!cached) return null;
+
+    // Check TTL
+    if (Date.now() - cached.timestamp > this.CACHE_TTL_MS) {
+      this.commandCache.delete(key);
+      return null;
+    }
+
+    return cached.result;
+  }
+
+  /**
+   * Add result to cache
+   */
+  private addToCache(key: string, result: string): void {
+    // Evict old entries if cache is full
+    if (this.commandCache.size >= this.MAX_CACHE_SIZE) {
+      const oldestKey = this.commandCache.keys().next().value;
+      if (oldestKey) this.commandCache.delete(oldestKey);
+    }
+
+    this.commandCache.set(key, {
+      result,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Truncate large tool outputs to reduce context size
+   */
+  private truncateToolOutput(result: any): any {
+    if (typeof result === 'string') {
+      if (result.length > this.config.maxToolOutputChars) {
+        return result.substring(0, this.config.maxToolOutputChars - 100) +
+               `\n\n[OUTPUT TRUNCATED - was ${result.length} chars. Key info preserved above.]`;
+      }
+      return result;
+    }
+
+    if (result && typeof result === 'object') {
+      // Handle common result formats
+      if (result.output && typeof result.output === 'string' && result.output.length > this.config.maxToolOutputChars) {
+        return {
+          ...result,
+          output: result.output.substring(0, this.config.maxToolOutputChars - 100) +
+                  `\n\n[OUTPUT TRUNCATED - was ${result.output.length} chars]`,
+          _truncated: true
+        };
+      }
+      if (result.content && typeof result.content === 'string' && result.content.length > this.config.maxToolOutputChars) {
+        return {
+          ...result,
+          content: result.content.substring(0, this.config.maxToolOutputChars - 100) +
+                   `\n\n[OUTPUT TRUNCATED - was ${result.content.length} chars]`,
+          _truncated: true
+        };
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Clear cache (call between tasks or when memory is high)
+   */
+  public clearCache(): void {
+    this.commandCache.clear();
+    logger.info('🧹 Command cache cleared');
+  }
+
+  /**
+   * Get cache statistics
+   */
+  public getCacheStats(): { size: number; hits: number; totalCalls: number; hitRate: string } {
+    const total = this.toolCalls + this.cachedToolCalls;
+    const hitRate = total > 0 ? ((this.cachedToolCalls / total) * 100).toFixed(1) + '%' : '0%';
+    return {
+      size: this.commandCache.size,
+      hits: this.cachedToolCalls,
+      totalCalls: total,
+      hitRate
+    };
   }
 }
 
