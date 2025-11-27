@@ -5,7 +5,7 @@
  * Docker/orchestrators can make informed restart decisions based on these
  */
 
-import { getDatabase } from '../services/databaseFactory';
+import { getAgentFlowDatabase } from '../services/databaseFactory';
 import { logger } from './logger';
 import v8 from 'v8';
 
@@ -99,15 +99,19 @@ export async function performHealthCheck(
 
   if (cfg.checkDatabase) {
     try {
-      const db = getDatabase();
+      const db = getAgentFlowDatabase();
       const start = Date.now();
 
-      // Simple operation to test connection - use a lightweight method that exists on the interface
+      // Simple ping query to test connection without triggering sync warnings
       await Promise.race([
         (async () => {
-          // Use getAllActiveAgentTasks which exists on all database implementations
-          // This is a lightweight query that tests connectivity
-          db.getAllActiveAgentTasks();
+          if (db) {
+            // Use ping() method to test connectivity
+            const isHealthy = await db.ping();
+            if (!isHealthy) {
+              throw new Error('Database ping failed');
+            }
+          }
           return true;
         })(),
         new Promise((_, reject) =>

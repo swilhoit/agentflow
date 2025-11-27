@@ -1,5 +1,5 @@
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
-import { getDatabase } from './databaseFactory';
+import { getAgentFlowDatabase } from './databaseFactory';
 import { logger } from '../utils/logger';
 import { TrelloService } from './trello';
 import { getStartupLogger } from './startupLogger';
@@ -66,10 +66,14 @@ export class SupervisorService {
     }
 
     try {
-      const db = getDatabase();
-      const failedTasks = db.getFailedTasks(1); // Last 1 hour
-      const failedTasks24h = db.getFailedTasks(24); // Last 24 hours
-      const activeTasks = db.getAllActiveAgentTasks();
+      const db = getAgentFlowDatabase();
+      if (!db) {
+        logger.warn('Cannot run health check: Database not initialized');
+        return;
+      }
+      const failedTasks = await db.getFailedTasks(1); // Last 1 hour
+      const failedTasks24h = await db.getFailedTasks(24); // Last 24 hours
+      const activeTasks = await db.getAllActiveAgentTasks();
       
       // Calculate uptime
       const uptimeMs = Date.now() - this.startTime.getTime();
@@ -216,9 +220,13 @@ export class SupervisorService {
     logger.info(`📋 Generating ${title}...`);
 
     try {
-      const db = getDatabase();
-      const activeTasks = db.getAllActiveAgentTasks();
-      const failedTasks = db.getFailedTasks(24); // Last 24h
+      const db = getAgentFlowDatabase();
+      if (!db) {
+        logger.warn('Cannot generate briefing: Database not initialized');
+        return;
+      }
+      const activeTasks = await db.getAllActiveAgentTasks();
+      const failedTasks = await db.getFailedTasks(24); // Last 24h
       
       // Build the report
       let report = `📊 **${title}**\n\n`;
@@ -227,8 +235,10 @@ export class SupervisorService {
       if (activeTasks.length > 0) {
         report += `**🏃 Active Agents (${activeTasks.length})**\n`;
         activeTasks.forEach((t: any) => {
-          const duration = Math.round((Date.now() - t.startedAt.getTime()) / 1000 / 60); // minutes
-          report += `• \`${t.agentId}\`: ${t.taskDescription.substring(0, 50)}... (${duration}m ago)\n`;
+          const startedAt = t.started_at ? new Date(t.started_at) : new Date();
+          const duration = Math.round((Date.now() - startedAt.getTime()) / 1000 / 60); // minutes
+          const taskDesc = t.task_description || t.taskDescription || 'No description';
+          report += `• \`${t.agent_id || t.agentId}\`: ${taskDesc.substring(0, 50)}... (${duration}m ago)\n`;
         });
         report += '\n';
       } else {
@@ -239,7 +249,7 @@ export class SupervisorService {
       if (failedTasks.length > 0) {
         report += `**⚠️ Issues Needs Attention (${failedTasks.length})**\n`;
         failedTasks.forEach((t: any) => {
-          report += `• \`${t.agentId}\`: ${t.error || 'Unknown error'}\n`;
+          report += `• \`${t.agent_id || t.agentId}\`: ${t.error || 'Unknown error'}\n`;
         });
         report += '\n';
       }

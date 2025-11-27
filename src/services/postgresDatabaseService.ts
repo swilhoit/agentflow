@@ -44,6 +44,21 @@ export class PostgresDatabaseService {
     }
   }
 
+  /**
+   * Ping the database to test connectivity
+   * Returns true if connection is healthy
+   */
+  async ping(): Promise<boolean> {
+    try {
+      const client = await this.pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ===========================================
   // AGENT TASKS
   // ===========================================
