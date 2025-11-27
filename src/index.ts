@@ -21,6 +21,7 @@ import { WeeklyBudgetService } from './services/weeklyBudgetService';
 import { TransactionSyncService } from './services/transactionSyncService';
 import { getWatchdog, WatchdogService } from './services/watchdog';
 import { startTradingScheduler, TradingScheduler } from './services/tradingScheduler';
+import { initializeTradeNotifier, TradeNotifier } from './services/tradeNotifier';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -470,18 +471,35 @@ async function main() {
 
       // Initialize Trading Agent Scheduler (Paper Trading with auto-execution)
       let tradingScheduler: TradingScheduler | undefined;
+      let tradeNotifier: TradeNotifier | undefined;
+      const paperTradingChannelId = '1443627673501962300';
+
       if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
         try {
           tradingScheduler = startTradingScheduler(
             (bot as DiscordBotRealtime).getClient(),
             {
-              tradingChannelId: '1443627673501962300',
+              tradingChannelId: paperTradingChannelId,
               autoExecute: true // Enable auto paper trading
             }
           );
           logger.info('📈 Trading Agent Scheduler started (paper trading, auto-execute enabled)');
-          logger.info('   Channel: 1443627673501962300');
+          logger.info('   Channel: ' + paperTradingChannelId);
           logger.info('   Schedule: 9:00 AM, 12:30 PM, 4:30 PM ET (weekdays)');
+
+          // Initialize Trade Notifier for real-time trade notifications
+          tradeNotifier = initializeTradeNotifier({
+            discordClient: (bot as DiscordBotRealtime).getClient(),
+            paperTradingChannelId: paperTradingChannelId,
+            alpacaApiKey: process.env.ALPACA_API_KEY,
+            alpacaSecretKey: process.env.ALPACA_SECRET_KEY,
+            paper: true
+          });
+
+          // Start listening to Alpaca trade stream for real-time notifications
+          await tradeNotifier.startListening();
+          logger.info('📡 Trade Notifier started - real-time trade notifications enabled');
+          logger.info('   Notifications will be sent to: ' + paperTradingChannelId);
         } catch (error) {
           logger.error('Failed to start Trading Agent Scheduler:', error);
           logger.warn('Continuing without Trading Agent Scheduler');
@@ -519,6 +537,7 @@ async function main() {
       if (deploymentTracker) servicesInitialized.push('Deployment Tracker');
       if (serverMonitor) servicesInitialized.push('Server Monitor');
       if (tradingScheduler) servicesInitialized.push('Trading Agent Scheduler');
+      if (tradeNotifier) servicesInitialized.push('Trade Notifier (Real-time)');
 
       // Set Discord client for startup logger and log success
       startupLogger.setDiscordClient((bot as DiscordBotRealtime).getClient());
@@ -533,6 +552,7 @@ async function main() {
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (tradingScheduler) tradingScheduler.stop();
+        if (tradeNotifier) tradeNotifier.stopListening();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
         agentManager.stopAllTasks(); // Stop agent manager tasks
@@ -551,6 +571,7 @@ async function main() {
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (tradingScheduler) tradingScheduler.stop();
+        if (tradeNotifier) tradeNotifier.stopListening();
         if (vercelIntegration) vercelIntegration.stop();
         if (deploymentTracker) deploymentTracker.stop();
         agentManager.stopAllTasks(); // Stop agent manager tasks

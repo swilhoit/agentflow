@@ -15,7 +15,8 @@ import {
   BarChart3,
   Bot,
   Activity,
-  LogOut
+  LogOut,
+  LineChart
 } from 'lucide-react';
 
 const navigation = [
@@ -31,6 +32,7 @@ const navigation = [
     { name: 'Business', href: '/finances/business' },
   ]},
   { name: 'LOANS', href: '/loans', icon: CreditCard },
+  { name: 'TRADING', href: '/trading', icon: LineChart },
   { name: 'INVESTMENTS', href: '/investments', icon: TrendingUp },
   { name: 'GOALS', href: '/goals', icon: Target },
   { name: 'TASKS', href: '/tasks', icon: CheckSquare },

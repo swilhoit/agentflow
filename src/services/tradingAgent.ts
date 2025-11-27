@@ -13,6 +13,7 @@ import {
   OptionContract
 } from './alpacaTrading';
 import { Client, TextChannel, EmbedBuilder, Colors } from 'discord.js';
+import { getTradeNotifier, TradeNotifier } from './tradeNotifier';
 
 // ============================================================================
 // Types & Interfaces
@@ -541,6 +542,12 @@ Be conservative - it's better to hold cash than make poor trades. Only recommend
         execution.executionTime = new Date();
 
         logger.info(`✅ Executed: ${rec.action} ${rec.symbol} - Order ID: ${order.id}`);
+
+        // Send trade notification to Discord
+        const tradeNotifier = getTradeNotifier();
+        if (tradeNotifier) {
+          await tradeNotifier.notifyTrade(order, 'new');
+        }
       } catch (error: any) {
         execution.error = error.message;
         logger.error(`❌ Failed to execute ${rec.action} ${rec.symbol}:`, error);
