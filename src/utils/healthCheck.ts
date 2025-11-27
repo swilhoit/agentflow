@@ -7,6 +7,7 @@
 
 import { getDatabase } from '../services/databaseFactory';
 import { logger } from './logger';
+import v8 from 'v8';
 
 export interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy';
@@ -14,9 +15,11 @@ export interface HealthStatus {
   memory: {
     heapUsed: number;
     heapTotal: number;
+    heapLimit: number;
     external: number;
     rss: number;
     percentUsed: number;
+    percentOfCurrent: number;
   };
   database: {
     connected: boolean;
@@ -61,24 +64,33 @@ export async function performHealthCheck(
   const warnings: string[] = [];
   let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
 
-  // Memory metrics
+  // Memory metrics - use V8 heap statistics for accurate limit
   const memUsage = process.memoryUsage();
-  const heapPercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
+  const heapStats = v8.getHeapStatistics();
+
+  // Compare against ACTUAL heap limit, not current allocation
+  // heapTotal is current allocation, heap_size_limit is the max (from --max-old-space-size)
+  const heapLimit = heapStats.heap_size_limit;
+  const heapPercentOfLimit = (memUsage.heapUsed / heapLimit) * 100;
+  const heapPercentOfCurrent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
 
   const memory = {
     heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024), // MB
-    heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024), // MB
+    heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024), // MB (current allocation)
+    heapLimit: Math.round(heapLimit / 1024 / 1024), // MB (max allowed)
     external: Math.round(memUsage.external / 1024 / 1024), // MB
     rss: Math.round(memUsage.rss / 1024 / 1024), // MB
-    percentUsed: Math.round(heapPercent * 10) / 10,
+    percentUsed: Math.round(heapPercentOfLimit * 10) / 10, // % of max limit
+    percentOfCurrent: Math.round(heapPercentOfCurrent * 10) / 10, // % of current allocation
   };
 
-  if (heapPercent > cfg.memoryThresholdPercent) {
-    warnings.push(`High memory usage: ${memory.percentUsed}% (threshold: ${cfg.memoryThresholdPercent}%)`);
+  // Only warn/unhealthy based on % of LIMIT, not current allocation
+  if (heapPercentOfLimit > cfg.memoryThresholdPercent) {
+    warnings.push(`High memory usage: ${memory.percentUsed}% of ${memory.heapLimit}MB limit (threshold: ${cfg.memoryThresholdPercent}%)`);
     overallStatus = 'degraded';
   }
 
-  if (heapPercent > 95) {
+  if (heapPercentOfLimit > 95) {
     overallStatus = 'unhealthy';
   }
 
@@ -233,20 +245,23 @@ export function createSimpleHealthServer(
     if (req.url === '/health' || req.url === '/') {
       try {
         const memUsage = process.memoryUsage();
-        const heapPercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
+        const heapStats = v8.getHeapStatistics();
+        const heapLimit = heapStats.heap_size_limit;
+        // Use % of LIMIT, not current allocation
+        const heapPercentOfLimit = (memUsage.heapUsed / heapLimit) * 100;
 
         const discordClient = getDiscordClient?.();
         const discordConnected = discordClient?.isReady?.() ?? false;
 
-        // Determine status
+        // Determine status based on % of max limit
         let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
         const warnings: string[] = [];
 
-        if (heapPercent > 85) {
+        if (heapPercentOfLimit > 85) {
           status = 'degraded';
-          warnings.push(`High memory: ${Math.round(heapPercent)}%`);
+          warnings.push(`High memory: ${Math.round(heapPercentOfLimit)}% of ${Math.round(heapLimit / 1024 / 1024)}MB`);
         }
-        if (heapPercent > 95) {
+        if (heapPercentOfLimit > 95) {
           status = 'unhealthy';
         }
         if (discordClient && !discordConnected) {
@@ -263,8 +278,8 @@ export function createSimpleHealthServer(
           uptime: process.uptime(),
           memory: {
             heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
-            heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
-            percentUsed: Math.round(heapPercent * 10) / 10,
+            heapLimitMB: Math.round(heapLimit / 1024 / 1024),
+            percentUsed: Math.round(heapPercentOfLimit * 10) / 10,
           },
           discord: discordClient ? {
             connected: discordConnected,

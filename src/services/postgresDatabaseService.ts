@@ -540,6 +540,119 @@ export class PostgresDatabaseService {
   }
 
   // ===========================================
+  // CONVERSATION TURNS (Full Context Logging)
+  // ===========================================
+
+  /**
+   * Log a conversation turn - captures the full back-and-forth with Claude
+   * This provides complete context for debugging and analysis
+   */
+  async logConversationTurn(turn: {
+    taskId: string;
+    agentId: string;
+    guildId: string;
+    channelId: string;
+    turnNumber: number;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    contentType?: 'text' | 'tool_use' | 'tool_result' | 'planning' | 'reasoning';
+    toolName?: string;
+    toolInput?: any;
+    model?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    metadata?: any;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO conversation_turns
+        (task_id, agent_id, guild_id, channel_id, turn_number, role, content, content_type,
+         tool_name, tool_input, model, input_tokens, output_tokens, metadata, timestamp)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+      RETURNING id
+    `, [
+      turn.taskId,
+      turn.agentId,
+      turn.guildId,
+      turn.channelId,
+      turn.turnNumber,
+      turn.role,
+      turn.content.substring(0, 50000), // Limit content size
+      turn.contentType || 'text',
+      turn.toolName || null,
+      turn.toolInput ? JSON.stringify(turn.toolInput).substring(0, 10000) : null,
+      turn.model || null,
+      turn.inputTokens || null,
+      turn.outputTokens || null,
+      turn.metadata ? JSON.stringify(turn.metadata) : null
+    ]);
+    return result.rows[0].id;
+  }
+
+  /**
+   * Get all conversation turns for a task - full context replay
+   */
+  async getConversationTurns(taskId: string): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM conversation_turns
+      WHERE task_id = $1
+      ORDER BY turn_number ASC, timestamp ASC
+    `, [taskId]);
+    return result.rows;
+  }
+
+  /**
+   * Get recent conversation turns across all tasks for a channel
+   */
+  async getRecentConversationHistory(guildId: string, channelId: string, limit: number = 50): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT ct.*, at.task_description
+      FROM conversation_turns ct
+      LEFT JOIN agent_tasks at ON ct.task_id = at.agent_id
+      WHERE ct.guild_id = $1 AND ct.channel_id = $2
+      ORDER BY ct.timestamp DESC
+      LIMIT $3
+    `, [guildId, channelId, limit]);
+    return result.rows.reverse(); // Return in chronological order
+  }
+
+  /**
+   * Get conversation summary for a task
+   */
+  async getTaskConversationSummary(taskId: string): Promise<{
+    totalTurns: number;
+    userTurns: number;
+    assistantTurns: number;
+    toolCalls: number;
+    totalTokens: number;
+    models: string[];
+    duration?: number;
+  }> {
+    const result = await this.pool.query(`
+      SELECT
+        COUNT(*) as total_turns,
+        COUNT(*) FILTER (WHERE role = 'user') as user_turns,
+        COUNT(*) FILTER (WHERE role = 'assistant') as assistant_turns,
+        COUNT(*) FILTER (WHERE content_type = 'tool_use') as tool_calls,
+        COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) as total_tokens,
+        ARRAY_AGG(DISTINCT model) FILTER (WHERE model IS NOT NULL) as models,
+        EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_seconds
+      FROM conversation_turns
+      WHERE task_id = $1
+    `, [taskId]);
+
+    const row = result.rows[0];
+    return {
+      totalTurns: parseInt(row.total_turns) || 0,
+      userTurns: parseInt(row.user_turns) || 0,
+      assistantTurns: parseInt(row.assistant_turns) || 0,
+      toolCalls: parseInt(row.tool_calls) || 0,
+      totalTokens: parseInt(row.total_tokens) || 0,
+      models: row.models || [],
+      duration: row.duration_seconds ? parseFloat(row.duration_seconds) : undefined
+    };
+  }
+
+  // ===========================================
   // UTILITY
   // ===========================================
 

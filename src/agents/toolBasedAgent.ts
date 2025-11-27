@@ -67,6 +67,7 @@ export class ToolBasedAgent {
   // COGNITIVE SYSTEM - Enables strategic planning and self-awareness
   private cognitiveExecutor: CognitiveToolExecutor;
   private useCognitiveMode = true;  // Enable by default
+  private useDirectModeForSimpleQueries = true;  // Bypass cognitive for simple queries
 
   // SMART MODEL ROUTER - Selects optimal model based on task complexity
   private modelRouter: SmartModelRouter;
@@ -126,6 +127,68 @@ export class ToolBasedAgent {
   setCognitiveMode(enabled: boolean): void {
     this.useCognitiveMode = enabled;
     logger.info(`🧠 Cognitive mode: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  /**
+   * Enable or disable direct mode for simple queries
+   */
+  setDirectMode(enabled: boolean): void {
+    this.useDirectModeForSimpleQueries = enabled;
+    logger.info(`⚡ Direct mode for simple queries: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  /**
+   * Detect if a query should use direct mode (skip cognitive planning)
+   * Direct mode is for: simple questions, research queries, single-step tasks
+   */
+  private shouldUseDirectMode(command: string): boolean {
+    if (!this.useDirectModeForSimpleQueries) return false;
+
+    const lower = command.toLowerCase().trim();
+
+    // Questions that just need information/analysis (no multi-step actions)
+    const questionPatterns = [
+      /^(what|how|why|where|when|who|which|can you|could you|would you|tell me|explain|describe|analyze|list|show|summarize)/i,
+      /\?$/,  // Ends with question mark
+      /^(is|are|does|do|has|have|was|were|will|should|would|could)\s/i,  // Questions starting with verbs
+    ];
+
+    // Patterns that indicate a simple single-action task
+    const simpleActionPatterns = [
+      /^(check|look at|review|read|find|search|get|fetch|show me)/i,
+    ];
+
+    // Patterns that indicate complex multi-step tasks (should use cognitive)
+    const complexPatterns = [
+      /\b(create|build|implement|develop|write|make|add|update|fix|deploy|refactor|migrate|set up|configure)\b/i,
+      /\b(then|and then|after that|next|first|second|finally)\b/i,  // Multi-step indicators
+      /\b(all|every|each|multiple|several)\b/i,  // Bulk operations
+      /\b(project|application|service|api|database|server)\b/i,  // Complex systems
+    ];
+
+    // Check for complex patterns first - these need cognitive mode
+    for (const pattern of complexPatterns) {
+      if (pattern.test(lower)) {
+        return false;  // Use cognitive mode
+      }
+    }
+
+    // Check for simple question patterns
+    for (const pattern of questionPatterns) {
+      if (pattern.test(lower)) {
+        return true;  // Use direct mode
+      }
+    }
+
+    // Check for simple action patterns
+    for (const pattern of simpleActionPatterns) {
+      if (pattern.test(lower)) {
+        return true;  // Use direct mode
+      }
+    }
+
+    // Default: short queries (under 100 chars) use direct mode
+    return command.length < 100;
   }
 
   /**
@@ -193,6 +256,52 @@ export class ToolBasedAgent {
       });
     } catch (error) {
       logger.error('Failed to log tool execution to PostgreSQL:', error);
+    }
+  }
+
+  // Turn counter for conversation logging
+  private turnCounter = 0;
+
+  /**
+   * Log a conversation turn to PostgreSQL for full context replay
+   */
+  private async logConversationTurn(
+    role: 'user' | 'assistant' | 'system',
+    content: string,
+    options?: {
+      contentType?: 'text' | 'tool_use' | 'tool_result' | 'planning' | 'reasoning';
+      toolName?: string;
+      toolInput?: any;
+      model?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      metadata?: any;
+    }
+  ): Promise<void> {
+    if (!this.pgDb || !this.currentTaskId || !this.currentAgentId || !this.currentGuildId || !this.currentChannelId) {
+      return;
+    }
+
+    try {
+      this.turnCounter++;
+      await this.pgDb.logConversationTurn({
+        taskId: this.currentTaskId,
+        agentId: this.currentAgentId,
+        guildId: this.currentGuildId,
+        channelId: this.currentChannelId,
+        turnNumber: this.turnCounter,
+        role,
+        content,
+        contentType: options?.contentType,
+        toolName: options?.toolName,
+        toolInput: options?.toolInput,
+        model: options?.model,
+        inputTokens: options?.inputTokens,
+        outputTokens: options?.outputTokens,
+        metadata: options?.metadata
+      });
+    } catch (error) {
+      logger.error('Failed to log conversation turn to PostgreSQL:', error);
     }
   }
 
@@ -1877,6 +1986,12 @@ export class ToolBasedAgent {
       };
     }
 
+    // DIRECT MODE: For simple questions/queries, skip cognitive overhead entirely
+    if (this.shouldUseDirectMode(task.command)) {
+      logger.info(`⚡ Using DIRECT MODE - skipping cognitive planning`);
+      return await this.executeDirectMode(task);
+    }
+
     // COGNITIVE MODE: Use full strategic planning and self-monitoring
     if (this.useCognitiveMode) {
       return await this.executeCognitive(task);
@@ -1899,6 +2014,157 @@ export class ToolBasedAgent {
   }
 
   /**
+   * DIRECT MODE: Fast execution that bypasses cognitive planning
+   * Used for simple questions, research queries, and single-step tasks
+   * This is similar to how Claude Code/Cursor respond quickly to simple queries
+   */
+  private async executeDirectMode(task: AgentTask): Promise<AgentResult> {
+    const startTime = Date.now();
+    const taskId = `direct_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setTaskContext(taskId, task.context.guildId, task.context.channelId);
+
+    await this.notify(`⚡ **Direct Mode**\nProcessing your query...`);
+
+    // Log task start
+    await this.logActivity('info', `Direct mode task: ${task.command.substring(0, 100)}`, {
+      command: task.command,
+      executionMode: 'direct',
+      userId: task.context.userId
+    });
+
+    const conversationHistory: Anthropic.MessageParam[] = [];
+    let toolCalls = 0;
+    let iterations = 0;
+
+    // Build a simpler, faster system prompt
+    const systemPrompt = `You are a helpful AI assistant. Answer the user's question directly and concisely.
+
+${task.context.conversationHistory ? `## Previous Context\n${task.context.conversationHistory}\n\n` : ''}
+
+## User's Request
+${task.command}
+
+Respond directly to the user's question. If you need to use tools, use them efficiently and then provide your final answer.`;
+
+    conversationHistory.push({
+      role: 'user',
+      content: systemPrompt
+    });
+
+    try {
+      // Simple iteration loop - max 5 iterations for direct mode
+      const MAX_DIRECT_ITERATIONS = 5;
+
+      while (iterations < MAX_DIRECT_ITERATIONS) {
+        iterations++;
+
+        const response = await this.client.messages.create({
+          model: 'claude-sonnet-4-20250514',  // Use fast model for direct mode
+          max_tokens: 4096,
+          tools: this.getTools(),
+          messages: conversationHistory
+        });
+
+        conversationHistory.push({
+          role: 'assistant',
+          content: response.content
+        });
+
+        // Extract text response
+        const textBlocks = response.content.filter(
+          (block): block is Anthropic.Messages.TextBlock => block.type === 'text'
+        );
+        const textResponse = textBlocks.map(b => b.text).join('\n');
+
+        // If Claude wants to use tools
+        if (response.stop_reason === 'tool_use') {
+          const toolUses = response.content.filter(
+            (block): block is Anthropic.Messages.ToolUseBlock => block.type === 'tool_use'
+          );
+
+          logger.info(`⚡ Direct mode: ${toolUses.length} tool call(s)`);
+
+          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+
+          for (const toolUse of toolUses) {
+            toolCalls++;
+            const result = await this.executeTool(toolUse.name, toolUse.input);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: JSON.stringify(result)
+            });
+          }
+
+          conversationHistory.push({
+            role: 'user',
+            content: toolResults
+          });
+        } else if (response.stop_reason === 'end_turn') {
+          // Done - send the response
+          const duration = Date.now() - startTime;
+          logger.info(`⚡ Direct mode complete: ${iterations} iterations, ${toolCalls} tool calls, ${duration}ms`);
+
+          // Send Claude's actual response to the user
+          await this.notify(textResponse);
+
+          await this.logActivity('success', `Direct mode completed in ${duration}ms`, {
+            iterations,
+            toolCalls,
+            durationMs: duration
+          });
+
+          return {
+            success: true,
+            message: textResponse,
+            iterations,
+            toolCalls
+          };
+        } else {
+          // Unexpected stop reason
+          logger.warn(`⚡ Direct mode unexpected stop: ${response.stop_reason}`);
+          break;
+        }
+      }
+
+      // Hit iteration limit
+      const lastResponse = conversationHistory
+        .filter(m => m.role === 'assistant')
+        .pop();
+
+      let finalText = 'Unable to complete the request';
+      if (lastResponse && Array.isArray(lastResponse.content)) {
+        const textBlocks = lastResponse.content.filter((b: any) => b.type === 'text');
+        finalText = textBlocks.map((b: any) => b.text).join('\n');
+      }
+
+      await this.notify(finalText);
+
+      return {
+        success: true,
+        message: finalText,
+        iterations,
+        toolCalls
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('⚡ Direct mode failed:', error);
+
+      await this.logActivity('error', `Direct mode failed: ${errorMessage}`, { error: errorMessage });
+      await this.notify(`❌ **Error**\n${errorMessage}`);
+
+      return {
+        success: false,
+        message: errorMessage,
+        iterations,
+        toolCalls,
+        error: errorMessage
+      };
+    }
+  }
+
+  /**
    * Execute task using the COGNITIVE SYSTEM
    * Full strategic planning, context awareness, tool orchestration, and self-monitoring
    */
@@ -1914,11 +2180,36 @@ export class ToolBasedAgent {
     const taskId = `cognitive_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     this.setTaskContext(taskId, task.context.guildId, task.context.channelId);
 
+    // Reset turn counter for new task
+    this.turnCounter = 0;
+
     // Log task start
     await this.logActivity('info', `Cognitive task started: ${task.command.substring(0, 100)}`, {
       command: task.command,
       executionMode: 'cognitive',
       userId: task.context.userId
+    });
+
+    // LOG USER PROMPT - Full conversational context starts here
+    await this.logConversationTurn('user', task.command, {
+      contentType: 'text',
+      metadata: {
+        userId: task.context.userId,
+        hasConversationHistory: !!task.context.conversationHistory
+      }
+    });
+
+    // Set up conversation logging callback for cognitive executor
+    this.cognitiveExecutor.setConversationLogger(async (turn) => {
+      await this.logConversationTurn(turn.role, turn.content, {
+        contentType: turn.contentType,
+        toolName: turn.toolName,
+        toolInput: turn.toolInput,
+        model: turn.model,
+        inputTokens: turn.inputTokens,
+        outputTokens: turn.outputTokens,
+        metadata: turn.metadata
+      });
     });
 
     try {
@@ -1947,16 +2238,24 @@ export class ToolBasedAgent {
         }
       );
 
-      // Final notification
+      // Final notification - SEND CLAUDE'S ACTUAL RESPONSE TO THE USER
       if (result.success) {
-        await this.notify(
-          `🏁 **Task Complete**\n` +
-          `**Approach:** ${result.approach}\n` +
-          `**Phases:** ${result.phasesCompleted}/${result.totalPhases}\n` +
-          `**Iterations:** ${result.iterations}\n` +
-          `**Tool Calls:** ${result.toolCalls}\n` +
-          (result.discoveries.length > 0 ? `**Discoveries:** ${result.discoveries.slice(0, 3).join(', ')}` : '')
-        );
+        // The message contains Claude's actual response - send it to the user
+        const responseText = result.message || 'Task completed successfully';
+
+        // If the response is short, include it directly
+        // If long, send it as the main content
+        if (responseText.length > 1500) {
+          // Long response - send Claude's response directly
+          await this.notify(responseText);
+        } else {
+          // Short response - include with summary
+          await this.notify(
+            `${responseText}\n\n` +
+            `---\n` +
+            `_${result.iterations} iterations, ${result.toolCalls} tool calls_`
+          );
+        }
       }
 
       return {

@@ -61,6 +61,23 @@ export interface ToolExecutor {
 }
 
 /**
+ * Conversation turn for logging full context
+ */
+export interface ConversationTurn {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  contentType?: 'text' | 'tool_use' | 'tool_result' | 'planning' | 'reasoning';
+  toolName?: string;
+  toolInput?: any;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  metadata?: any;
+}
+
+export type ConversationLogger = (turn: ConversationTurn) => Promise<void>;
+
+/**
  * The CognitiveToolExecutor combines strategic planning with actual tool execution
  */
 export class CognitiveToolExecutor {
@@ -69,6 +86,7 @@ export class CognitiveToolExecutor {
   private monitor: SelfMonitor;
   private toolExecutor: ToolExecutor;
   private notificationHandler?: (message: string) => Promise<void>;
+  private conversationLogger?: ConversationLogger;
 
   // Smart Model Router - Selects optimal model based on task complexity
   private modelRouter: SmartModelRouter;
@@ -119,6 +137,26 @@ export class CognitiveToolExecutor {
   }
 
   /**
+   * Set conversation logger for full context logging
+   */
+  setConversationLogger(logger: ConversationLogger): void {
+    this.conversationLogger = logger;
+  }
+
+  /**
+   * Log a conversation turn
+   */
+  private async logTurn(turn: ConversationTurn): Promise<void> {
+    if (this.conversationLogger) {
+      try {
+        await this.conversationLogger(turn);
+      } catch (error) {
+        logger.error('Failed to log conversation turn:', error);
+      }
+    }
+  }
+
+  /**
    * Execute a task with full cognitive capabilities
    */
   async execute(
@@ -154,19 +192,14 @@ export class CognitiveToolExecutor {
       logger.info(`   Factors: ${this.taskComplexity.factors.map(f => f.name).join(', ')}`);
       logger.info(`   Selected Model: ${selectedModel.name} (${selectedModel.tier})`);
 
-      await this.notify(
-        `🎯 **Model Selection**\n` +
-        `Complexity: ${this.taskComplexity.score}/100 (${this.taskComplexity.complexity})\n` +
-        `Model: **${selectedModel.name}**`
-      );
+      // Log model selection (no Discord notification - too verbose)
+      logger.info(`🎯 Model: ${selectedModel.name} for complexity ${this.taskComplexity.score}/100`);
     }
 
     try {
       // ======================================================================
-      // PHASE 1: CONTEXT GATHERING
+      // PHASE 1: CONTEXT GATHERING (silent - no notification)
       // ======================================================================
-      await this.notify(`🔍 **Gathering Context**\nAnalyzing environment and project structure...`);
-
       this.context = await ContextEngine.gatherContext(options?.workingDir);
 
       logger.info(`📊 Context: ${this.context.projectType} project in ${this.context.workingDirectory}`);
@@ -175,8 +208,6 @@ export class CognitiveToolExecutor {
       // ======================================================================
       // PHASE 2: STRATEGIC PLANNING
       // ======================================================================
-      await this.notify(`🧠 **Strategic Planning**\nDetermining optimal approach...`);
-
       const toolInventory = this.buildToolInventory(tools, options?.hasTrello ?? false);
       this.plan = await this.planner.createStrategicPlan(task, this.context, toolInventory);
 
@@ -186,7 +217,21 @@ export class CognitiveToolExecutor {
       logger.info(`   Phases: ${this.plan.phases.length}`);
       logger.info(`   Complexity: ${this.plan.estimatedComplexity}`);
 
-      await this.notify(this.formatPlanNotification());
+      // LOG PLANNING DECISIONS to database
+      await this.logTurn({
+        role: 'system',
+        content: `Strategic Plan Created:\n- Approach: ${this.plan.approach.approach}\n- Confidence: ${(this.plan.approach.confidence * 100).toFixed(0)}%\n- Phases: ${this.plan.phases.map(p => p.name).join(' → ')}\n- Complexity: ${this.plan.estimatedComplexity}`,
+        contentType: 'planning',
+        metadata: {
+          approach: this.plan.approach,
+          phases: this.plan.phases.map(p => ({ name: p.name, description: p.description, tools: p.tools })),
+          complexity: this.plan.estimatedComplexity,
+          reasoning: this.plan.approach.reasoning
+        }
+      });
+
+      // Single concise notification about the plan
+      await this.notify(`🚀 **${this.plan.approach.approach}** (${this.plan.phases.length} phases)`);
 
       // ======================================================================
       // PHASE 3: EXECUTION WITH SELF-MONITORING
@@ -260,6 +305,9 @@ export class CognitiveToolExecutor {
       content: this.buildCognitiveSystemPrompt(task, conversationHistory)
     });
 
+    // Track the last meaningful response from Claude for final output
+    let lastClaudeResponse = '';
+
     // Execute phase by phase
     for (let phaseIdx = 0; phaseIdx < this.plan!.phases.length; phaseIdx++) {
       this.currentPhaseIndex = phaseIdx;
@@ -269,17 +317,21 @@ export class CognitiveToolExecutor {
       logger.info(`📍 PHASE ${phaseIdx + 1}/${this.plan!.phases.length}: ${phase.name}`);
       logger.info(`${'─'.repeat(50)}`);
 
-      await this.notify(
-        `🔄 **Phase ${phaseIdx + 1}/${this.plan!.phases.length}: ${phase.name}**\n` +
-        `${phase.description}\n` +
-        `_Tools: ${phase.tools.join(', ') || 'reasoning'}_`
-      );
+      // Simple phase progress notification
+      await this.notify(`📍 **${phaseIdx + 1}/${this.plan!.phases.length}:** ${phase.name}`);
 
       // Execute phase iterations
       const phaseResult = await this.executePhase(phase, messages, tools);
 
+      // Capture any meaningful response from this phase
+      if (phaseResult.finalMessage && phaseResult.finalMessage.length > lastClaudeResponse.length) {
+        lastClaudeResponse = phaseResult.finalMessage;
+      }
+
       if (phaseResult.taskComplete) {
-        return { success: true, message: phaseResult.finalMessage || 'Task completed' };
+        // Return Claude's actual response, not a generic message
+        const response = phaseResult.finalMessage || lastClaudeResponse || 'Task completed';
+        return { success: true, message: response };
       }
 
       if (!phaseResult.phaseComplete && !phaseResult.continueToNext) {
@@ -290,8 +342,23 @@ export class CognitiveToolExecutor {
       this.monitor.completePhase(phase.id);
     }
 
-    // All phases complete
-    return { success: true, message: 'All phases completed successfully' };
+    // All phases complete - RETURN CLAUDE'S ACTUAL RESPONSE, not a generic message
+    // Get the last assistant message from conversation
+    const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
+    if (lastAssistantMsg) {
+      const content = lastAssistantMsg.content;
+      if (typeof content === 'string') {
+        lastClaudeResponse = content;
+      } else if (Array.isArray(content)) {
+        const textBlocks = content.filter((b: any) => b.type === 'text');
+        lastClaudeResponse = textBlocks.map((b: any) => b.text).join('\n');
+      }
+    }
+
+    return {
+      success: true,
+      message: lastClaudeResponse || 'All phases completed successfully'
+    };
   }
 
   /**
@@ -438,27 +505,30 @@ export class CognitiveToolExecutor {
 
       logger.info(`   Iteration ${phaseIterations}/${maxPhaseIter} (total: ${this.iteration})`);
 
-      // Self-assessment check
+      // Self-assessment check - LOG ONLY, no Discord spam
       if (this.iteration % this.config.progressCheckInterval === 0) {
         const assessment = this.monitor.assess(phase.id, this.plan!);
 
         if (assessment.isStuck) {
           logger.warn(`   ⚠️ Stuck detected: ${assessment.stuckReason}`);
-          await this.notify(`⚠️ **Progress Check**\n${assessment.stuckReason}`);
-
-          if (assessment.shouldPivot && this.config.enablePivoting) {
-            await this.handlePivot(assessment.pivotSuggestion || 'Try different approach');
+          // Only notify user if we're TRULY stuck (5+ iterations without progress)
+          if (this.iteration > 5 && assessment.shouldAskUser) {
+            await this.notify(`❓ **Need Input**\n${assessment.questionForUser}`);
           }
-
-          if (assessment.shouldAskUser) {
-            await this.notify(`❓ **Need Guidance**\n${assessment.questionForUser}`);
+          // Log pivots but don't spam Discord
+          if (assessment.shouldPivot && this.config.enablePivoting) {
+            logger.info(`   🔄 Pivoting strategy: ${assessment.pivotSuggestion}`);
+            this.monitor.recordPivot(
+              this.plan!.approach.approach,
+              'alternative',
+              assessment.pivotSuggestion || 'Try different approach'
+            );
           }
         }
 
-        // Check for delegation opportunity
+        // Log delegation opportunities (no notification)
         if (assessment.shouldDelegate && phase.canDelegate && this.config.enableDelegation) {
           logger.info(`   🤖 Delegation opportunity: ${assessment.delegationTarget}`);
-          // For now, just note it - actual delegation handled by tool calls
         }
       }
 
@@ -682,6 +752,19 @@ export class CognitiveToolExecutor {
     );
     const text = textBlocks.map(b => b.text).join('\n');
 
+    // LOG ASSISTANT RESPONSE - Full reasoning/thinking
+    if (text) {
+      await this.logTurn({
+        role: 'assistant',
+        content: text,
+        contentType: 'reasoning',
+        model: response.model,
+        inputTokens: response.usage?.input_tokens,
+        outputTokens: response.usage?.output_tokens,
+        metadata: { phase: phase.name, stopReason: response.stop_reason }
+      });
+    }
+
     // Check for tool use
     if (response.stop_reason === 'tool_use') {
       const toolUses = response.content.filter(
@@ -690,11 +773,26 @@ export class CognitiveToolExecutor {
 
       logger.info(`   🔧 ${toolUses.length} tool call(s)`);
 
+      // LOG TOOL USE DECISIONS
+      for (const toolUse of toolUses) {
+        await this.logTurn({
+          role: 'assistant',
+          content: `Calling tool: ${toolUse.name}`,
+          contentType: 'tool_use',
+          toolName: toolUse.name,
+          toolInput: toolUse.input,
+          metadata: { toolUseId: toolUse.id, phase: phase.name }
+        });
+      }
+
       // Execute tools and collect results
       const toolResults: Anthropic.MessageCreateParams['messages'][0] = {
         role: 'user',
         content: []
       };
+
+      // Track tool execution for batch summary
+      const toolSummary: { name: string; cached: boolean; success: boolean; duration?: number; error?: string }[] = [];
 
       for (const toolUse of toolUses) {
         const startTime = Date.now();
@@ -714,12 +812,13 @@ export class CognitiveToolExecutor {
             content: cachedResult
           });
 
-          await this.notify(`📦 **Tool: ${toolUse.name}** (cached)`);
+          // Track for batch summary (no individual notification)
+          toolSummary.push({ name: toolUse.name, cached: true, success: true });
           continue;
         }
 
         this.toolCalls++;
-        await this.notify(`🔧 **Tool: ${toolUse.name}**`);
+        // No individual "starting tool" notification - too spammy
 
         try {
           const result = await this.toolExecutor(toolUse.name, toolUse.input);
@@ -760,7 +859,8 @@ export class CognitiveToolExecutor {
             content: resultStr
           });
 
-          await this.notify(`✅ Tool completed (${duration}ms)`);
+          // Track for batch summary
+          toolSummary.push({ name: toolUse.name, cached: false, success: true, duration });
 
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -773,11 +873,39 @@ export class CognitiveToolExecutor {
             is_error: true
           });
 
-          await this.notify(`❌ Tool failed: ${errorMsg}`);
+          // Track failure for batch summary
+          toolSummary.push({ name: toolUse.name, cached: false, success: false, error: errorMsg });
         }
       }
 
+      // BATCH SUMMARY NOTIFICATION - Single message for all tools
+      if (toolSummary.length > 0) {
+        const successful = toolSummary.filter(t => t.success).length;
+        const cached = toolSummary.filter(t => t.cached).length;
+        const failed = toolSummary.filter(t => !t.success);
+
+        if (failed.length > 0) {
+          // Only notify on failures
+          await this.notify(`⚠️ **${failed.length} tool(s) failed:** ${failed.map(f => f.name).join(', ')}`);
+        }
+        // Log summary for debugging but don't spam Discord
+        logger.info(`   📊 Tools: ${successful}/${toolSummary.length} succeeded (${cached} cached)`);
+      }
+
       messages.push(toolResults);
+
+      // LOG TOOL RESULTS
+      if (Array.isArray(toolResults.content)) {
+        for (const result of toolResults.content as Anthropic.ToolResultBlockParam[]) {
+          await this.logTurn({
+            role: 'user',
+            content: typeof result.content === 'string' ? result.content.substring(0, 10000) : JSON.stringify(result.content).substring(0, 10000),
+            contentType: 'tool_result',
+            toolName: (toolUses.find(t => t.id === result.tool_use_id))?.name,
+            metadata: { toolUseId: result.tool_use_id, isError: result.is_error }
+          });
+        }
+      }
 
       return { phaseComplete: false, taskComplete: false, text };
     }
@@ -786,7 +914,8 @@ export class CognitiveToolExecutor {
     if (response.stop_reason === 'end_turn') {
       const isComplete = /task complete|all done|finished|completed successfully/i.test(text);
       if (isComplete) {
-        await this.notify(`🏁 **Task Complete**\n${text.substring(0, 500)}`);
+        // Don't notify here - let the parent send Claude's full response
+        logger.info(`🏁 Task completion detected`);
         return { phaseComplete: true, taskComplete: true, text };
       }
     }
@@ -838,7 +967,7 @@ export class CognitiveToolExecutor {
   }
 
   /**
-   * Handle strategy pivot
+   * Handle strategy pivot - LOG ONLY, no Discord notification
    */
   private async handlePivot(suggestion: string): Promise<void> {
     logger.info(`   🔄 Pivoting: ${suggestion}`);
@@ -847,7 +976,7 @@ export class CognitiveToolExecutor {
       'alternative',
       suggestion
     );
-    await this.notify(`🔄 **Strategy Pivot**\n${suggestion}`);
+    // No notification - this was too spammy
   }
 
   /**
