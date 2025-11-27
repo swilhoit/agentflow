@@ -16,12 +16,14 @@ import {
   Bot,
   Activity,
   LogOut,
-  LineChart
+  LineChart,
+  FolderKanban
 } from 'lucide-react';
 
 const navigation = [
   { name: 'DASHBOARD', href: '/', icon: Home },
   { name: 'DIAGNOSTICS', href: '/diagnostics', icon: Activity },
+  { name: 'PROJECTS', href: '/projects', icon: FolderKanban },
   { name: 'AGENTS', href: '/agents', icon: Bot, children: [
     { name: 'Tasks', href: '/agents/tasks' },
     { name: 'Executions', href: '/agents/executions' },

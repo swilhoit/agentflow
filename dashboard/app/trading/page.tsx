@@ -3,13 +3,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import {
-  LineChart, Line, AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+  AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, DollarSign, Briefcase,
+  DollarSign, Briefcase,
   Activity, RefreshCw, AlertTriangle, CheckCircle,
-  Clock, XCircle, ArrowUpRight, ArrowDownRight
+  Clock, XCircle, ArrowUpRight, ArrowDownRight,
+  FileText, Zap
 } from 'lucide-react';
 
 interface TradingData {
@@ -96,18 +97,149 @@ interface TradingData {
 }
 
 type HistoryPeriod = '1D' | '1W' | '1M' | '3M' | '1A' | 'all';
+type TradingMode = 'paper' | 'live';
+
+// Account Summary Card Component
+function AccountSummary({
+  data,
+  isPaper,
+  loading,
+  error,
+  onRefresh
+}: {
+  data: TradingData | null;
+  isPaper: boolean;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  const formatCurrency = (amount: number | null | undefined) => {
+    if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  };
+
+  const formatPercent = (value: number | null | undefined) => {
+    if (value === null || value === undefined || isNaN(value)) return '0.00%';
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)}%`;
+  };
+
+  if (loading) {
+    return (
+      <div className="border border-border bg-card p-6 flex items-center justify-center h-48">
+        <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="border border-destructive bg-destructive/10 p-6">
+        <div className="flex items-center gap-2 text-destructive mb-2">
+          <AlertTriangle className="w-4 h-4" />
+          <span className="font-mono text-sm">Error loading {isPaper ? 'paper' : 'live'} data</span>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono mb-3">{error}</p>
+        <button onClick={onRefresh} className="text-xs font-mono underline">Retry</button>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="border border-border bg-card p-6 text-center">
+        <p className="text-muted-foreground font-mono text-sm">No data available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-border bg-card">
+      {/* Header */}
+      <div className={`px-4 py-3 border-b border-border flex items-center justify-between ${isPaper ? 'bg-blue-500/10' : 'bg-green-500/10'}`}>
+        <div className="flex items-center gap-2">
+          {isPaper ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-green-500" />}
+          <span className={`font-mono text-sm font-bold ${isPaper ? 'text-blue-500' : 'text-green-500'}`}>
+            {isPaper ? 'PAPER TRADING' : 'LIVE TRADING'}
+          </span>
+        </div>
+        <button onClick={onRefresh} className="p-1 hover:bg-muted rounded">
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* Metrics Grid */}
+      <div className="p-4 grid grid-cols-2 gap-4">
+        <div>
+          <div className="text-xs text-muted-foreground font-mono">EQUITY</div>
+          <div className="text-xl font-bold font-mono">{formatCurrency(data.metrics.totalEquity)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground font-mono">CASH</div>
+          <div className="text-xl font-bold font-mono">{formatCurrency(data.metrics.cash)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground font-mono">DAILY P&L</div>
+          <div className={`text-lg font-bold font-mono flex items-center gap-1 ${data.metrics.dailyChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+            {data.metrics.dailyChange >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+            {formatCurrency(Math.abs(data.metrics.dailyChange))}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground font-mono">UNREALIZED</div>
+          <div className={`text-lg font-bold font-mono ${data.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+            {formatCurrency(data.metrics.totalUnrealizedPL)}
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Stats */}
+      <div className="px-4 pb-4 grid grid-cols-3 gap-2">
+        <div className="bg-muted/30 p-2 text-center rounded">
+          <div className="text-lg font-bold font-mono">{data.metrics.positionsCount}</div>
+          <div className="text-xs text-muted-foreground font-mono">Positions</div>
+        </div>
+        <div className="bg-muted/30 p-2 text-center rounded">
+          <div className="text-lg font-bold font-mono">{data.metrics.openOrdersCount}</div>
+          <div className="text-xs text-muted-foreground font-mono">Open Orders</div>
+        </div>
+        <div className="bg-muted/30 p-2 text-center rounded">
+          <div className="text-lg font-bold font-mono">{data.metrics.totalTrades}</div>
+          <div className="text-xs text-muted-foreground font-mono">Trades</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TradingPage() {
-  const [data, setData] = useState<TradingData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isPaper, setIsPaper] = useState(true);
+  // Paper trading state
+  const [paperData, setPaperData] = useState<TradingData | null>(null);
+  const [paperLoading, setPaperLoading] = useState(true);
+  const [paperError, setPaperError] = useState<string | null>(null);
+  const [paperHistory, setPaperHistory] = useState<any>(null);
+
+  // Live trading state
+  const [liveData, setLiveData] = useState<TradingData | null>(null);
+  const [liveLoading, setLiveLoading] = useState(true);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveHistory, setLiveHistory] = useState<any>(null);
+
+  // UI state
+  const [activeMode, setActiveMode] = useState<TradingMode>('paper');
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('1M');
-  const [historyData, setHistoryData] = useState<any>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'history'>('positions');
 
-  const fetchTradingData = useCallback(async () => {
+  const fetchTradingData = useCallback(async (isPaper: boolean) => {
+    const setLoading = isPaper ? setPaperLoading : setLiveLoading;
+    const setError = isPaper ? setPaperError : setLiveError;
+    const setData = isPaper ? setPaperData : setLiveData;
+
     try {
       setLoading(true);
       setError(null);
@@ -123,32 +255,31 @@ export default function TradingPage() {
     } finally {
       setLoading(false);
     }
-  }, [isPaper]);
+  }, []);
 
-  const fetchHistoryData = useCallback(async () => {
+  const fetchHistoryData = useCallback(async (isPaper: boolean) => {
+    const setHistory = isPaper ? setPaperHistory : setLiveHistory;
     try {
-      setHistoryLoading(true);
       const response = await fetch(`/api/trading/history?paper=${isPaper}&period=${historyPeriod}`);
-      if (!response.ok) {
-        console.warn('Failed to fetch history');
-        return;
-      }
+      if (!response.ok) return;
       const json = await response.json();
-      setHistoryData(json);
+      setHistory(json);
     } catch (err: any) {
       console.error('Error fetching history:', err);
-    } finally {
-      setHistoryLoading(false);
     }
-  }, [isPaper, historyPeriod]);
+  }, [historyPeriod]);
 
+  // Initial load - fetch both
   useEffect(() => {
-    fetchTradingData();
+    fetchTradingData(true);  // Paper
+    fetchTradingData(false); // Live
   }, [fetchTradingData]);
 
+  // Fetch history when period changes
   useEffect(() => {
-    fetchHistoryData();
-  }, [fetchHistoryData]);
+    fetchHistoryData(true);
+    fetchHistoryData(false);
+  }, [fetchHistoryData, historyPeriod]);
 
   const formatCurrency = (amount: number | null | undefined) => {
     if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
@@ -189,8 +320,6 @@ export default function TradingPage() {
       case 'new':
       case 'accepted':
       case 'pending_new': return 'text-yellow-500';
-      case 'rejected':
-      case 'failed': return 'text-red-500';
       default: return 'text-muted-foreground';
     }
   };
@@ -206,56 +335,13 @@ export default function TradingPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground font-mono flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              LOADING TRADING DATA...
-            </div>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
+  // Get active data based on mode
+  const activeData = activeMode === 'paper' ? paperData : liveData;
+  const activeHistory = activeMode === 'paper' ? paperHistory : liveHistory;
+  const activeLoading = activeMode === 'paper' ? paperLoading : liveLoading;
+  const activeError = activeMode === 'paper' ? paperError : liveError;
 
-  if (error) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="border border-destructive bg-destructive/10 p-4">
-            <div className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="w-5 h-5" />
-              <span className="font-mono">Error: {error}</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-2 font-mono">
-              Make sure your Alpaca API credentials are configured in environment variables.
-            </p>
-            <button
-              onClick={fetchTradingData}
-              className="mt-4 px-4 py-2 bg-accent text-accent-foreground font-mono text-sm hover:opacity-80"
-            >
-              RETRY
-            </button>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (!data) {
-    return (
-      <DashboardLayout>
-        <div className="p-8">
-          <div className="text-muted-foreground font-mono">No trading data available</div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  const chartData = historyData?.history || data.portfolioHistory;
+  const chartData = activeHistory?.history || activeData?.portfolioHistory;
 
   return (
     <DashboardLayout>
@@ -268,120 +354,81 @@ export default function TradingPage() {
               TRADING DASHBOARD
             </h1>
             <p className="text-sm text-muted-foreground font-mono mt-2">
-              {isPaper ? 'Paper Trading' : 'Live Trading'} • Account: {data.account.accountNumber}
-              {data.lastUpdated && ` • Updated: ${formatDate(data.lastUpdated)}`}
+              Paper & Live Trading Accounts
             </p>
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={fetchTradingData}
-              className="p-2 border border-border hover:bg-muted transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-            {/* Paper/Live Toggle */}
-            <div className="flex border border-border">
-              <button
-                onClick={() => setIsPaper(true)}
-                className={`px-4 py-2 font-mono text-xs uppercase transition-colors ${
-                  isPaper
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-muted'
-                }`}
-              >
-                PAPER
-              </button>
-              <button
-                onClick={() => setIsPaper(false)}
-                className={`px-4 py-2 font-mono text-xs uppercase transition-colors ${
-                  !isPaper
-                    ? 'bg-destructive text-destructive-foreground'
-                    : 'hover:bg-muted'
-                }`}
-              >
-                LIVE
-              </button>
-            </div>
-          </div>
+          <button
+            onClick={() => {
+              fetchTradingData(true);
+              fetchTradingData(false);
+            }}
+            className="p-2 border border-border hover:bg-muted transition-colors flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span className="font-mono text-xs">REFRESH ALL</span>
+          </button>
         </div>
 
-        {/* Warning for Live Trading */}
-        {!isPaper && (
-          <div className="border border-destructive bg-destructive/10 p-4 flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-destructive" />
-            <span className="font-mono text-sm text-destructive">
-              LIVE TRADING MODE - Real money is at risk
-            </span>
-          </div>
-        )}
+        {/* Account Summary Cards - Side by Side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <AccountSummary
+            data={paperData}
+            isPaper={true}
+            loading={paperLoading}
+            error={paperError}
+            onRefresh={() => fetchTradingData(true)}
+          />
+          <AccountSummary
+            data={liveData}
+            isPaper={false}
+            loading={liveLoading}
+            error={liveError}
+            onRefresh={() => fetchTradingData(false)}
+          />
+        </div>
 
-        {/* Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase flex items-center gap-1">
-              <DollarSign className="w-3 h-3" />
-              EQUITY
-            </div>
-            <div className="text-2xl font-bold font-mono mt-2">
-              {formatCurrency(data.metrics.totalEquity)}
-            </div>
+        {/* Mode Toggle for Detailed View */}
+        <div className="flex items-center gap-4">
+          <span className="text-sm font-mono text-muted-foreground">DETAILED VIEW:</span>
+          <div className="flex border border-border">
+            <button
+              onClick={() => setActiveMode('paper')}
+              className={`px-4 py-2 font-mono text-xs uppercase transition-colors flex items-center gap-2 ${
+                activeMode === 'paper'
+                  ? 'bg-blue-500 text-white'
+                  : 'hover:bg-muted'
+              }`}
+            >
+              <FileText className="w-3 h-3" />
+              PAPER
+            </button>
+            <button
+              onClick={() => setActiveMode('live')}
+              className={`px-4 py-2 font-mono text-xs uppercase transition-colors flex items-center gap-2 ${
+                activeMode === 'live'
+                  ? 'bg-green-500 text-white'
+                  : 'hover:bg-muted'
+              }`}
+            >
+              <Zap className="w-3 h-3" />
+              LIVE
+            </button>
           </div>
-
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase flex items-center gap-1">
-              <Briefcase className="w-3 h-3" />
-              POSITIONS VALUE
+          {activeMode === 'live' && (
+            <div className="flex items-center gap-2 text-yellow-500">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="font-mono text-xs">REAL MONEY</span>
             </div>
-            <div className="text-2xl font-bold font-mono mt-2">
-              {formatCurrency(data.metrics.portfolioValue)}
-            </div>
-          </div>
-
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase">CASH</div>
-            <div className="text-2xl font-bold font-mono mt-2">
-              {formatCurrency(data.metrics.cash)}
-            </div>
-          </div>
-
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase">DAILY P&L</div>
-            <div className={`text-2xl font-bold font-mono mt-2 flex items-center gap-1 ${
-              data.metrics.dailyChange >= 0 ? 'text-green-500' : 'text-red-500'
-            }`}>
-              {data.metrics.dailyChange >= 0 ? <ArrowUpRight className="w-5 h-5" /> : <ArrowDownRight className="w-5 h-5" />}
-              {formatCurrency(Math.abs(data.metrics.dailyChange))}
-            </div>
-            <div className={`text-xs font-mono ${data.metrics.dailyChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {formatPercent(data.metrics.dailyChangePercent)}
-            </div>
-          </div>
-
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase">UNREALIZED P&L</div>
-            <div className={`text-2xl font-bold font-mono mt-2 ${
-              data.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'
-            }`}>
-              {formatCurrency(data.metrics.totalUnrealizedPL)}
-            </div>
-            <div className={`text-xs font-mono ${data.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {formatPercent(data.metrics.totalUnrealizedPLPercent)}
-            </div>
-          </div>
-
-          <div className="border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground font-mono uppercase">BUYING POWER</div>
-            <div className="text-2xl font-bold font-mono mt-2">
-              {formatCurrency(data.metrics.buyingPower)}
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Portfolio Chart */}
         <div className="border border-border bg-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-mono uppercase text-muted-foreground">PORTFOLIO PERFORMANCE</h3>
+            <h3 className="text-sm font-mono uppercase text-muted-foreground flex items-center gap-2">
+              {activeMode === 'paper' ? <FileText className="w-4 h-4 text-blue-500" /> : <Zap className="w-4 h-4 text-green-500" />}
+              {activeMode === 'paper' ? 'PAPER' : 'LIVE'} PORTFOLIO PERFORMANCE
+            </h3>
             <div className="flex gap-1">
               {(['1D', '1W', '1M', '3M', '1A', 'all'] as HistoryPeriod[]).map((period) => (
                 <button
@@ -398,7 +445,7 @@ export default function TradingPage() {
               ))}
             </div>
           </div>
-          {historyLoading ? (
+          {activeLoading ? (
             <div className="flex items-center justify-center h-[300px]">
               <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
             </div>
@@ -407,8 +454,8 @@ export default function TradingPage() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--accent))" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="hsl(var(--accent))" stopOpacity={0}/>
+                    <stop offset="5%" stopColor={activeMode === 'paper' ? '#3b82f6' : '#22c55e'} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={activeMode === 'paper' ? '#3b82f6' : '#22c55e'} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -431,7 +478,6 @@ export default function TradingPage() {
                   }}
                   formatter={(value: any, name: string) => {
                     if (name === 'equity') return [formatCurrency(value), 'Equity'];
-                    if (name === 'profitLoss') return [formatCurrency(value), 'P&L'];
                     return [value, name];
                   }}
                   labelFormatter={(value) => formatDate(value)}
@@ -439,7 +485,7 @@ export default function TradingPage() {
                 <Area
                   type="monotone"
                   dataKey="equity"
-                  stroke="hsl(var(--accent))"
+                  stroke={activeMode === 'paper' ? '#3b82f6' : '#22c55e'}
                   fill="url(#equityGradient)"
                   strokeWidth={2}
                   name="equity"
@@ -451,50 +497,30 @@ export default function TradingPage() {
               No portfolio history available
             </div>
           )}
-          {historyData?.stats && (
+          {activeHistory?.stats && (
             <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-border">
               <div className="text-center">
                 <div className="text-xs text-muted-foreground font-mono">START</div>
-                <div className="font-mono font-bold">{formatCurrency(historyData.stats.startEquity)}</div>
+                <div className="font-mono font-bold">{formatCurrency(activeHistory.stats.startEquity)}</div>
               </div>
               <div className="text-center">
                 <div className="text-xs text-muted-foreground font-mono">CURRENT</div>
-                <div className="font-mono font-bold">{formatCurrency(historyData.stats.endEquity)}</div>
+                <div className="font-mono font-bold">{formatCurrency(activeHistory.stats.endEquity)}</div>
               </div>
               <div className="text-center">
                 <div className="text-xs text-muted-foreground font-mono">TOTAL RETURN</div>
-                <div className={`font-mono font-bold ${historyData.stats.totalReturn >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatCurrency(historyData.stats.totalReturn)}
+                <div className={`font-mono font-bold ${activeHistory.stats.totalReturn >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {formatCurrency(activeHistory.stats.totalReturn)}
                 </div>
               </div>
               <div className="text-center">
                 <div className="text-xs text-muted-foreground font-mono">RETURN %</div>
-                <div className={`font-mono font-bold ${historyData.stats.totalReturnPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatPercent(historyData.stats.totalReturnPct)}
+                <div className={`font-mono font-bold ${activeHistory.stats.totalReturnPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {formatPercent(activeHistory.stats.totalReturnPct)}
                 </div>
               </div>
             </div>
           )}
-        </div>
-
-        {/* Quick Stats Row */}
-        <div className="grid grid-cols-4 gap-4">
-          <div className="border border-border bg-card p-4 text-center">
-            <div className="text-3xl font-bold font-mono">{data.metrics.positionsCount}</div>
-            <div className="text-xs text-muted-foreground font-mono">POSITIONS</div>
-          </div>
-          <div className="border border-border bg-card p-4 text-center">
-            <div className="text-3xl font-bold font-mono">{data.metrics.openOrdersCount}</div>
-            <div className="text-xs text-muted-foreground font-mono">OPEN ORDERS</div>
-          </div>
-          <div className="border border-border bg-card p-4 text-center">
-            <div className="text-3xl font-bold font-mono">{data.metrics.totalTrades}</div>
-            <div className="text-xs text-muted-foreground font-mono">TOTAL TRADES</div>
-          </div>
-          <div className="border border-border bg-card p-4 text-center">
-            <div className="text-3xl font-bold font-mono">{data.metrics.daytradeCount}</div>
-            <div className="text-xs text-muted-foreground font-mono">DAY TRADES</div>
-          </div>
         </div>
 
         {/* Tabs */}
@@ -507,7 +533,7 @@ export default function TradingPage() {
                 : 'border-transparent hover:text-accent'
             }`}
           >
-            POSITIONS ({data.positions.length})
+            POSITIONS ({activeData?.positions.length || 0})
           </button>
           <button
             onClick={() => setActiveTab('orders')}
@@ -517,7 +543,7 @@ export default function TradingPage() {
                 : 'border-transparent hover:text-accent'
             }`}
           >
-            OPEN ORDERS ({data.openOrders.length})
+            OPEN ORDERS ({activeData?.openOrders.length || 0})
           </button>
           <button
             onClick={() => setActiveTab('history')}
@@ -527,16 +553,16 @@ export default function TradingPage() {
                 : 'border-transparent hover:text-accent'
             }`}
           >
-            TRADE HISTORY ({data.closedOrders.length})
+            TRADE HISTORY ({activeData?.closedOrders.length || 0})
           </button>
         </div>
 
         {/* Positions Table */}
         {activeTab === 'positions' && (
           <div className="border border-border bg-card">
-            {data.positions.length === 0 ? (
+            {!activeData || activeData.positions.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground font-mono">
-                No open positions
+                No open positions in {activeMode === 'paper' ? 'paper' : 'live'} account
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -548,14 +574,13 @@ export default function TradingPage() {
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">AVG ENTRY</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">CURRENT</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">MKT VALUE</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">COST BASIS</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">P&L</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">P&L %</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">TODAY</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.positions.map((position) => (
+                    {activeData.positions.map((position) => (
                       <tr key={position.symbol} className="border-t border-border hover:bg-muted/30">
                         <td className="py-3 px-4">
                           <div className="font-mono font-bold">{position.symbol}</div>
@@ -565,7 +590,6 @@ export default function TradingPage() {
                         <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.avgEntryPrice)}</td>
                         <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.currentPrice)}</td>
                         <td className="py-3 px-4 text-right font-mono">{formatCurrency(position.marketValue)}</td>
-                        <td className="py-3 px-4 text-right font-mono text-muted-foreground">{formatCurrency(position.costBasis)}</td>
                         <td className={`py-3 px-4 text-right font-mono font-bold ${position.unrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                           {formatCurrency(position.unrealizedPL)}
                         </td>
@@ -578,24 +602,23 @@ export default function TradingPage() {
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-muted/30 border-t border-border">
-                    <tr>
-                      <td colSpan={4} className="py-3 px-4 font-mono font-bold">TOTAL</td>
-                      <td className="py-3 px-4 text-right font-mono font-bold">
-                        {formatCurrency(data.positions.reduce((sum, p) => sum + p.marketValue, 0))}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono text-muted-foreground">
-                        {formatCurrency(data.positions.reduce((sum, p) => sum + p.costBasis, 0))}
-                      </td>
-                      <td className={`py-3 px-4 text-right font-mono font-bold ${data.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {formatCurrency(data.metrics.totalUnrealizedPL)}
-                      </td>
-                      <td className={`py-3 px-4 text-right font-mono ${data.metrics.totalUnrealizedPLPercent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {formatPercent(data.metrics.totalUnrealizedPLPercent)}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
+                  {activeData.positions.length > 0 && (
+                    <tfoot className="bg-muted/30 border-t border-border">
+                      <tr>
+                        <td colSpan={4} className="py-3 px-4 font-mono font-bold">TOTAL</td>
+                        <td className="py-3 px-4 text-right font-mono font-bold">
+                          {formatCurrency(activeData.positions.reduce((sum, p) => sum + p.marketValue, 0))}
+                        </td>
+                        <td className={`py-3 px-4 text-right font-mono font-bold ${activeData.metrics.totalUnrealizedPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {formatCurrency(activeData.metrics.totalUnrealizedPL)}
+                        </td>
+                        <td className={`py-3 px-4 text-right font-mono ${activeData.metrics.totalUnrealizedPLPercent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {formatPercent(activeData.metrics.totalUnrealizedPLPercent)}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             )}
@@ -605,9 +628,9 @@ export default function TradingPage() {
         {/* Open Orders Table */}
         {activeTab === 'orders' && (
           <div className="border border-border bg-card">
-            {data.openOrders.length === 0 ? (
+            {!activeData || activeData.openOrders.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground font-mono">
-                No open orders
+                No open orders in {activeMode === 'paper' ? 'paper' : 'live'} account
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -625,7 +648,7 @@ export default function TradingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.openOrders.map((order) => (
+                    {activeData.openOrders.map((order) => (
                       <tr key={order.id} className="border-t border-border hover:bg-muted/30">
                         <td className="py-3 px-4 font-mono font-bold">{order.symbol}</td>
                         <td className={`py-3 px-4 font-mono ${order.side === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
@@ -662,9 +685,9 @@ export default function TradingPage() {
         {/* Trade History Table */}
         {activeTab === 'history' && (
           <div className="border border-border bg-card">
-            {data.closedOrders.length === 0 ? (
+            {!activeData || activeData.closedOrders.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground font-mono">
-                No trade history
+                No trade history in {activeMode === 'paper' ? 'paper' : 'live'} account
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -675,15 +698,15 @@ export default function TradingPage() {
                       <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">SIDE</th>
                       <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">TYPE</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">QTY</th>
-                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">FILLED QTY</th>
+                      <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">FILLED</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">AVG PRICE</th>
                       <th className="text-right font-mono text-xs uppercase text-muted-foreground py-3 px-4">TOTAL</th>
                       <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">STATUS</th>
-                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">FILLED AT</th>
+                      <th className="text-left font-mono text-xs uppercase text-muted-foreground py-3 px-4">DATE</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.closedOrders.map((order) => (
+                    {activeData.closedOrders.map((order) => (
                       <tr key={order.id} className="border-t border-border hover:bg-muted/30">
                         <td className="py-3 px-4 font-mono font-bold">{order.symbol}</td>
                         <td className={`py-3 px-4 font-mono ${order.side === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
