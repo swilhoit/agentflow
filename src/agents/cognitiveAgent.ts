@@ -1582,24 +1582,27 @@ export class CognitiveAgent {
         phaseIterations++;
         this.state!.iteration = iteration;
 
-        // Self-assessment check
+        // Self-assessment check - LOG ONLY, no Discord spam
         if (iteration % this.config.progressCheckInterval === 0) {
           const assessment = this.monitor.assess(phase.id, plan);
           this.state!.selfAssessment = assessment;
 
           if (assessment.isStuck) {
             logger.warn(`⚠️ Stuck detected: ${assessment.stuckReason}`);
+            // Log pivots but don't spam Discord
             if (assessment.shouldPivot && assessment.pivotSuggestion) {
-              await this.notify(`🔄 **Pivoting Strategy**\n${assessment.pivotSuggestion}`);
+              logger.info(`🔄 Pivoting strategy: ${assessment.pivotSuggestion}`);
               this.monitor.recordPivot(plan.approach.approach, 'alternative', assessment.pivotSuggestion);
             }
-            if (assessment.shouldAskUser) {
-              await this.notify(`❓ **Need Guidance**\n${assessment.questionForUser}`);
+            // Only ask user if TRULY stuck (10+ iterations)
+            if (assessment.shouldAskUser && iteration > 10) {
+              await this.notify(`❓ **Need Input**\n${assessment.questionForUser}`);
             }
           }
 
+          // Log delegation opportunities (no notification)
           if (assessment.shouldDelegate && this.config.delegationEnabled) {
-            await this.notify(`🤖 **Considering Delegation**\nPhase may benefit from autonomous sub-agent`);
+            logger.info(`🤖 Delegation opportunity detected`);
           }
         }
 
