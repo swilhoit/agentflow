@@ -510,6 +510,19 @@ export class ClaudeContainerService extends EventEmitter {
           reject(new Error(`Container timed out after ${timeout}ms`));
         }, timeout);
 
+        // Rate limiting for Discord messages
+        let lastNotificationTime = 0;
+        const MIN_NOTIFICATION_INTERVAL = 500; // ms between notifications
+
+        const throttledNotify = async (message: string) => {
+          if (!notificationHandler) return;
+          const now = Date.now();
+          if (now - lastNotificationTime >= MIN_NOTIFICATION_INTERVAL) {
+            lastNotificationTime = now;
+            await notificationHandler(message);
+          }
+        };
+
         logProcess.stdout?.on('data', async (data) => {
           const chunk = data.toString();
           output += chunk;
@@ -519,17 +532,36 @@ export class ClaudeContainerService extends EventEmitter {
           this.emit('agent:output', { containerId, chunk });
 
           // Parse streaming JSON output from Claude
-          try {
-            const lines = chunk.split('\n').filter((l: string) => l.trim());
-            for (const line of lines) {
-              if (line.startsWith('{')) {
+          const lines = chunk.split('\n').filter((l: string) => l.trim());
+          for (const line of lines) {
+            // Try to parse as JSON first
+            if (line.startsWith('{')) {
+              try {
                 const event = JSON.parse(line);
                 await this.handleClaudeEvent(containerId, event, notificationHandler);
+                continue;
+              } catch {
+                // Not valid JSON, fall through to raw output handling
               }
             }
-          } catch {
-            // Not JSON, just regular output
-            logger.debug(`Claude output: ${chunk.substring(0, 200)}`);
+
+            // Handle raw non-JSON output (actual terminal output)
+            const trimmedLine = line.trim();
+            if (trimmedLine.length > 0) {
+              // Detect important output patterns
+              if (trimmedLine.includes('npm') || trimmedLine.includes('yarn')) {
+                await throttledNotify(`📦 ${trimmedLine.substring(0, 200)}`);
+              } else if (trimmedLine.includes('error') || trimmedLine.includes('Error')) {
+                await throttledNotify(`❌ ${trimmedLine.substring(0, 300)}`);
+              } else if (trimmedLine.includes('created') || trimmedLine.includes('Created')) {
+                await throttledNotify(`✅ ${trimmedLine.substring(0, 200)}`);
+              } else if (trimmedLine.includes('success') || trimmedLine.includes('Success')) {
+                await throttledNotify(`🎉 ${trimmedLine.substring(0, 200)}`);
+              } else if (trimmedLine.startsWith('$') || trimmedLine.startsWith('>')) {
+                // Shell prompt/command
+                await throttledNotify(`\`\`\`\n${trimmedLine.substring(0, 300)}\n\`\`\``);
+              }
+            }
           }
         });
 
@@ -592,7 +624,7 @@ export class ClaudeContainerService extends EventEmitter {
   }
 
   /**
-   * Handle Claude streaming JSON events
+   * Handle Claude streaming JSON events - Rich Discord output
    */
   private async handleClaudeEvent(
     containerId: string,
@@ -601,45 +633,159 @@ export class ClaudeContainerService extends EventEmitter {
   ): Promise<void> {
     const eventType = event.type || event.event;
 
+    // Helper to truncate long output for Discord
+    const truncate = (str: string, max: number = 1800): string => {
+      if (!str) return '';
+      str = str.trim();
+      if (str.length <= max) return str;
+      return str.substring(0, max) + '\n... (truncated)';
+    };
+
+    // Helper to format code blocks
+    const codeBlock = (content: string, lang: string = ''): string => {
+      return `\`\`\`${lang}\n${truncate(content, 1500)}\n\`\`\``;
+    };
+
     switch (eventType) {
+      // Claude's thinking/response text
+      case 'assistant':
       case 'assistant_message':
       case 'text':
-        // Claude is responding
-        this.emit('agent:message', { containerId, message: event.content || event.text });
+      case 'content_block_delta':
+        const text = event.content || event.text || event.delta?.text || '';
+        if (text && text.trim()) {
+          this.emit('agent:message', { containerId, message: text });
+          // Only send substantial messages (not single characters from streaming)
+          if (text.length > 20 && notificationHandler) {
+            await notificationHandler(`💭 ${truncate(text, 500)}`);
+          }
+        }
         break;
 
+      // Tool being called - show what Claude is doing
       case 'tool_use':
       case 'tool_call':
-        // Claude is using a tool
-        const toolName = event.name || event.tool;
+        const toolName = event.name || event.tool || 'unknown';
+        const toolInput = event.input || {};
         logger.info(`Claude using tool: ${toolName}`);
-        this.emit('agent:tool', { containerId, tool: toolName, input: event.input });
+        this.emit('agent:tool', { containerId, tool: toolName, input: toolInput });
+
         if (notificationHandler) {
-          await notificationHandler(`🔧 **Tool: ${toolName}**`);
+          let msg = '';
+
+          switch (toolName.toLowerCase()) {
+            case 'bash':
+            case 'execute_bash':
+            case 'shell':
+              const cmd = toolInput.command || toolInput.cmd || JSON.stringify(toolInput);
+              msg = `⚡ **Running command:**\n${codeBlock(cmd, 'bash')}`;
+              break;
+
+            case 'write':
+            case 'write_file':
+            case 'create_file':
+              const filePath = toolInput.file_path || toolInput.path || 'file';
+              msg = `📝 **Writing file:** \`${filePath}\``;
+              break;
+
+            case 'edit':
+            case 'edit_file':
+            case 'str_replace':
+              const editPath = toolInput.file_path || toolInput.path || 'file';
+              msg = `✏️ **Editing:** \`${editPath}\``;
+              break;
+
+            case 'read':
+            case 'read_file':
+              const readPath = toolInput.file_path || toolInput.path || 'file';
+              msg = `📖 **Reading:** \`${readPath}\``;
+              break;
+
+            case 'glob':
+            case 'list_files':
+              const pattern = toolInput.pattern || toolInput.glob || '*';
+              msg = `🔍 **Searching:** \`${pattern}\``;
+              break;
+
+            case 'grep':
+            case 'search':
+              const searchPattern = toolInput.pattern || toolInput.query || '';
+              msg = `🔎 **Grep:** \`${searchPattern}\``;
+              break;
+
+            default:
+              msg = `🔧 **${toolName}**`;
+              if (Object.keys(toolInput).length > 0) {
+                const inputStr = JSON.stringify(toolInput, null, 2);
+                if (inputStr.length < 500) {
+                  msg += `\n${codeBlock(inputStr, 'json')}`;
+                }
+              }
+          }
+
+          await notificationHandler(msg);
         }
         break;
 
+      // Tool result - show actual output
       case 'tool_result':
-        // Tool completed
-        this.emit('agent:tool_result', { containerId, result: event.result });
-        break;
+      case 'tool_output':
+        const result = event.result || event.output || event.content || '';
+        const toolId = event.tool_use_id || '';
+        this.emit('agent:tool_result', { containerId, result, toolId });
 
-      case 'error':
-        logger.error(`Claude error: ${event.message || event.error}`);
-        this.emit('agent:error', { containerId, error: event.message || event.error });
-        if (notificationHandler) {
-          await notificationHandler(`⚠️ **Error**: ${event.message || event.error}`);
+        if (notificationHandler && result) {
+          const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+          // Only show non-empty, meaningful results
+          if (resultStr.trim() && resultStr.length > 5) {
+            const isError = resultStr.toLowerCase().includes('error') ||
+                           resultStr.toLowerCase().includes('failed') ||
+                           resultStr.toLowerCase().includes('exception');
+            const emoji = isError ? '❌' : '✅';
+            await notificationHandler(`${emoji} **Output:**\n${codeBlock(resultStr)}`);
+          }
         }
         break;
 
+      // System messages
+      case 'system':
+        const sysMsg = event.message || event.content || '';
+        if (sysMsg && notificationHandler) {
+          await notificationHandler(`ℹ️ ${truncate(sysMsg, 300)}`);
+        }
+        break;
+
+      // Error handling
+      case 'error':
+        const errorMsg = event.message || event.error || 'Unknown error';
+        logger.error(`Claude error: ${errorMsg}`);
+        this.emit('agent:error', { containerId, error: errorMsg });
+        if (notificationHandler) {
+          await notificationHandler(`🚨 **Error:**\n${codeBlock(errorMsg)}`);
+        }
+        break;
+
+      // Completion
       case 'done':
       case 'end':
+      case 'message_stop':
         logger.info(`Claude agent ${containerId} finished`);
+        if (notificationHandler) {
+          await notificationHandler(`✨ **Claude Code finished processing**`);
+        }
+        break;
+
+      // Content block start - often contains tool info
+      case 'content_block_start':
+        if (event.content_block?.type === 'tool_use') {
+          const blockToolName = event.content_block.name || 'tool';
+          logger.info(`Starting tool: ${blockToolName}`);
+        }
         break;
 
       default:
-        // Log unknown events for debugging
-        logger.debug(`Unknown Claude event: ${eventType}`, event);
+        // Log unknown events for debugging but don't spam Discord
+        logger.debug(`Claude event [${eventType}]:`, JSON.stringify(event).substring(0, 200));
     }
   }
 
