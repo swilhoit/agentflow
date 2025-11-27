@@ -19,6 +19,7 @@ import { ToolAwarePlanner, createToolAwarePlanner, ToolAwarePlan } from '../util
 import { CognitiveToolExecutor, createCognitiveToolExecutor } from './cognitiveToolExecutor';
 import { SmartModelRouter, createModelRouter, analyzeTaskComplexity } from '../utils/modelSelector';
 import { getTradingToolDefinitions, getTradingToolExecutor, TradingToolExecutor } from './tradingTools';
+import { getImageGenerationService } from '../services/imageGeneration';
 
 const execAsync = promisify(exec);
 
@@ -948,6 +949,68 @@ export class ToolBasedAgent {
     // Always available - the executor will check if API keys are configured
     tools.push(...getTradingToolDefinitions());
 
+    // Add Image Generation tool (Gemini/Imagen)
+    tools.push({
+      name: 'generate_image',
+      description: 'Generate an image using Google Gemini/Imagen AI. Use this when you need to create images for websites, apps, or any visual content. Returns the local file path and public URL of the generated image.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'Detailed description of the image to generate. Be specific about style, colors, composition, and subject matter.'
+          },
+          filename: {
+            type: 'string',
+            description: 'Optional filename for the image (without extension). If not provided, one will be generated.'
+          },
+          style: {
+            type: 'string',
+            enum: ['photorealistic', 'artistic', 'digital-art', 'sketch'],
+            description: 'Visual style for the image. Default is photorealistic.'
+          },
+          output_dir: {
+            type: 'string',
+            description: 'Directory to save the image. Defaults to /workspace/public/images/generated'
+          }
+        },
+        required: ['prompt']
+      }
+    });
+
+    // Add Batch Image Generation tool
+    tools.push({
+      name: 'generate_images_batch',
+      description: 'Generate multiple images at once. Useful when creating a set of images for a website (hero images, service icons, team photos, etc.).',
+      input_schema: {
+        type: 'object',
+        properties: {
+          images: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                prompt: { type: 'string', description: 'Image description' },
+                filename: { type: 'string', description: 'Optional filename' }
+              },
+              required: ['prompt']
+            },
+            description: 'Array of image prompts to generate'
+          },
+          style: {
+            type: 'string',
+            enum: ['photorealistic', 'artistic', 'digital-art', 'sketch'],
+            description: 'Visual style for all images'
+          },
+          output_dir: {
+            type: 'string',
+            description: 'Directory to save images'
+          }
+        },
+        required: ['images']
+      }
+    });
+
     return tools;
   }
 
@@ -1143,6 +1206,13 @@ export class ToolBasedAgent {
 
       case 'link_to_vercel':
         return await this.vercelLink(toolInput);
+
+      // Image Generation tools (Gemini/Imagen)
+      case 'generate_image':
+        return await this.generateImage(toolInput);
+
+      case 'generate_images_batch':
+        return await this.generateImagesBatch(toolInput);
 
       default:
         // Check if it's a trading tool
@@ -2429,6 +2499,105 @@ export class ToolBasedAgent {
       return result;
     } catch (error) {
       logger.error('Failed to link to Vercel', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Generate a single image using Gemini/Imagen
+   */
+  private async generateImage(input: {
+    prompt: string;
+    filename?: string;
+    style?: 'photorealistic' | 'artistic' | 'digital-art' | 'sketch';
+    output_dir?: string;
+  }): Promise<any> {
+    try {
+      const imageService = getImageGenerationService();
+
+      if (!imageService.isAvailable()) {
+        return {
+          success: false,
+          error: 'Image generation not available. Set GOOGLE_AI_API_KEY or GEMINI_API_KEY environment variable.',
+          hint: 'Add your Gemini API key to enable AI image generation.'
+        };
+      }
+
+      await this.notify(`🎨 Generating image: "${input.prompt.substring(0, 50)}..."`);
+
+      const result = await imageService.generateImage(input.prompt, {
+        filename: input.filename,
+        style: input.style,
+        outputDir: input.output_dir
+      });
+
+      if (result.success) {
+        await this.notify(
+          `✅ **Image Generated**\n` +
+          `File: \`${result.localPath}\`\n` +
+          `Public URL: ${result.publicUrl}`
+        );
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to generate image', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Generate multiple images in batch
+   */
+  private async generateImagesBatch(input: {
+    images: Array<{ prompt: string; filename?: string }>;
+    style?: 'photorealistic' | 'artistic' | 'digital-art' | 'sketch';
+    output_dir?: string;
+  }): Promise<any> {
+    try {
+      const imageService = getImageGenerationService();
+
+      if (!imageService.isAvailable()) {
+        return {
+          success: false,
+          error: 'Image generation not available. Set GOOGLE_AI_API_KEY or GEMINI_API_KEY environment variable.'
+        };
+      }
+
+      await this.notify(`🎨 Generating ${input.images.length} images...`);
+
+      const results = await imageService.generateBatch(input.images, {
+        style: input.style,
+        outputDir: input.output_dir,
+        delayMs: 2000 // Rate limit between generations
+      });
+
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+
+      await this.notify(
+        `✅ **Batch Image Generation Complete**\n` +
+        `Generated: ${successful}/${input.images.length}\n` +
+        `Failed: ${failed}`
+      );
+
+      return {
+        success: failed === 0,
+        results,
+        summary: {
+          total: input.images.length,
+          successful,
+          failed
+        }
+      };
+    } catch (error) {
+      logger.error('Failed to generate images batch', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
