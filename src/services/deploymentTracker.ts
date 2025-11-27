@@ -98,7 +98,9 @@ export class DeploymentTracker {
   private vercelMonitor?: VercelMonitor;
   private vercelDb?: VercelDatabaseService;
   private alertedVercelDeployments: Set<string> = new Set();
-  
+  private startupTime: number = Date.now();
+  private isFirstCheck: boolean = true;
+
   // GitHub tracking
   private githubClient?: AxiosInstance;
   private alertedGitHubRuns: Set<number> = new Set();
@@ -177,7 +179,7 @@ export class DeploymentTracker {
    */
   async checkDeployments(): Promise<void> {
     logger.info('🔍 Checking deployments...');
-    
+
     const results = await Promise.allSettled([
       this.checkVercelDeployments(),
       this.checkGitHubDeployments(),
@@ -190,6 +192,12 @@ export class DeploymentTracker {
         logger.error(`Failed to check ${source} deployments:`, result.reason);
       }
     });
+
+    // After first check, enable notifications for subsequent checks
+    if (this.isFirstCheck) {
+      logger.info('✅ First deployment check complete - notifications enabled for future deployments');
+      this.isFirstCheck = false;
+    }
   }
 
   /**
@@ -220,17 +228,24 @@ export class DeploymentTracker {
       // Also check for successful deployments to production
       const projects = await this.vercelMonitor.getProjects();
       for (const project of projects) {
-        if (this.config.vercelProjectFilter?.length && 
+        if (this.config.vercelProjectFilter?.length &&
             !this.config.vercelProjectFilter.includes(project.name)) {
           continue;
         }
-        
+
         const deployments = await this.vercelMonitor.getDeployments(project.id, 5);
         for (const deployment of deployments) {
           if (this.alertedVercelDeployments.has(deployment.uid)) {
             continue;
           }
-          
+
+          // On first check after restart, just populate the set WITHOUT notifying
+          // This prevents spamming about old deployments
+          if (this.isFirstCheck) {
+            this.alertedVercelDeployments.add(deployment.uid);
+            continue;
+          }
+
           // Alert on successful production deployments
           if (deployment.state === 'READY' && deployment.target === 'production') {
             await this.sendVercelSuccessNotification(deployment, project.name);
@@ -239,13 +254,20 @@ export class DeploymentTracker {
         }
       }
 
-      // Send failure notifications
-      for (const failure of newFailures) {
-        await this.sendVercelFailureNotification(failure);
-        this.alertedVercelDeployments.add(failure.deployment.uid);
+      // Send failure notifications (skip on first check)
+      if (!this.isFirstCheck) {
+        for (const failure of newFailures) {
+          await this.sendVercelFailureNotification(failure);
+          this.alertedVercelDeployments.add(failure.deployment.uid);
+        }
+      } else {
+        // Just add to the set without notifying
+        for (const failure of newFailures) {
+          this.alertedVercelDeployments.add(failure.deployment.uid);
+        }
       }
 
-      logger.info(`✅ Vercel check complete: ${newFailures.length} failures`);
+      logger.info(`✅ Vercel check complete: ${newFailures.length} failures${this.isFirstCheck ? ' (first check - no notifications)' : ''}`);
 
     } catch (error: any) {
       logger.error('Failed to check Vercel deployments:', error.message);
@@ -313,6 +335,12 @@ export class DeploymentTracker {
 
         // Skip in-progress runs
         if (run.status !== 'completed') {
+          continue;
+        }
+
+        // On first check, just populate the set without notifying
+        if (this.isFirstCheck) {
+          this.alertedGitHubRuns.add(run.id);
           continue;
         }
 
