@@ -115,7 +115,7 @@ export function Sidebar() {
   };
 
   return (
-    <div className="w-60 border-r border-border bg-card h-screen fixed left-0 top-0 flex flex-col">
+    <div className="w-60 border-r border-border bg-background h-screen fixed left-0 top-0 flex flex-col z-50 shadow-sm">
       {/* Header */}
       <div className="p-4 border-b border-border">
         <div className="flex items-center gap-2">

@@ -78,7 +78,7 @@ export function MetricCard({
                 'text-muted-foreground': actualTrend === 'neutral' || !actualTrend,
               })}
             >
-              {change > 0 ? '+' : ''}{change}%
+              {change > 0 ? '+' : ''}{typeof change === 'number' ? change.toFixed(1) : change}%
             </span>
           )}
           {changeLabel && (

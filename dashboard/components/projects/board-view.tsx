@@ -3,17 +3,19 @@
 import React, { useState } from 'react';
 import {
   Plus,
-  MoreHorizontal,
   Calendar,
   Clock,
-  AlertCircle,
   CheckCircle2,
   GripVertical,
   Trash2,
   Edit2,
   X,
+  MoreHorizontal
 } from 'lucide-react';
 import { ProjectCard, ProjectColumn } from '@/lib/database-projects';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 interface BoardColumn extends ProjectColumn {
   cards: ProjectCard[];
@@ -31,18 +33,11 @@ interface BoardViewProps {
   onCardClick: (card: ProjectCard) => void;
 }
 
-const PRIORITY_COLORS: Record<string, string> = {
-  low: 'bg-gray-500',
-  medium: 'bg-yellow-500',
-  high: 'bg-orange-500',
-  urgent: 'bg-red-500',
-};
-
-const PRIORITY_LABELS: Record<string, string> = {
-  low: 'LOW',
-  medium: 'MED',
-  high: 'HIGH',
-  urgent: 'URGENT',
+const PRIORITY_STYLES: Record<string, string> = {
+  low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+  medium: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800',
+  high: 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800',
+  urgent: 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800',
 };
 
 export function BoardView({
@@ -131,86 +126,76 @@ export function BoardView({
     return new Date(dueDate) < new Date() && new Date(dueDate).toDateString() !== new Date().toDateString();
   };
 
-  const isDueToday = (dueDate?: string) => {
-    if (!dueDate) return false;
-    return new Date(dueDate).toDateString() === new Date().toDateString();
-  };
-
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-h-[600px]">
+    <div className="flex gap-6 overflow-x-auto pb-8 min-h-[calc(100vh-200px)]">
       {columns.map((column) => (
         <div
           key={column.id}
-          className={`flex-shrink-0 w-72 bg-muted/30 border border-border rounded-sm flex flex-col ${
-            dragOverColumn === column.id ? 'ring-2 ring-accent' : ''
-          }`}
+          className={cn(
+            "flex-shrink-0 w-80 flex flex-col rounded-xl transition-colors",
+            dragOverColumn === column.id ? "bg-accent/10" : "bg-secondary/30"
+          )}
           onDragOver={(e) => handleDragOver(e, column.id!)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDrop(e, column.id!)}
         >
           {/* Column Header */}
-          <div className="p-3 border-b border-border flex items-center justify-between">
+          <div className="p-4 flex items-center justify-between group/header">
             {editingColumn === column.id ? (
               <div className="flex items-center gap-2 flex-1">
                 <input
                   type="text"
                   value={editColumnName}
                   onChange={(e) => setEditColumnName(e.target.value)}
-                  className="flex-1 bg-background border border-border px-2 py-1 font-mono text-xs uppercase"
+                  className="flex-1 bg-background border border-border px-2 py-1 rounded-md text-sm font-semibold"
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleEditColumn(column.id!);
                     if (e.key === 'Escape') setEditingColumn(null);
                   }}
                 />
-                <button
-                  onClick={() => handleEditColumn(column.id!)}
-                  className="text-accent hover:text-accent/80"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setEditingColumn(null)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => handleEditColumn(column.id!)}>
+                  <CheckCircle2 className="w-4 h-4 text-success" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingColumn(null)}>
                   <X className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <div
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: column.color || '#6b7280' }}
-                  />
-                  <span className="font-mono text-xs font-bold uppercase">{column.name}</span>
-                  <span className="text-xs text-muted-foreground font-mono">
-                    ({column.cards.length})
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-sm text-foreground">{column.name}</span>
+                  <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 bg-background/50 rounded-full">
+                    {column.cards.length}
                   </span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <button
+                <div className="flex items-center opacity-0 group-hover/header:opacity-100 transition-opacity">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
                     onClick={() => {
                       setEditingColumn(column.id!);
                       setEditColumnName(column.name);
                     }}
-                    className="p-1 hover:bg-muted rounded-sm text-muted-foreground hover:text-foreground"
                   >
                     <Edit2 className="w-3 h-3" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 hover:text-destructive"
                     onClick={() => onDeleteColumn(column.id!)}
-                    className="p-1 hover:bg-destructive/10 rounded-sm text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="w-3 h-3" />
-                  </button>
+                  </Button>
                 </div>
               </>
             )}
           </div>
 
           {/* Cards */}
-          <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[500px]">
+          <div className="flex-1 px-3 pb-3 space-y-3 overflow-y-auto">
             {column.cards.map((card) => (
               <div
                 key={card.id}
@@ -218,88 +203,64 @@ export function BoardView({
                 onDragStart={(e) => handleDragStart(e, card)}
                 onDragEnd={handleDragEnd}
                 onClick={() => onCardClick(card)}
-                className={`bg-card border border-border p-3 cursor-pointer hover:border-accent/50 transition-all group ${
-                  draggedCard?.id === card.id ? 'opacity-50' : ''
-                } ${card.is_completed ? 'opacity-60' : ''}`}
+                className={cn(
+                  "bg-background p-4 rounded-lg shadow-sm border border-border/50 cursor-pointer hover:shadow-md hover:border-primary/20 transition-all group/card relative",
+                  draggedCard?.id === card.id && "opacity-50 rotate-3 scale-95",
+                  card.is_completed && "opacity-70 bg-muted/20"
+                )}
               >
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <GripVertical className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 cursor-grab" />
-                    {card.is_completed && (
-                      <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                    )}
-                  </div>
+                <div className="flex justify-between items-start gap-2 mb-2">
+                  <h4 className={cn("font-medium text-sm text-foreground leading-tight", card.is_completed && "line-through text-muted-foreground")}>
+                    {card.title}
+                  </h4>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onDeleteCard(card.id!);
                     }}
-                    className="p-1 hover:bg-destructive/10 rounded-sm text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"
+                    className="opacity-0 group-hover/card:opacity-100 text-muted-foreground hover:text-destructive transition-opacity absolute top-2 right-2"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
-                <h4 className={`font-mono text-sm mb-2 ${card.is_completed ? 'line-through' : ''}`}>
-                  {card.title}
-                </h4>
-
                 {card.description && (
-                  <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                  <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
                     {card.description}
                   </p>
                 )}
 
-                <div className="flex items-center flex-wrap gap-2">
+                <div className="flex items-center flex-wrap gap-2 mt-3">
                   {card.priority && (
-                    <span
-                      className={`px-1.5 py-0.5 text-[10px] font-mono text-white ${PRIORITY_COLORS[card.priority]}`}
-                    >
-                      {PRIORITY_LABELS[card.priority]}
+                    <span className={cn("px-2 py-0.5 rounded text-[10px] font-medium border", PRIORITY_STYLES[card.priority])}>
+                      {card.priority.toUpperCase()}
                     </span>
                   )}
 
                   {card.due_date && (
-                    <span
-                      className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono ${
-                        isOverdue(card.due_date)
-                          ? 'bg-destructive/20 text-destructive'
-                          : isDueToday(card.due_date)
-                          ? 'bg-yellow-500/20 text-yellow-600'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
-                    >
+                    <span className={cn(
+                      "flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border",
+                      isOverdue(card.due_date) 
+                        ? "bg-red-50 text-red-700 border-red-200" 
+                        : "bg-slate-50 text-slate-600 border-slate-200"
+                    )}>
                       <Calendar className="w-3 h-3" />
                       {formatDate(card.due_date)}
                     </span>
                   )}
 
-                  {card.estimated_hours && (
-                    <span className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted text-muted-foreground">
-                      <Clock className="w-3 h-3" />
-                      {card.estimated_hours}h
+                  {card.labels?.map((label, idx) => (
+                    <span key={idx} className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                      {label}
                     </span>
-                  )}
+                  ))}
                 </div>
-
-                {card.labels && card.labels.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {card.labels.map((label, idx) => (
-                      <span
-                        key={idx}
-                        className="px-1.5 py-0.5 text-[10px] font-mono bg-accent/20 text-accent"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
 
             {/* Add Card Form */}
             {addingCardToColumn === column.id ? (
-              <div className="bg-card border border-border p-3">
+              <div className="bg-background p-3 rounded-lg border border-primary/30 shadow-sm">
                 <textarea
                   value={newCardTitle[column.id!] || ''}
                   onChange={(e) =>
@@ -309,7 +270,7 @@ export function BoardView({
                     }))
                   }
                   placeholder="Enter card title..."
-                  className="w-full bg-background border border-border p-2 font-mono text-sm resize-none"
+                  className="w-full bg-transparent text-sm resize-none focus:outline-none placeholder:text-muted-foreground/50"
                   rows={2}
                   autoFocus
                   onKeyDown={(e) => {
@@ -322,72 +283,52 @@ export function BoardView({
                     }
                   }}
                 />
-                <div className="flex items-center gap-2 mt-2">
-                  <button
-                    onClick={() => handleAddCard(column.id!)}
-                    className="px-3 py-1 bg-accent text-accent-foreground font-mono text-xs uppercase hover:opacity-80"
-                  >
-                    ADD CARD
-                  </button>
-                  <button
-                    onClick={() => setAddingCardToColumn(null)}
-                    className="px-3 py-1 border border-border font-mono text-xs uppercase hover:bg-muted"
-                  >
-                    CANCEL
-                  </button>
+                <div className="flex items-center gap-2 mt-3">
+                  <Button size="sm" onClick={() => handleAddCard(column.id!)}>Add Card</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setAddingCardToColumn(null)}>Cancel</Button>
                 </div>
               </div>
             ) : (
               <button
                 onClick={() => setAddingCardToColumn(column.id!)}
-                className="w-full p-2 border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-accent/50 font-mono text-xs flex items-center justify-center gap-2"
+                className="w-full py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-background/50 rounded-md flex items-center justify-center gap-2 transition-colors"
               >
-                <Plus className="w-3 h-3" />
-                ADD CARD
+                <Plus className="w-4 h-4" />
+                Add Card
               </button>
             )}
           </div>
         </div>
       ))}
 
-      {/* Add Column */}
-      <div className="flex-shrink-0 w-72">
+      {/* Add Column Button */}
+      <div className="flex-shrink-0 w-80">
         {addingColumn ? (
-          <div className="bg-muted/30 border border-border rounded-sm p-3">
+          <div className="bg-secondary/30 p-4 rounded-xl border border-border/50">
             <input
               type="text"
               value={newColumnName}
               onChange={(e) => setNewColumnName(e.target.value)}
-              placeholder="Enter column name..."
-              className="w-full bg-background border border-border px-3 py-2 font-mono text-sm uppercase"
+              placeholder="Column name..."
+              className="w-full bg-background border border-border px-3 py-2 rounded-md text-sm mb-3"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleAddColumn();
                 if (e.key === 'Escape') setAddingColumn(false);
               }}
             />
-            <div className="flex items-center gap-2 mt-2">
-              <button
-                onClick={handleAddColumn}
-                className="px-3 py-1 bg-accent text-accent-foreground font-mono text-xs uppercase hover:opacity-80"
-              >
-                ADD COLUMN
-              </button>
-              <button
-                onClick={() => setAddingColumn(false)}
-                className="px-3 py-1 border border-border font-mono text-xs uppercase hover:bg-muted"
-              >
-                CANCEL
-              </button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleAddColumn}>Add Column</Button>
+              <Button size="sm" variant="ghost" onClick={() => setAddingColumn(false)}>Cancel</Button>
             </div>
           </div>
         ) : (
           <button
             onClick={() => setAddingColumn(true)}
-            className="w-full p-4 border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-accent/50 font-mono text-sm flex items-center justify-center gap-2 rounded-sm"
+            className="w-full h-12 border-2 border-dashed border-border/50 hover:border-primary/50 text-muted-foreground hover:text-primary rounded-xl flex items-center justify-center gap-2 transition-all"
           >
-            <Plus className="w-4 h-4" />
-            ADD COLUMN
+            <Plus className="w-5 h-5" />
+            Add Column
           </button>
         )}
       </div>

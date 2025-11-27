@@ -6,14 +6,20 @@ import {
   Calendar,
   Clock,
   Tag,
-  AlertCircle,
   CheckCircle2,
   Circle,
   Trash2,
   Save,
   User,
+  AlignLeft,
+  Layout,
+  MoreHorizontal,
+  Flag
 } from 'lucide-react';
 import { ProjectCard, ProjectColumn } from '@/lib/database-projects';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 
 interface CardDetailModalProps {
   card: ProjectCard | null;
@@ -25,11 +31,11 @@ interface CardDetailModalProps {
 }
 
 const PRIORITIES = [
-  { value: '', label: 'None', color: '' },
-  { value: 'low', label: 'Low', color: 'bg-gray-500' },
-  { value: 'medium', label: 'Medium', color: 'bg-yellow-500' },
-  { value: 'high', label: 'High', color: 'bg-orange-500' },
-  { value: 'urgent', label: 'Urgent', color: 'bg-red-500' },
+  { value: '', label: 'None', color: 'bg-muted text-muted-foreground' },
+  { value: 'low', label: 'Low', color: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
+  { value: 'medium', label: 'Medium', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
+  { value: 'high', label: 'High', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' },
+  { value: 'urgent', label: 'Urgent', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
 ];
 
 export function CardDetailModal({
@@ -58,7 +64,7 @@ export function CardDetailModal({
       setDescription(card.description || '');
       setColumnId(card.column_id);
       setPriority(card.priority || '');
-      setDueDate(card.due_date || '');
+      setDueDate(card.due_date ? new Date(card.due_date).toISOString().split('T')[0] : '');
       setEstimatedHours(card.estimated_hours?.toString() || '');
       setActualHours(card.actual_hours?.toString() || '');
       setLabels(card.labels || []);
@@ -108,252 +114,271 @@ export function CardDetailModal({
     setLabels(labels.filter((l) => l !== labelToRemove));
   };
 
-  const getColumnColor = (id: string) => {
-    const column = columns.find((c) => c.id === id);
-    return column?.color || '#6b7280';
-  };
-
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
     return new Date(dateStr).toLocaleDateString('en-US', {
-      weekday: 'long',
+      weekday: 'short',
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
     });
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div
-        className="bg-card border border-border w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-background w-full max-w-4xl max-h-[90vh] rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsCompleted(!isCompleted)}
-              className="hover:scale-110 transition-transform"
-            >
-              {isCompleted ? (
-                <CheckCircle2 className="w-6 h-6 text-green-500" />
-              ) : (
-                <Circle className="w-6 h-6 text-muted-foreground hover:text-accent" />
-              )}
-            </button>
-            <span className="font-mono text-xs text-muted-foreground uppercase">
-              {isCompleted ? 'COMPLETED' : 'ACTIVE'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDelete}
-              className="p-2 hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-muted text-muted-foreground hover:text-foreground"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="p-6 space-y-6">
-          {/* Title */}
-          <div>
+        <div className="flex items-start justify-between p-6 border-b border-border/50 bg-muted/10">
+          <div className="flex-1 mr-8">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+              <Layout className="w-4 h-4" />
+              <span className="font-medium">{columns.find(c => c.id === columnId)?.name || 'Task'}</span>
+              <span>/</span>
+              <span className="font-mono text-xs opacity-70">CARD-{card.id?.slice(0, 4)}</span>
+            </div>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-transparent border-none text-xl font-bold font-mono focus:outline-none focus:ring-0"
-              placeholder="Card title"
+              className="w-full bg-transparent text-2xl font-bold text-foreground border-none focus:ring-0 p-0 placeholder:text-muted-foreground/50"
+              placeholder="Task title"
             />
           </div>
-
-          {/* Column & Priority Row */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-muted-foreground font-mono uppercase mb-2">
-                COLUMN
-              </label>
-              <select
-                value={columnId}
-                onChange={(e) => setColumnId(e.target.value)}
-                className="w-full bg-background border border-border px-3 py-2 font-mono text-sm"
-                style={{ borderLeftColor: getColumnColor(columnId), borderLeftWidth: '4px' }}
-              >
-                {columns.map((col) => (
-                  <option key={col.id} value={col.id}>
-                    {col.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-muted-foreground font-mono uppercase mb-2">
-                PRIORITY
-              </label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className="w-full bg-background border border-border px-3 py-2 font-mono text-sm"
-              >
-                {PRIORITIES.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={handleDelete} className="text-muted-foreground hover:text-destructive">
+              <Trash2 className="w-5 h-5" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={onClose}>
+              <X className="w-5 h-5" />
+            </Button>
           </div>
+        </div>
 
-          {/* Description */}
-          <div>
-            <label className="block text-xs text-muted-foreground font-mono uppercase mb-2">
-              DESCRIPTION
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-background border border-border px-3 py-2 font-mono text-sm resize-none"
-              rows={4}
-              placeholder="Add a description..."
-            />
-          </div>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="flex flex-col md:flex-row">
+            {/* Main Content (Left) */}
+            <div className="flex-1 p-6 space-y-8 border-r border-border/50 min-h-[400px]">
+              {/* Description */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <AlignLeft className="w-4 h-4" />
+                  Description
+                </div>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full min-h-[200px] bg-muted/30 border border-border rounded-md p-4 text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  placeholder="Add a more detailed description..."
+                />
+              </div>
 
-          {/* Due Date & Hours Row */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs text-muted-foreground font-mono uppercase mb-2 flex items-center gap-1">
-                <Calendar className="w-3 h-3" />
-                DUE DATE
-              </label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full bg-background border border-border px-3 py-2 font-mono text-sm"
-              />
+              {/* Activity / Comments (Placeholder) */}
+              <div className="space-y-3 pt-6 border-t border-border/50">
+                <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <ActivityIcon className="w-4 h-4" />
+                  Activity
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                    ME
+                  </div>
+                  <div className="flex-1">
+                    <div className="bg-muted/30 border border-border rounded-md p-3 text-sm text-muted-foreground">
+                      Comment functionality coming soon...
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs text-muted-foreground font-mono uppercase mb-2 flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                EST. HOURS
-              </label>
-              <input
-                type="number"
-                value={estimatedHours}
-                onChange={(e) => setEstimatedHours(e.target.value)}
-                className="w-full bg-background border border-border px-3 py-2 font-mono text-sm"
-                placeholder="0"
-                min="0"
-                step="0.5"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-muted-foreground font-mono uppercase mb-2 flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                ACTUAL HOURS
-              </label>
-              <input
-                type="number"
-                value={actualHours}
-                onChange={(e) => setActualHours(e.target.value)}
-                className="w-full bg-background border border-border px-3 py-2 font-mono text-sm"
-                placeholder="0"
-                min="0"
-                step="0.5"
-              />
-            </div>
-          </div>
-
-          {/* Labels */}
-          <div>
-            <label className="block text-xs text-muted-foreground font-mono uppercase mb-2 flex items-center gap-1">
-              <Tag className="w-3 h-3" />
-              LABELS
-            </label>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {labels.map((label) => (
-                <span
-                  key={label}
-                  className="px-2 py-1 bg-accent/20 text-accent font-mono text-xs flex items-center gap-1"
-                >
-                  {label}
-                  <button
-                    onClick={() => removeLabel(label)}
-                    className="hover:text-destructive"
+            {/* Sidebar (Right) */}
+            <div className="w-full md:w-80 bg-muted/5 p-6 space-y-6">
+              {/* Status */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</label>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={columnId}
+                    onChange={(e) => setColumnId(e.target.value)}
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20"
                   >
-                    <X className="w-3 h-3" />
+                    {columns.map((col) => (
+                      <option key={col.id} value={col.id}>{col.name}</option>
+                    ))}
+                  </select>
+                  
+                  <button
+                    onClick={() => setIsCompleted(!isCompleted)}
+                    className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md border text-sm font-medium transition-colors ${
+                      isCompleted 
+                        ? 'bg-green-500/10 text-green-600 border-green-500/20 hover:bg-green-500/20' 
+                        : 'bg-background border-border hover:bg-muted'
+                    }`}
+                  >
+                    {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+                    {isCompleted ? 'Completed' : 'Mark Complete'}
                   </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                className="flex-1 bg-background border border-border px-3 py-2 font-mono text-sm"
-                placeholder="Add a label..."
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addLabel();
-                  }
-                }}
-              />
-              <button
-                onClick={addLabel}
-                className="px-3 py-2 border border-border font-mono text-xs uppercase hover:bg-muted"
-              >
-                ADD
-              </button>
+                </div>
+              </div>
+
+              {/* Details */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Details</label>
+                  
+                  {/* Priority */}
+                  <div className="flex items-center justify-between group">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Flag className="w-4 h-4" />
+                      Priority
+                    </div>
+                    <select
+                      value={priority}
+                      onChange={(e) => setPriority(e.target.value)}
+                      className="bg-transparent text-sm text-right focus:outline-none cursor-pointer hover:text-primary"
+                    >
+                      {PRIORITIES.map((p) => (
+                        <option key={p.value} value={p.value}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Assignee */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <User className="w-4 h-4" />
+                      Assignee
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary">
+                        ME
+                      </div>
+                      <span className="text-sm">Me</span>
+                    </div>
+                  </div>
+
+                  {/* Due Date */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Calendar className="w-4 h-4" />
+                      Due Date
+                    </div>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className="bg-transparent text-sm text-right focus:outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Time Tracking */}
+              <div className="space-y-2 pt-4 border-t border-border/50">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Time Tracking</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Estimated</span>
+                    <div className="relative">
+                      <Clock className="absolute left-2 top-2 w-3 h-3 text-muted-foreground" />
+                      <input
+                        type="number"
+                        value={estimatedHours}
+                        onChange={(e) => setEstimatedHours(e.target.value)}
+                        className="w-full bg-background border border-border rounded-md pl-7 pr-2 py-1.5 text-sm"
+                        placeholder="0h"
+                        step="0.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Actual</span>
+                    <div className="relative">
+                      <Clock className="absolute left-2 top-2 w-3 h-3 text-muted-foreground" />
+                      <input
+                        type="number"
+                        value={actualHours}
+                        onChange={(e) => setActualHours(e.target.value)}
+                        className="w-full bg-background border border-border rounded-md pl-7 pr-2 py-1.5 text-sm"
+                        placeholder="0h"
+                        step="0.5"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Labels */}
+              <div className="space-y-2 pt-4 border-t border-border/50">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Labels</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {labels.map((label) => (
+                    <Badge key={label} variant="secondary" className="px-2 py-1 gap-1">
+                      {label}
+                      <button onClick={() => removeLabel(label)} className="hover:text-destructive">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newLabel}
+                    onChange={(e) => setNewLabel(e.target.value)}
+                    className="flex-1 bg-background border border-border rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary/20"
+                    placeholder="New label..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addLabel();
+                      }
+                    }}
+                  />
+                  <Button size="sm" variant="outline" onClick={addLabel}>Add</Button>
+                </div>
+              </div>
+
+              {/* Meta */}
+              <div className="pt-4 border-t border-border/50 text-xs text-muted-foreground space-y-1">
+                {card.created_at && <p>Created {formatDate(card.created_at)}</p>}
+                {card.updated_at && <p>Updated {formatDate(card.updated_at)}</p>}
+              </div>
             </div>
           </div>
-
-          {/* Metadata */}
-          {card.created_at && (
-            <div className="text-xs text-muted-foreground font-mono pt-4 border-t border-border">
-              <p>Created: {formatDate(card.created_at)}</p>
-              {card.updated_at && <p>Updated: {formatDate(card.updated_at)}</p>}
-              {card.completed_at && <p>Completed: {formatDate(card.completed_at)}</p>}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 border border-border font-mono text-xs uppercase hover:bg-muted"
-          >
-            CANCEL
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !title.trim()}
-            className="px-4 py-2 bg-accent text-accent-foreground font-mono text-xs uppercase hover:opacity-80 disabled:opacity-50 flex items-center gap-2"
-          >
-            {saving ? (
-              <>SAVING...</>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                SAVE CHANGES
-              </>
-            )}
-          </button>
+        <div className="p-4 border-t border-border/50 bg-muted/10 flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving || !title.trim()}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+function ActivityIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
   );
 }
