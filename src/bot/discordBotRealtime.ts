@@ -838,16 +838,168 @@ ${statusEmoji} **Task Status**
   }
 
   private async handleStatusCommand(message: Message): Promise<void> {
+    const args = message.content.split(/\s+/).slice(1);
+    const taskId = args[0];
+
+    // If a specific task ID is provided, show detailed task status
+    if (taskId) {
+      await this.showTaskStatus(message, taskId);
+      return;
+    }
+
+    // Otherwise show general system status
     const connection = getVoiceConnection(message.guild!.id);
     const receiver = this.realtimeReceivers.get(message.guild!.id);
 
-    let status = 'Bot Status:\n';
-    status += `- Discord: ${this.client.user?.tag}\n`;
-    status += `- Voice: ${connection ? 'Connected' : 'Not connected'}\n`;
-    status += `- ElevenLabs AI: ${receiver?.isConnected() ? 'Connected' : 'Not connected'}\n`;
-    status += `- Mode: ElevenLabs Conversational AI (Natural Conversations)\n`;
+    let status = '📊 **AgentFlow System Status**\n\n';
+    status += `**Bot:** ${this.client.user?.tag}\n`;
+    status += `**Voice:** ${connection ? '🟢 Connected' : '⚪ Not connected'}\n`;
+    status += `**ElevenLabs AI:** ${receiver?.isConnected() ? '🟢 Connected' : '⚪ Not connected'}\n\n`;
 
+    // Get active tasks from database
+    if (this.pgDb) {
+      try {
+        const recentTasks = await this.pgDb.query(`
+          SELECT task_id, status, description, created_at, updated_at
+          FROM agent_tasks
+          WHERE status IN ('pending', 'running', 'in_progress')
+          ORDER BY created_at DESC
+          LIMIT 5
+        `);
+
+        if (recentTasks.rows.length > 0) {
+          status += `**Active Tasks:**\n`;
+          for (const task of recentTasks.rows) {
+            const statusEmoji = task.status === 'running' ? '🔄' : task.status === 'pending' ? '⏳' : '📋';
+            const desc = task.description?.substring(0, 50) || 'No description';
+            status += `${statusEmoji} \`${task.task_id}\` - ${desc}${desc.length >= 50 ? '...' : ''}\n`;
+          }
+        } else {
+          status += `**Active Tasks:** None\n`;
+        }
+
+        // Get recent Claude agents
+        const recentAgents = await this.pgDb.query(`
+          SELECT container_id, status, created_at
+          FROM claude_agents
+          WHERE status = 'running'
+          ORDER BY created_at DESC
+          LIMIT 3
+        `);
+
+        if (recentAgents.rows.length > 0) {
+          status += `\n**Running Claude Agents:**\n`;
+          for (const agent of recentAgents.rows) {
+            status += `🤖 \`${agent.container_id}\`\n`;
+          }
+        }
+      } catch (error) {
+        logger.warn('Failed to get task status from database:', error);
+      }
+    }
+
+    status += `\n_Use \`!status <task_id>\` for detailed task info_`;
     await message.reply(status);
+  }
+
+  private async showTaskStatus(message: Message, taskId: string): Promise<void> {
+    if (!this.pgDb) {
+      await message.reply('❌ Database not available for task lookup.');
+      return;
+    }
+
+    try {
+      // Get task info
+      const taskResult = await this.pgDb.query(`
+        SELECT task_id, status, description, created_at, updated_at, error, result
+        FROM agent_tasks
+        WHERE task_id = $1 OR task_id LIKE $2
+        LIMIT 1
+      `, [taskId, `%${taskId}%`]);
+
+      if (taskResult.rows.length === 0) {
+        await message.reply(`❌ Task not found: \`${taskId}\`\n\n_Tip: Task IDs look like \`task_1234567890123_abc123\`_`);
+        return;
+      }
+
+      const task = taskResult.rows[0];
+      const statusEmojiMap: Record<string, string> = {
+        'completed': '✅',
+        'running': '🔄',
+        'pending': '⏳',
+        'failed': '❌',
+        'in_progress': '🔄'
+      };
+      const statusEmoji = statusEmojiMap[task.status as string] || '❓';
+
+      let response = `📋 **Task Status: ${task.task_id}**\n\n`;
+      response += `**Status:** ${statusEmoji} ${task.status}\n`;
+      response += `**Description:** ${task.description?.substring(0, 200) || 'No description'}\n`;
+      response += `**Created:** ${new Date(task.created_at).toLocaleString()}\n`;
+      if (task.updated_at) {
+        response += `**Updated:** ${new Date(task.updated_at).toLocaleString()}\n`;
+      }
+
+      // Get tool executions for this task
+      const toolsResult = await this.pgDb.query(`
+        SELECT tool_name, success, duration_ms, timestamp
+        FROM tool_executions
+        WHERE task_id = $1
+        ORDER BY timestamp DESC
+        LIMIT 10
+      `, [task.task_id]);
+
+      if (toolsResult.rows.length > 0) {
+        response += `\n**Recent Tool Executions:**\n`;
+        for (const tool of toolsResult.rows) {
+          const emoji = tool.success ? '✅' : '❌';
+          const duration = tool.duration_ms ? `${tool.duration_ms}ms` : '';
+          response += `${emoji} \`${tool.tool_name}\` ${duration}\n`;
+        }
+      }
+
+      // Get Claude agent info if associated
+      const agentResult = await this.pgDb.query(`
+        SELECT container_id, status, output, exit_code, duration_ms
+        FROM claude_agents
+        WHERE task_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [task.task_id]);
+
+      if (agentResult.rows.length > 0) {
+        const agent = agentResult.rows[0];
+        const agentEmoji = agent.status === 'completed' ? '✅' : agent.status === 'running' ? '🔄' : '❌';
+        response += `\n**Claude Agent:**\n`;
+        response += `${agentEmoji} Container: \`${agent.container_id}\`\n`;
+        response += `Status: ${agent.status}\n`;
+        if (agent.duration_ms) {
+          response += `Duration: ${(agent.duration_ms / 1000).toFixed(1)}s\n`;
+        }
+        if (agent.output) {
+          const outputPreview = agent.output.substring(0, 200);
+          response += `Output: \`\`\`${outputPreview}${agent.output.length > 200 ? '...' : ''}\`\`\`\n`;
+        }
+      }
+
+      // Show error if task failed
+      if (task.error) {
+        response += `\n**Error:** \`\`\`${task.error.substring(0, 300)}\`\`\`\n`;
+      }
+
+      // Show result if completed
+      if (task.result && task.status === 'completed') {
+        const resultPreview = typeof task.result === 'string'
+          ? task.result.substring(0, 200)
+          : JSON.stringify(task.result).substring(0, 200);
+        response += `\n**Result:** \`\`\`${resultPreview}...\`\`\`\n`;
+      }
+
+      await message.reply(response);
+    } catch (error) {
+      logger.error('Failed to get task status:', error);
+      await message.reply(`❌ Error getting task status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   private async handleResourcesCommand(message: Message): Promise<void> {
