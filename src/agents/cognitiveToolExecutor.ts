@@ -83,7 +83,9 @@ export class CognitiveToolExecutor {
     enableDelegation: true,
     enablePivoting: true,
     verboseLogging: true,
-    enableSmartModelSwitching: true  // Use dynamic model selection
+    enableSmartModelSwitching: true,  // Use dynamic model selection
+    maxContextTokens: 150000,  // Leave room for response (200k limit)
+    contextTruncationStrategy: 'smart' as 'smart' | 'simple'
   };
 
   constructor(apiKey: string, toolExecutor: ToolExecutor) {
@@ -276,6 +278,83 @@ export class CognitiveToolExecutor {
   }
 
   /**
+   * Estimate token count for messages (rough approximation: 4 chars ≈ 1 token)
+   */
+  private estimateTokens(messages: Anthropic.MessageParam[]): number {
+    let totalChars = 0;
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        totalChars += msg.content.length;
+      } else if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if ('text' in block) {
+            totalChars += block.text.length;
+          } else if ('content' in block && typeof block.content === 'string') {
+            totalChars += block.content.length;
+          }
+        }
+      }
+    }
+    return Math.ceil(totalChars / 4);
+  }
+
+  /**
+   * Manage context to stay within token limits
+   * Strategy: Keep system prompt + recent exchanges, summarize/truncate old ones
+   */
+  private manageContext(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+    const estimatedTokens = this.estimateTokens(messages);
+
+    if (estimatedTokens <= this.config.maxContextTokens) {
+      return messages;  // No truncation needed
+    }
+
+    logger.warn(`⚠️ Context too large (${estimatedTokens} tokens), truncating...`);
+
+    // Strategy: Keep first message (system/task) and last N exchanges
+    const managed: Anthropic.MessageParam[] = [];
+
+    // Always keep the first message (contains task context)
+    if (messages.length > 0) {
+      managed.push(messages[0]);
+    }
+
+    // Add a summary of what was truncated
+    const truncatedCount = messages.length - 1;
+    if (truncatedCount > 10) {
+      managed.push({
+        role: 'user',
+        content: `[CONTEXT SUMMARY: ${truncatedCount - 10} previous exchanges were truncated to manage context. Key discoveries so far: ${this.monitor.getMemory().discoveredFacts.slice(-5).join('; ') || 'None recorded'}. Continue from where we left off.]`
+      });
+    }
+
+    // Keep last 10 exchanges (20 messages for user/assistant pairs)
+    const recentMessages = messages.slice(-20);
+    for (const msg of recentMessages) {
+      // Truncate very long tool results
+      if (typeof msg.content !== 'string' && Array.isArray(msg.content)) {
+        const truncatedContent = msg.content.map(block => {
+          if ('content' in block && typeof block.content === 'string' && block.content.length > 10000) {
+            return {
+              ...block,
+              content: block.content.substring(0, 8000) + '\n\n[...TRUNCATED - output was ' + block.content.length + ' chars...]'
+            };
+          }
+          return block;
+        });
+        managed.push({ ...msg, content: truncatedContent as any });
+      } else {
+        managed.push(msg);
+      }
+    }
+
+    const newTokens = this.estimateTokens(managed);
+    logger.info(`   Context reduced: ${estimatedTokens} → ${newTokens} tokens`);
+
+    return managed;
+  }
+
+  /**
    * Execute a single phase with iterations
    */
   private async executePhase(
@@ -390,11 +469,14 @@ export class CognitiveToolExecutor {
     }
 
     try {
+      // CRITICAL: Manage context to prevent token overflow
+      const managedMessages = this.manageContext(messages);
+
       const response = await this.client.messages.create({
         model: modelToUse.id,
         max_tokens: modelToUse.tier === 'powerful' ? 8192 : 4096,  // More tokens for powerful model
         tools,
-        messages
+        messages: managedMessages
       });
 
       // Report success to the model router
@@ -405,6 +487,32 @@ export class CognitiveToolExecutor {
       return response;
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Check if it's a token limit error - try aggressive truncation
+      if (errorMessage.includes('too long') || errorMessage.includes('tokens')) {
+        logger.warn(`   ⚠️ Token limit hit, applying aggressive truncation...`);
+
+        // More aggressive truncation - keep only last 5 exchanges
+        const aggressiveManaged: Anthropic.MessageParam[] = [];
+        if (messages.length > 0) {
+          aggressiveManaged.push(messages[0]);  // Keep system prompt
+        }
+        aggressiveManaged.push({
+          role: 'user',
+          content: `[AGGRESSIVE TRUNCATION: Context was too large. Key facts: ${this.monitor.getMemory().discoveredFacts.slice(-3).join('; ') || 'None'}. Please continue the task concisely.]`
+        });
+        const lastFew = messages.slice(-10);
+        aggressiveManaged.push(...lastFew);
+
+        return await this.client.messages.create({
+          model: modelToUse.id,
+          max_tokens: modelToUse.tier === 'powerful' ? 8192 : 4096,
+          tools,
+          messages: aggressiveManaged
+        });
+      }
+
       // On failure, try escalating to a more powerful model
       if (this.config.enableSmartModelSwitching) {
         const escalatedModel = this.modelRouter.reportFailure();
@@ -413,12 +521,13 @@ export class CognitiveToolExecutor {
           logger.warn(`   ⬆️ Escalating model: ${modelToUse.name} → ${escalatedModel.name}`);
           await this.notify(`⬆️ **Model Escalation**\n${modelToUse.name} → ${escalatedModel.name}`);
 
+          const managedMessages = this.manageContext(messages);
           // Retry with escalated model
           return await this.client.messages.create({
             model: escalatedModel.id,
             max_tokens: escalatedModel.tier === 'powerful' ? 8192 : 4096,
             tools,
-            messages
+            messages: managedMessages
           });
         }
       }
