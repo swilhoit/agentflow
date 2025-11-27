@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { AdvisorBot } from './advisorBot';
 import { logger, LogLevel } from '../utils/logger';
-import * as http from 'http';
+import { createSimpleHealthServer } from '../utils/healthCheck';
 import { TransactionSyncService } from '../services/transactionSyncService';
 import { CategoryBudgetService } from '../services/categoryBudgetService';
 import { WeeklyBudgetService } from '../services/weeklyBudgetService';
@@ -42,36 +42,17 @@ async function main() {
     logger.info(`📡 Will monitor ${channels.length} channel(s):`);
     channels.forEach(ch => logger.info(`   - ${ch}`));
 
-    // Start HTTP server FIRST for container health checks
-    const port = parseInt(process.env.ADVISOR_PORT || process.env.PORT || '8081');
-    const server = http.createServer((req, res) => {
-      if (req.url === '/health' || req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          status: 'healthy',
-          bot: 'mr krabs',
-          uptime: process.uptime(),
-          timestamp: new Date().toISOString()
-        }));
-      } else {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-
-    await new Promise<void>((resolve) => {
-      server.listen(port, () => {
-        logger.info(`🌐 Health check server listening on port ${port}`);
-        resolve();
-      });
-    });
-
     // Now start Discord bot
     const advisor = new AdvisorBot(
       process.env.ADVISOR_DISCORD_TOKEN!,
       process.env.ANTHROPIC_API_KEY!,
       channels
     );
+
+    // Start HTTP server with enhanced health checks (pass Discord client getter)
+    const port = parseInt(process.env.ADVISOR_PORT || process.env.PORT || '8081');
+    const healthServer = createSimpleHealthServer('mr krabs', port, () => advisor.getClient());
+    await healthServer.start();
 
     await advisor.start();
 
@@ -145,7 +126,7 @@ async function main() {
         budgetService.stop();
         weeklyBudgetService.stop();
         transactionSync.stop();
-        server.close();
+        healthServer.stop();
         await advisor.stop();
         logger.info('✅ Financial Advisor shutdown complete');
         process.exit(0);
@@ -159,7 +140,7 @@ async function main() {
       // Graceful shutdown without budget services
       const shutdown = async () => {
         logger.info('💰 Shutting down Financial Advisor bot...');
-        server.close();
+        healthServer.stop();
         await advisor.stop();
         logger.info('✅ Financial Advisor shutdown complete');
         process.exit(0);

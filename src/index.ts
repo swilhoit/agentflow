@@ -19,6 +19,7 @@ import { getServerMonitor, ServerMonitorService } from './services/serverMonitor
 import { CategoryBudgetService } from './services/categoryBudgetService';
 import { WeeklyBudgetService } from './services/weeklyBudgetService';
 import { TransactionSyncService } from './services/transactionSyncService';
+import { getWatchdog, WatchdogService } from './services/watchdog';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -466,17 +467,35 @@ async function main() {
         logger.info('HETZNER_SERVER_IP not configured - Server Monitor disabled');
       }
 
+      // Initialize Watchdog Service for proactive health monitoring
+      const watchdog = getWatchdog({
+        checkIntervalMs: 60000, // Check every minute
+        memoryTrendWindowMs: 5 * 60 * 1000, // 5 minute window for leak detection
+        memoryGrowthThreshold: 25, // Alert if >25% growth in window
+        botName: 'AgentFlow',
+        alertChannelId: config.systemNotificationChannelId,
+        alertWebhookUrl: process.env.WATCHDOG_WEBHOOK_URL,
+        onCritical: async (reason) => {
+          logger.error(`[Watchdog] Critical issue triggered callback: ${reason}`);
+          // Could trigger graceful restart here in the future
+        }
+      });
+      watchdog.setDiscordClient((bot as DiscordBotRealtime).getClient());
+      watchdog.start();
+      logger.info('🐕 Watchdog service started (health monitoring every 60s)');
+
       // Build services list and set Discord client for startup logger
       servicesInitialized.push('Discord Bot (Realtime API)');
       servicesInitialized.push('Orchestrator Server');
       servicesInitialized.push('Supervisor Service');
       servicesInitialized.push('Agent Manager');
+      servicesInitialized.push('Watchdog');
       if (marketScheduler) servicesInitialized.push('Market Update Scheduler');
       if (categoryBudgetService) servicesInitialized.push('Mr. Krabs Financial Advisor');
       if (vercelIntegration) servicesInitialized.push('Vercel Integration');
       if (deploymentTracker) servicesInitialized.push('Deployment Tracker');
       if (serverMonitor) servicesInitialized.push('Server Monitor');
-      
+
       // Set Discord client for startup logger and log success
       startupLogger.setDiscordClient((bot as DiscordBotRealtime).getClient());
       await startupLogger.logStartupSuccess(servicesInitialized);
@@ -486,6 +505,7 @@ async function main() {
       process.on('SIGINT', async () => {
         logger.info('Shutting down gracefully...');
         await startupLogger.logShutdown('SIGINT received');
+        watchdog.stop();
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();
@@ -502,6 +522,7 @@ async function main() {
       process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         await startupLogger.logShutdown('SIGTERM received');
+        watchdog.stop();
         if (serverMonitor) serverMonitor.stop();
         if (marketScheduler) marketScheduler.stop();
         if (vercelIntegration) vercelIntegration.stop();

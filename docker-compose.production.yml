@@ -32,6 +32,13 @@ services:
     depends_on:
       agentflow-db:
         condition: service_healthy
+    # Resource limits - prevent memory leaks from crashing the host
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
@@ -41,6 +48,8 @@ services:
       - AGENTFLOW_DB_USER=agentflow
       - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
       - AGENTFLOW_DB_NAME=agentflow
+      # Node.js memory settings - stay within container limits
+      - NODE_OPTIONS=--max-old-space-size=1536
       # Server Monitor configuration - SSH to Docker host for monitoring
       - HETZNER_SERVER_IP=172.17.0.1
       - HETZNER_SSH_USER=root
@@ -61,8 +70,9 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - agentflow-network
+    # Enhanced health check - parses JSON response for actual health status
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3001/health | grep -q '\"status\":\"healthy\"\\|\"status\":\"degraded\"' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -78,6 +88,13 @@ services:
     depends_on:
       agentflow-db:
         condition: service_healthy
+    # Resource limits for Atlas
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
@@ -87,6 +104,7 @@ services:
       - AGENTFLOW_DB_USER=agentflow
       - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
       - AGENTFLOW_DB_NAME=agentflow
+      - NODE_OPTIONS=--max-old-space-size=768
     env_file:
       - .env
     volumes:
@@ -94,7 +112,7 @@ services:
     networks:
       - agentflow-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/health | grep -q '\"status\":\"healthy\"\\|\"status\":\"degraded\"' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -110,6 +128,13 @@ services:
     depends_on:
       agentflow-db:
         condition: service_healthy
+    # Resource limits for Advisor
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
@@ -119,6 +144,7 @@ services:
       - AGENTFLOW_DB_USER=agentflow
       - AGENTFLOW_DB_PASSWORD=${AGENTFLOW_DB_PASSWORD:-agentflow_secure_2024}
       - AGENTFLOW_DB_NAME=agentflow
+      - NODE_OPTIONS=--max-old-space-size=768
     env_file:
       - .env
     volumes:
@@ -127,7 +153,7 @@ services:
     networks:
       - agentflow-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/health | grep -q '\"status\":\"healthy\"\\|\"status\":\"degraded\"' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

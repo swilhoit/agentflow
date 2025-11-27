@@ -6,6 +6,8 @@ import { logger } from '../utils/logger';
 import { BotConfig } from '../types';
 import { TrelloService } from '../services/trello';
 import { FinnhubWebhookService } from '../services/finnhubWebhook';
+import { performHealthCheck } from '../utils/healthCheck';
+import { circuitBreakers } from '../utils/circuitBreaker';
 
 /**
  * OrchestratorServer with Multi-Agent Task Management
@@ -24,6 +26,7 @@ export class OrchestratorServer {
   private port: number;
   private server: any; // HTTP server instance for cleanup
   private webhookService?: FinnhubWebhookService;
+  private discordClient?: any;
 
   constructor(config: BotConfig, port: number = 3001, trelloService?: TrelloService) {
     this.config = config;
@@ -61,6 +64,7 @@ export class OrchestratorServer {
   }
 
   setDiscordClient(client: any): void {
+    this.discordClient = client;
     if (this.webhookService) {
       this.webhookService.setDiscordClient(client);
       logger.info('🔔 Discord client registered with webhook service');
@@ -108,20 +112,42 @@ export class OrchestratorServer {
   }
 
   private setupRoutes(): void {
-    // Health check
-    this.app.get('/health', (req: Request, res: Response) => {
-      const taskStats = this.taskManager.getStats();
-      res.json({
-        status: 'healthy',
-        uptime: process.uptime(),
-        activeAgents: this.subAgentManager.getActiveAgentCount(),
-        taskManager: {
-          totalTasks: taskStats.total,
-          runningTasks: taskStats.running,
-          completedTasks: taskStats.completed,
-          failedTasks: taskStats.failed
-        }
-      });
+    // Enhanced health check with memory, DB, and Discord status
+    this.app.get('/health', async (req: Request, res: Response) => {
+      try {
+        const taskStats = this.taskManager.getStats();
+
+        // Perform comprehensive health check
+        const health = await performHealthCheck(
+          { memoryThresholdPercent: 85, checkDatabase: true },
+          this.discordClient,
+          [] // Add service checks here if needed
+        );
+
+        // Add task manager stats
+        const response = {
+          ...health,
+          activeAgents: this.subAgentManager.getActiveAgentCount(),
+          taskManager: {
+            totalTasks: taskStats.total,
+            runningTasks: taskStats.running,
+            completedTasks: taskStats.completed,
+            failedTasks: taskStats.failed
+          },
+          circuitBreakers: circuitBreakers.getAllStatuses()
+        };
+
+        // Return appropriate HTTP status based on health
+        const httpStatus = health.status === 'unhealthy' ? 503 : 200;
+        res.status(httpStatus).json(response);
+      } catch (error) {
+        logger.error('Health check failed:', error);
+        res.status(503).json({
+          status: 'unhealthy',
+          error: error instanceof Error ? error.message : 'Health check failed',
+          timestamp: new Date().toISOString()
+        });
+      }
     });
 
     // Finnhub webhook endpoint for real-time news
