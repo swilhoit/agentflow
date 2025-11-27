@@ -112,7 +112,8 @@ export class ToolBasedAgent {
       serverIp: hetznerIp,
       sshUser: hetznerUser,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN,
+      vercelToken: process.env.VERCEL_API_TOKEN || process.env.VERCEL_TOKEN
     });
 
     // Set up event listeners for Claude container events

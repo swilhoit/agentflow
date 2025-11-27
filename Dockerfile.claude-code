@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y \
     gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code CLI and Vercel CLI globally
+RUN npm install -g @anthropic-ai/claude-code vercel
 
 # Create non-root user for security (but with full workspace access)
 RUN useradd -m -u 1001 -s /bin/bash claude \

@@ -73,8 +73,10 @@ export interface ContainerInfo {
 export class ClaudeContainerService extends EventEmitter {
   private serverIp: string;
   private sshUser: string;
+  private sshKeyPath: string;
   private anthropicApiKey: string;
   private githubToken: string;
+  private vercelToken: string;
   private activeContainers: Map<string, ChildProcess> = new Map();
   private containerOutputBuffers: Map<string, string> = new Map();
 
@@ -95,15 +97,19 @@ export class ClaudeContainerService extends EventEmitter {
   constructor(config: {
     serverIp?: string;
     sshUser?: string;
+    sshKeyPath?: string;
     anthropicApiKey?: string;
     githubToken?: string;
+    vercelToken?: string;
     retryConfig?: Partial<RetryConfig>;
   } = {}) {
     super();
     this.serverIp = config.serverIp || process.env.HETZNER_SERVER_IP || '178.156.198.233';
     this.sshUser = config.sshUser || process.env.HETZNER_SSH_USER || 'root';
+    this.sshKeyPath = config.sshKeyPath || process.env.SSH_KEY_PATH || '/root/.ssh/monitor_key';
     this.anthropicApiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY || '';
     this.githubToken = config.githubToken || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+    this.vercelToken = config.vercelToken || process.env.VERCEL_API_TOKEN || process.env.VERCEL_TOKEN || '';
 
     // SSH control socket path for connection multiplexing
     this.sshControlPath = `/tmp/ssh-agentflow-${this.serverIp}-${process.pid}`;
@@ -134,6 +140,7 @@ export class ClaudeContainerService extends EventEmitter {
 
         // Start SSH master connection with ControlMaster
         this.sshMasterProcess = spawn('ssh', [
+          '-i', this.sshKeyPath,
           '-o', 'StrictHostKeyChecking=no',
           '-o', 'ConnectTimeout=10',
           '-o', 'ServerAliveInterval=30',
@@ -234,7 +241,7 @@ export class ClaudeContainerService extends EventEmitter {
 
     const executeCommand = async (): Promise<{ stdout: string; stderr: string }> => {
       // Build SSH command - use control socket if pool is available
-      let sshArgs = '-o StrictHostKeyChecking=no -o ConnectTimeout=10';
+      let sshArgs = `-o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ${this.sshKeyPath}`;
       if (this.sshPoolInitialized) {
         sshArgs += ` -o ControlPath=${this.sshControlPath}`;
       }
@@ -396,6 +403,7 @@ export class ClaudeContainerService extends EventEmitter {
       `CLAUDE_CODE_SKIP_PERMISSIONS=true`,
       this.githubToken ? `GITHUB_TOKEN=${this.githubToken}` : '',
       this.githubToken ? `GH_TOKEN=${this.githubToken}` : '',
+      this.vercelToken ? `VERCEL_TOKEN=${this.vercelToken}` : '',
     ].filter(Boolean).join('\\n');
 
     // Write env file securely (only readable by root)
@@ -485,6 +493,7 @@ export class ClaudeContainerService extends EventEmitter {
 
       // Stream logs in real-time
       const logProcess = spawn('ssh', [
+        '-i', this.sshKeyPath,
         '-o', 'StrictHostKeyChecking=no',
         `${this.sshUser}@${this.serverIp}`,
         `docker logs -f ${containerId} 2>&1`
