@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "rootDirectory": "dashboard",
   "framework": "nextjs",
   "ignoreCommand": "git diff HEAD^ HEAD --quiet -- dashboard/"
 }
