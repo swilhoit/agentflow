@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { query } from '@/lib/postgres';
 
 export async function GET(request: Request) {
   try {
-    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -14,18 +13,19 @@ export async function GET(request: Request) {
     const nextMonthStart = `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`;
 
     // Get YTD transactions for analytics
-    const { data: ytdData } = await supabase
-      .from('transactions')
-      .select('merchant_name, amount, date, category, name')
-      .gte('date', ytdStart)
-      .lt('amount', 0);
+    const ytdResult = await query(
+      `SELECT merchant, amount, date, category, description
+       FROM financial_transactions
+       WHERE date >= $1 AND amount < 0`,
+      [ytdStart]
+    );
 
-    const transactions = ytdData || [];
+    const transactions = ytdResult.rows || [];
 
     // Top merchants by spending
     const merchantMap = new Map<string, { total: number; count: number }>();
-    transactions.forEach(tx => {
-      const merchant = tx.merchant_name;
+    transactions.forEach((tx: any) => {
+      const merchant = tx.merchant;
       if (merchant) {
         const existing = merchantMap.get(merchant) || { total: 0, count: 0 };
         merchantMap.set(merchant, {
@@ -48,9 +48,9 @@ export async function GET(request: Request) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayStats = dayNames.map(day => ({ day, totalAmount: 0, count: 0 }));
 
-    transactions.forEach(tx => {
-      const date = new Date(tx.date);
-      const dayIndex = date.getDay();
+    transactions.forEach((tx: any) => {
+      const dateVal = tx.date instanceof Date ? tx.date : new Date(tx.date);
+      const dayIndex = dateVal.getDay();
       dayStats[dayIndex].totalAmount += Math.abs(Number(tx.amount));
       dayStats[dayIndex].count++;
     });
@@ -62,39 +62,36 @@ export async function GET(request: Request) {
     }));
 
     // Monthly comparison (this month vs last month)
-    const { data: thisMonthData } = await supabase
-      .from('transactions')
-      .select('amount')
-      .gte('date', thisMonthStart)
-      .lt('date', nextMonthStart)
-      .lt('amount', 0);
+    const thisMonthResult = await query(
+      `SELECT amount FROM financial_transactions
+       WHERE date >= $1 AND date < $2 AND amount < 0`,
+      [thisMonthStart, nextMonthStart]
+    );
+    const thisMonthTotal = (thisMonthResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
 
-    const thisMonthTotal = (thisMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
-
-    const { data: lastMonthData } = await supabase
-      .from('transactions')
-      .select('amount')
-      .gte('date', lastMonthStart)
-      .lt('date', thisMonthStart)
-      .lt('amount', 0);
-
-    const lastMonthTotal = (lastMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+    const lastMonthResult = await query(
+      `SELECT amount FROM financial_transactions
+       WHERE date >= $1 AND date < $2 AND amount < 0`,
+      [lastMonthStart, thisMonthStart]
+    );
+    const lastMonthTotal = (lastMonthResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
 
     // Category trends over last 6 months
     const sixMonthsAgo = new Date(now);
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
 
-    const { data: trendData } = await supabase
-      .from('transactions')
-      .select('date, category, amount')
-      .gte('date', sixMonthsAgoStr)
-      .lt('amount', 0);
+    const trendResult = await query(
+      `SELECT date, category, amount FROM financial_transactions
+       WHERE date >= $1 AND amount < 0`,
+      [sixMonthsAgoStr]
+    );
 
     // Group by month and category
     const categoryTrendsMap = new Map<string, Map<string, number>>();
-    (trendData || []).forEach(tx => {
-      const month = tx.date.substring(0, 7);
+    (trendResult.rows || []).forEach((tx: any) => {
+      const dateStr = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date);
+      const month = dateStr.substring(0, 7);
       const category = tx.category || 'Uncategorized';
 
       if (!categoryTrendsMap.has(month)) {
@@ -113,20 +110,20 @@ export async function GET(request: Request) {
     categoryTrends.sort((a, b) => a.month.localeCompare(b.month) || b.amount - a.amount);
 
     // Largest transactions this month
-    const { data: largestData } = await supabase
-      .from('transactions')
-      .select('date, name, amount, category, merchant_name')
-      .gte('date', thisMonthStart)
-      .lt('amount', 0)
-      .order('amount', { ascending: true }) // Most negative first
-      .limit(10);
+    const largestResult = await query(
+      `SELECT date, description, amount, category, merchant
+       FROM financial_transactions
+       WHERE date >= $1 AND amount < 0
+       ORDER BY amount ASC LIMIT 10`,
+      [thisMonthStart]
+    );
 
-    const largestTransactions = (largestData || []).map(t => ({
-      date: t.date,
-      description: t.name,
+    const largestTransactions = (largestResult.rows || []).map((t: any) => ({
+      date: t.date instanceof Date ? t.date.toISOString().split('T')[0] : String(t.date),
+      description: t.description,
       amount: Math.abs(Number(t.amount)),
       category: t.category,
-      merchant: t.merchant_name
+      merchant: t.merchant
     }));
 
     return NextResponse.json({

@@ -1,48 +1,57 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { query } from '@/lib/postgres';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
-    const supabase = getSupabase();
+    // Try to get the latest investment thesis
+    let latestThesis: any = null;
+    try {
+      const thesisResult = await query(
+        `SELECT title, executive_summary, detailed_analysis, week_start, week_end
+         FROM weekly_analysis
+         WHERE analysis_type = 'thesis'
+         ORDER BY week_start DESC LIMIT 1`
+      );
 
-    // Get the latest investment thesis
-    const { data: thesisData } = await supabase
-      .from('weekly_analysis')
-      .select('title, executive_summary, detailed_analysis, week_start, week_end')
-      .eq('analysis_type', 'thesis')
-      .order('week_start', { ascending: false })
-      .limit(1);
-
-    const latestThesis = thesisData?.[0] 
-      ? { ...thesisData[0], summary: thesisData[0].executive_summary }
-      : null;
+      if (thesisResult.rows?.[0]) {
+        latestThesis = {
+          ...thesisResult.rows[0],
+          summary: thesisResult.rows[0].executive_summary
+        };
+      }
+    } catch {
+      // weekly_analysis table might not exist
+    }
 
     if (!latestThesis) {
       return NextResponse.json({ error: 'No investment thesis found' }, { status: 404 });
     }
 
-    // Get latest market data date
-    const { data: dateData } = await supabase
-      .from('market_data')
-      .select('date')
-      .order('date', { ascending: false })
-      .limit(1);
+    // Try to get latest market data date and watchlist
+    let latestDate: string | null = null;
+    let watchlistSymbols: any[] = [];
 
-    const latestDate = dateData?.[0]?.date;
+    try {
+      const dateResult = await query(
+        `SELECT date FROM market_data ORDER BY date DESC LIMIT 1`
+      );
+      latestDate = dateResult.rows?.[0]?.date || null;
 
-    // Get watchlist symbols
-    const { data: watchlistSymbols } = latestDate 
-      ? await supabase
-          .from('market_data')
-          .select('symbol, name')
-          .eq('date', latestDate)
-          .order('symbol')
-          .limit(15)
-      : { data: [] };
+      if (latestDate) {
+        const watchlistResult = await query(
+          `SELECT symbol, name FROM market_data
+           WHERE date = $1 ORDER BY symbol LIMIT 15`,
+          [latestDate]
+        );
+        watchlistSymbols = watchlistResult.rows || [];
+      }
+    } catch {
+      // market_data table might not exist
+    }
 
-    const symbolList = (watchlistSymbols || []).map(s => s.symbol).join(', ');
+    const symbolList = watchlistSymbols.map((s: any) => s.symbol).join(', ');
 
     // Call Perplexity API for daily analysis
     const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
@@ -68,7 +77,7 @@ ${latestThesis.summary}
 DETAILED THESIS ANALYSIS:
 ${JSON.stringify(latestThesis.detailed_analysis) || 'Not available'}
 
-CURRENT WATCHLIST: ${symbolList}
+CURRENT WATCHLIST: ${symbolList || 'Not specified'}
 
 Provide a DETAILED daily analysis focusing on narrative progression and macro trends. Structure your analysis as follows:
 
@@ -167,7 +176,7 @@ Today's date: ${today}`;
     return NextResponse.json({
       analysis: analysis || 'No analysis available',
       thesis: latestThesis,
-      watchlist: watchlistSymbols || [],
+      watchlist: watchlistSymbols,
       timestamp: new Date().toISOString(),
       source: 'Perplexity AI',
       model: 'sonar',

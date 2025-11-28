@@ -1,23 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { query } from '@/lib/postgres';
 import { PORTFOLIOS, getPortfolio, type PortfolioCategory } from '@/lib/portfolio-categories';
 
 export async function GET(request: Request) {
   try {
-    const supabase = getSupabase();
-
     // Get category filter from query params
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category') as PortfolioCategory | null;
-
-    // Get latest market data date
-    const { data: dateData } = await supabase
-      .from('market_data')
-      .select('date')
-      .order('date', { ascending: false })
-      .limit(1);
-
-    const latestDate = dateData?.[0]?.date;
 
     // Build symbol filter based on category
     let symbolList: string[] = [];
@@ -28,59 +17,86 @@ export async function GET(request: Request) {
       }
     }
 
-    // Get market data
+    // Try to get market data (table might not exist yet)
     let watchlist: any[] = [];
-    if (latestDate) {
-      let query = supabase
-        .from('market_data')
-        .select('symbol, name, price, change_amount, change_percent, performance_30d, performance_90d, performance_365d, market_cap, volume, date')
-        .eq('date', latestDate)
-        .order('symbol');
+    let latestDate: string | null = null;
 
-      if (symbolList.length > 0) {
-        query = query.in('symbol', symbolList);
+    try {
+      // Check if market_data table exists and has data
+      const dateResult = await query(
+        `SELECT date FROM market_data ORDER BY date DESC LIMIT 1`
+      );
+      latestDate = dateResult.rows?.[0]?.date || null;
+
+      if (latestDate) {
+        let marketQuery = `
+          SELECT symbol, name, price, change_amount, change_percent,
+                 performance_30d, performance_90d, performance_365d, market_cap, volume, date
+          FROM market_data WHERE date = $1`;
+        const params: any[] = [latestDate];
+
+        if (symbolList.length > 0) {
+          marketQuery += ` AND symbol = ANY($2)`;
+          params.push(symbolList);
+        }
+        marketQuery += ` ORDER BY symbol`;
+
+        const marketResult = await query(marketQuery, params);
+        watchlist = marketResult.rows || [];
       }
-
-      const { data } = await query;
-      watchlist = data || [];
+    } catch {
+      // market_data table doesn't exist yet - that's ok
+      console.log('Market data table not available');
     }
 
-    // Get latest investment thesis/narrative
-    const { data: thesisData } = await supabase
-      .from('weekly_analysis')
-      .select('id, week_start, week_end, title, executive_summary, detailed_analysis, recommendations, created_at')
-      .eq('analysis_type', 'thesis')
-      .order('week_start', { ascending: false })
-      .limit(1);
+    // Try to get latest investment thesis
+    let latestThesis: any = null;
+    try {
+      const thesisResult = await query(
+        `SELECT id, week_start, week_end, title, executive_summary, detailed_analysis, recommendations, created_at
+         FROM weekly_analysis WHERE analysis_type = 'thesis'
+         ORDER BY week_start DESC LIMIT 1`
+      );
+      if (thesisResult.rows?.[0]) {
+        const t = thesisResult.rows[0];
+        latestThesis = {
+          ...t,
+          summary: t.executive_summary,
+          timestamp: t.created_at
+        };
+      }
+    } catch {
+      // weekly_analysis table might not exist
+    }
 
-    const latestThesis = thesisData?.[0] ? {
-      ...thesisData[0],
-      summary: thesisData[0].executive_summary,
-      timestamp: thesisData[0].created_at
-    } : null;
+    // Try to get recent analysis
+    let recentAnalysis: any[] = [];
+    try {
+      const analysisResult = await query(
+        `SELECT id, week_start, week_end, analysis_type, title, executive_summary, created_at
+         FROM weekly_analysis ORDER BY week_start DESC LIMIT 5`
+      );
+      recentAnalysis = (analysisResult.rows || []).map((a: any) => ({
+        ...a,
+        summary: a.executive_summary,
+        timestamp: a.created_at
+      }));
+    } catch {
+      // weekly_analysis table might not exist
+    }
 
-    // Get recent analysis
-    const { data: analysisData } = await supabase
-      .from('weekly_analysis')
-      .select('id, week_start, week_end, analysis_type, title, executive_summary, created_at')
-      .order('week_start', { ascending: false })
-      .limit(5);
-
-    const recentAnalysis = (analysisData || []).map(a => ({
-      ...a,
-      summary: a.executive_summary,
-      timestamp: a.created_at
-    }));
-
-    // Get significant market news
-    const { data: newsData } = await supabase
-      .from('market_news')
-      .select('symbol, headline, summary, source, url, published_at, sentiment')
-      .eq('is_significant', true)
-      .order('published_at', { ascending: false })
-      .limit(10);
-
-    const significantNews = newsData || [];
+    // Try to get significant market news
+    let significantNews: any[] = [];
+    try {
+      const newsResult = await query(
+        `SELECT symbol, headline, summary, source, url, published_at, sentiment
+         FROM market_news WHERE is_significant = true
+         ORDER BY published_at DESC LIMIT 10`
+      );
+      significantNews = newsResult.rows || [];
+    } catch {
+      // market_news table might not exist
+    }
 
     // Calculate portfolio performance metrics
     const portfolioStats = {

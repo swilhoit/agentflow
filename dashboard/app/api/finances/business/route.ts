@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { query } from '@/lib/postgres';
 
 // IRS Business Expense Categories
 export const TAX_CATEGORIES = [
@@ -90,7 +90,6 @@ function getNextTaxDueDate(): string {
 
 export async function GET(request: Request) {
   try {
-    const supabase = getSupabase();
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -102,45 +101,36 @@ export async function GET(request: Request) {
     const ytdStart = `${currentYear}-01-01`;
     const quarterDates = getQuarterDates(currentYear, currentQuarter);
 
-    // For business expenses, filter by 'Business' category
     // This month business expenses
-    const { data: thisMonthData } = await supabase
-      .from('transactions')
-      .select('amount')
-      .lt('amount', 0)
-      .eq('category', 'Business')
-      .gte('date', thisMonthStart)
-      .lt('date', nextMonthStart);
-
-    const thisMonth = (thisMonthData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+    const thisMonthResult = await query(
+      `SELECT amount FROM financial_transactions
+       WHERE amount < 0 AND category = 'Business' AND date >= $1 AND date < $2`,
+      [thisMonthStart, nextMonthStart]
+    );
+    const thisMonth = (thisMonthResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
 
     // This quarter business expenses
-    const { data: thisQuarterData } = await supabase
-      .from('transactions')
-      .select('amount')
-      .lt('amount', 0)
-      .eq('category', 'Business')
-      .gte('date', quarterDates.start)
-      .lte('date', quarterDates.end);
-
-    const thisQuarter = (thisQuarterData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+    const thisQuarterResult = await query(
+      `SELECT amount FROM financial_transactions
+       WHERE amount < 0 AND category = 'Business' AND date >= $1 AND date <= $2`,
+      [quarterDates.start, quarterDates.end]
+    );
+    const thisQuarter = (thisQuarterResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
 
     // YTD business expenses
-    const { data: ytdData } = await supabase
-      .from('transactions')
-      .select('amount, category')
-      .lt('amount', 0)
-      .eq('category', 'Business')
-      .gte('date', ytdStart);
+    const ytdResult = await query(
+      `SELECT amount, category FROM financial_transactions
+       WHERE amount < 0 AND category = 'Business' AND date >= $1`,
+      [ytdStart]
+    );
+    const ytd = (ytdResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
 
-    const ytd = (ytdData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
-
-    // Tax deductible - for now equal to YTD (meals would be 50% but we don't have that detail)
+    // Tax deductible
     const taxDeductible = ytd;
 
-    // Category breakdown (we don't have tax_category, so use generic breakdown)
+    // Category breakdown
     const categoryMap = new Map<string, { amount: number; count: number }>();
-    (ytdData || []).forEach(tx => {
+    (ytdResult.rows || []).forEach((tx: any) => {
       const cat = 'Other Business Expenses';
       const existing = categoryMap.get(cat) || { amount: 0, count: 0 };
       categoryMap.set(cat, {
@@ -162,17 +152,16 @@ export async function GET(request: Request) {
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
     const twelveMonthsAgoStr = twelveMonthsAgo.toISOString().split('T')[0];
 
-    const { data: trendData } = await supabase
-      .from('transactions')
-      .select('date, amount')
-      .lt('amount', 0)
-      .eq('category', 'Business')
-      .gte('date', twelveMonthsAgoStr)
-      .order('date');
+    const trendResult = await query(
+      `SELECT date, amount FROM financial_transactions
+       WHERE amount < 0 AND category = 'Business' AND date >= $1 ORDER BY date`,
+      [twelveMonthsAgoStr]
+    );
 
     const monthlyMap = new Map<string, number>();
-    (trendData || []).forEach(tx => {
-      const month = tx.date.substring(0, 7);
+    (trendResult.rows || []).forEach((tx: any) => {
+      const dateStr = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date);
+      const month = dateStr.substring(0, 7);
       monthlyMap.set(month, (monthlyMap.get(month) || 0) + Math.abs(Number(tx.amount)));
     });
 
@@ -181,40 +170,36 @@ export async function GET(request: Request) {
       .sort((a, b) => a.month.localeCompare(b.month));
 
     // Business transactions (last 100)
-    const { data: transactionsData } = await supabase
-      .from('transactions')
-      .select('id, date, name, amount, category, merchant_name')
-      .lt('amount', 0)
-      .eq('category', 'Business')
-      .order('date', { ascending: false })
-      .limit(100);
+    const transactionsResult = await query(
+      `SELECT id, date, description, amount, category, merchant
+       FROM financial_transactions
+       WHERE amount < 0 AND category = 'Business'
+       ORDER BY date DESC LIMIT 100`
+    );
 
-    const transactions = (transactionsData || []).map(t => ({
-      id: t.id,
-      date: t.date,
-      description: t.name || '',
+    const transactions = (transactionsResult.rows || []).map((t: any) => ({
+      id: String(t.id),
+      date: t.date instanceof Date ? t.date.toISOString().split('T')[0] : String(t.date),
+      description: t.description || '',
       amount: Math.abs(Number(t.amount)),
       category: t.category,
       tax_category: null,
-      merchant: t.merchant_name,
+      merchant: t.merchant,
       receipt_url: null
     }));
 
-    // Quarterly tax estimates - get each quarter's business expenses
+    // Quarterly tax estimates
     const quarterlyEstimates = { q1: 0, q2: 0, q3: 0, q4: 0 };
 
     for (let q = 1; q <= 4; q++) {
       const dates = getQuarterDates(currentYear, q);
-      const { data: qData } = await supabase
-        .from('transactions')
-        .select('amount')
-        .lt('amount', 0)
-        .eq('category', 'Business')
-        .gte('date', dates.start)
-        .lte('date', dates.end);
-
-      quarterlyEstimates[`q${q}` as keyof typeof quarterlyEstimates] = 
-        (qData || []).reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+      const qResult = await query(
+        `SELECT amount FROM financial_transactions
+         WHERE amount < 0 AND category = 'Business' AND date >= $1 AND date <= $2`,
+        [dates.start, dates.end]
+      );
+      quarterlyEstimates[`q${q}` as keyof typeof quarterlyEstimates] =
+        (qResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
     }
 
     const summary: BusinessExpenseSummary = {
@@ -245,9 +230,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const supabase = getSupabase();
     const body = await request.json();
-    const { transactionId, taxCategory, isBusinessExpense } = body;
+    const { transactionId, isBusinessExpense } = body;
 
     if (!transactionId) {
       return NextResponse.json(
@@ -257,14 +241,10 @@ export async function POST(request: Request) {
     }
 
     // Update transaction category to 'Business' or remove it
-    const { error } = await supabase
-      .from('transactions')
-      .update({
-        category: isBusinessExpense ? 'Business' : null
-      })
-      .eq('id', transactionId);
-
-    if (error) throw error;
+    await query(
+      `UPDATE financial_transactions SET category = $1 WHERE id = $2`,
+      [isBusinessExpense ? 'Business' : null, transactionId]
+    );
 
     return NextResponse.json({ success: true });
 
