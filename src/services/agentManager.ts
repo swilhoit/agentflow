@@ -449,6 +449,16 @@ export class AgentManagerService {
   }
 
   /**
+   * Get task statistics
+   */
+  getTaskStats(): { enabledTasks: number; scheduledTasks: number } {
+    return {
+      enabledTasks: this.scheduledTasks.size,
+      scheduledTasks: this.scheduledTasks.size
+    };
+  }
+
+  /**
    * Helper: Map database row to AgentConfig
    */
   private mapRowToAgentConfig(row: any): AgentConfig {

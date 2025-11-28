@@ -21,7 +21,7 @@ import { getWatchdog } from './services/watchdog';
 import { startTradingScheduler, TradingScheduler } from './services/tradingScheduler';
 import { EventBus, EventType } from './services/eventBus';
 
-// ... imports ...
+import { AtlasBot } from './atlas/atlasBot';
 import { AdvisorBot } from './advisor/advisorBot';
 import * as fs from 'fs';
 import * as path from 'path';
