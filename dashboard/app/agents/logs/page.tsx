@@ -350,6 +350,7 @@ export default async function AgentLogsPage() {
                     .sort(([, a], [, b]) => (b as number) - (a as number))
                     .map(([agent, count]) => {
                       const agentInfo = agentHealth.find((a: any) => a.agentName === agent);
+                      const logCount = count as number;
                       return (
                         <Link
                           key={agent}
@@ -375,7 +376,7 @@ export default async function AgentLogsPage() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{count} logs</Badge>
+                            <Badge variant="secondary">{logCount} logs</Badge>
                             <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                           </div>
                         </Link>
