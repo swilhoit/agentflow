@@ -171,7 +171,7 @@ export default async function RecurringTasksPage() {
         {/* Tasks by Agent */}
         <div className="space-y-6">
           {Object.entries(tasksByAgent).map(([agentName, tasks]: [string, any]) => {
-            const agentStats = agentStatsMap.get(agentName) || { totalRuns: 0, successfulRuns: 0, failedRuns: 0, totalTasks: 0, enabledTasks: 0 };
+            const agentStats: any = agentStatsMap.get(agentName) || { totalRuns: 0, successfulRuns: 0, failedRuns: 0, totalTasks: 0, enabledTasks: 0 };
             const successRate = agentStats.totalRuns > 0
               ? Math.round((agentStats.successfulRuns / agentStats.totalRuns) * 100)
               : 0;
@@ -196,7 +196,7 @@ export default async function RecurringTasksPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {tasks.map((task: any) => {
-                    const taskStats = taskStatsMap.get(task.id) || { totalExecutions: 0, successfulExecutions: 0, failedExecutions: 0, avgDuration: 0, maxDuration: 0, minDuration: 0 };
+                    const taskStats: any = taskStatsMap.get(task.id) || { totalExecutions: 0, successfulExecutions: 0, failedExecutions: 0, avgDuration: 0, maxDuration: 0, minDuration: 0 };
                     const taskSuccessRate = taskStats.totalExecutions > 0
                       ? Math.round((taskStats.successfulExecutions / taskStats.totalExecutions) * 100)
                       : 0;
