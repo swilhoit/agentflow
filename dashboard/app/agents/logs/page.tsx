@@ -52,6 +52,60 @@ function formatTimeAgo(date: Date | string | null): string {
   return then.toLocaleDateString();
 }
 
+function ColorizedLogMessage({ message }: { message: string }) {
+  if (!message) return null;
+
+  const lines = message.split('\n');
+
+  return (
+    <div className="space-y-0.5">
+      {lines.map((line, i) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <br key={i} />;
+
+        // Error/failure patterns - red
+        if (/❌|FAILED|Failed|Error|error|Cannot read|undefined|Exception/i.test(trimmed)) {
+          return <div key={i} className="text-red-500 font-medium">{line}</div>;
+        }
+
+        // Success patterns - green
+        if (/✅|SUCCESS|Succeeded|completed successfully|success/i.test(trimmed)) {
+          return <div key={i} className="text-emerald-500 font-medium">{line}</div>;
+        }
+
+        // Warning patterns - amber
+        if (/⚠️|Warning|WARN|warning/i.test(trimmed)) {
+          return <div key={i} className="text-amber-500">{line}</div>;
+        }
+
+        // Info/metadata labels - muted with value highlighted
+        if (/^(Task ID|Duration|Description|Iterations|Tool Calls|Summary|Status|Agent|Started|Ended|Output):/i.test(trimmed)) {
+          const [label, ...rest] = trimmed.split(':');
+          const value = rest.join(':').trim();
+          return (
+            <div key={i} className="flex gap-1">
+              <span className="text-muted-foreground">{label}:</span>
+              <span className={cn(
+                "text-foreground",
+                /failed|error/i.test(value) && "text-red-500",
+                /success|completed/i.test(value) && "text-emerald-500"
+              )}>{value}</span>
+            </div>
+          );
+        }
+
+        // Running/in-progress patterns - blue
+        if (/🔄|Running|In Progress|Executing|Starting/i.test(trimmed)) {
+          return <div key={i} className="text-blue-500">{line}</div>;
+        }
+
+        // Default
+        return <div key={i}>{line}</div>;
+      })}
+    </div>
+  );
+}
+
 function getLogTypeConfig(logType: string) {
   switch (logType) {
     case 'error':
@@ -123,12 +177,13 @@ function getLogTypeConfig(logType: string) {
 
 export default async function AgentLogsPage() {
   // Fetch comprehensive log data
-  const [recentLogs, errorLogs, toolExecutions, recentExecutions, agentHealth] = await Promise.all([
+  const [recentLogs, errorLogs, toolExecutions, recentExecutions, agentHealth, agentTasks] = await Promise.all([
     db_queries_agents.getRecentAgentLogs(300),
     db_queries_agents.getErrorLogs(50),
     db_queries_agents.getRecentToolExecutions(100),
     db_queries_agents.getRecentExecutions(50),
-    db_queries_agents.getAgentHealthSummary()
+    db_queries_agents.getAgentHealthSummary(),
+    db_queries_agents.getAllAgentTasks(50)
   ]);
 
   // Calculate stats
@@ -232,7 +287,7 @@ export default async function AgentLogsPage() {
                         {formatTimeAgo(log.timestamp)}
                       </span>
                     </div>
-                    <p className={cn("text-sm", config.color)}>{log.message}</p>
+                    <div className="text-sm"><ColorizedLogMessage message={log.message} /></div>
                     {log.details && Object.keys(log.details).length > 0 && (
                       <details className="mt-2">
                         <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
@@ -443,7 +498,7 @@ export default async function AgentLogsPage() {
                             {formatTimestamp(log.timestamp)}
                           </span>
                         </div>
-                        <p className="text-sm text-foreground">{log.message}</p>
+                        <div className="text-sm"><ColorizedLogMessage message={log.message} /></div>
                         {log.details && Object.keys(log.details).length > 0 && (
                           <details className="mt-1">
                             <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
@@ -463,12 +518,98 @@ export default async function AgentLogsPage() {
           </CardContent>
         </Card>
 
+        {/* Discord Agent Tasks - Interactive tasks from Discord */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Bot className="w-4 h-4" />
+              Discord Agent Tasks
+              <Badge variant="secondary">{agentTasks.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {agentTasks.length === 0 ? (
+              <div className="text-center py-8">
+                <Bot className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">No Discord agent tasks recorded</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {agentTasks.map((task: any) => {
+                  const duration = task.completed_at && task.started_at
+                    ? Math.round((new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()) / 1000)
+                    : null;
+                  return (
+                    <div
+                      key={task.id}
+                      className={cn(
+                        "p-3 rounded-lg border",
+                        task.status === 'completed' ? "border-emerald-500/30 bg-emerald-500/5" :
+                        task.status === 'failed' ? "border-red-500/30 bg-red-500/5" :
+                        task.status === 'running' ? "border-blue-500/30 bg-blue-500/5" :
+                        "border-border"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <Circle className={cn(
+                            "w-2 h-2 shrink-0",
+                            task.status === 'completed' ? "fill-emerald-500 text-emerald-500" :
+                            task.status === 'failed' ? "fill-red-500 text-red-500" :
+                            task.status === 'running' ? "fill-blue-500 text-blue-500 animate-pulse" :
+                            "fill-gray-400 text-gray-400"
+                          )} />
+                          <Badge
+                            variant={
+                              task.status === 'completed' ? 'success' :
+                              task.status === 'failed' ? 'destructive' :
+                              task.status === 'running' ? 'default' : 'secondary'
+                            }
+                          >
+                            {task.status}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {task.agent_id?.substring(0, 30)}...
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          {duration !== null && (
+                            <span className="tabular-nums">{duration}s</span>
+                          )}
+                          <span>{formatTimeAgo(task.started_at)}</span>
+                        </div>
+                      </div>
+                      <p className="text-sm mb-2 line-clamp-2">{task.task_description}</p>
+                      {task.error && (
+                        <div className="mt-2 p-2 rounded bg-red-500/10 text-red-600 text-xs flex items-start gap-2">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span>{task.error}</span>
+                        </div>
+                      )}
+                      {task.result && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                            View result
+                          </summary>
+                          <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto max-h-32">
+                            {typeof task.result === 'string' ? task.result.substring(0, 1000) : JSON.stringify(task.result, null, 2).substring(0, 1000)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Recent Task Executions Summary */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <Zap className="w-4 h-4" />
-              Recent Task Executions
+              Recent Recurring Task Executions
             </CardTitle>
             <Link href="/agents/executions" className="text-xs text-primary hover:underline flex items-center gap-1">
               View All <ArrowRight className="w-3 h-3" />

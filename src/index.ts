@@ -20,6 +20,10 @@ import { TransactionSyncService } from './services/transactionSyncService';
 import { getWatchdog } from './services/watchdog';
 import { startTradingScheduler, TradingScheduler } from './services/tradingScheduler';
 import { EventBus, EventType } from './services/eventBus';
+// Reliability Services
+import { initializeGracefulShutdown, installShutdownHandlers, getGracefulShutdownHandler } from './services/gracefulShutdown';
+import { initializeTaskLifecycleManager, getTaskLifecycleManager } from './services/taskLifecycleManager';
+import { initializeWorkspaceRegistry, getWorkspaceRegistry } from './services/workspaceRegistry';
 
 import { AtlasBot } from './atlas/atlasBot';
 import { AdvisorBot } from './advisor/advisorBot';
@@ -106,6 +110,29 @@ async function main() {
     // Load Config
     const config = loadConfig();
     validateConfig(config);
+
+    // Initialize Reliability Services (before any services that create tasks)
+    logger.info('🛡️ Initializing reliability services...');
+    const lifecycleManager = initializeTaskLifecycleManager({
+      checkpointIntervalIterations: parseInt(process.env.CHECKPOINT_INTERVAL_ITERATIONS || '10'),
+      maxCheckpointAge: parseInt(process.env.MAX_CHECKPOINT_AGE_MS || '3600000'),
+      maxCheckpointsPerTask: 5
+    });
+    await lifecycleManager.initialize();
+
+    const workspaceRegistry = initializeWorkspaceRegistry({
+      basePath: process.env.WORKSPACE_BASE_PATH || '/opt/agentflow/workspaces',
+      orphanCleanupHours: parseInt(process.env.ORPHAN_WORKSPACE_CLEANUP_HOURS || '24'),
+      maxWorkspacesPerTask: 3,
+      hetznerServerIp: process.env.HETZNER_SERVER_IP
+    });
+
+    const gracefulShutdownHandler = initializeGracefulShutdown({
+      timeoutMs: parseInt(process.env.SHUTDOWN_TIMEOUT_MS || '30000'),
+      notifyUsers: true,
+      forceKillAfterTimeout: true
+    });
+    servicesInitialized.push('Reliability Services');
 
     // Initialize DB & Trello
     let trelloService: TrelloService | undefined;
@@ -368,7 +395,7 @@ async function main() {
     // 9. Event Bus Wiring (The Boardroom)
     EventBus.getInstance().subscribeAll((event) => {
       logger.info(`🧠 [Boardroom] Detected ${event.type} from ${event.source} (${event.severity})`);
-      
+
       // Intelligent Reaction: High Impact Market News -> Trigger Portfolio Check
       if (event.type === EventType.MARKET_UPDATE && event.severity === 'high') {
         logger.info('⚡ High impact market news detected! Triggering automatic portfolio health check...');
@@ -376,6 +403,20 @@ async function main() {
         // agentManager.executeTask('portfolio-health-check');
       }
     });
+
+    // 10. Periodic Workspace Cleanup (clean orphaned workspaces from failed tasks)
+    const WORKSPACE_CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+    setInterval(async () => {
+      try {
+        const result = await workspaceRegistry.cleanupOrphanedWorkspaces();
+        if (result.cleaned > 0 || result.errors > 0) {
+          logger.info(`🧹 Workspace cleanup: ${result.cleaned} cleaned, ${result.errors} errors`);
+        }
+      } catch (error) {
+        logger.error('Workspace cleanup failed:', error);
+      }
+    }, WORKSPACE_CLEANUP_INTERVAL);
+    servicesInitialized.push('Workspace Cleanup');
 
     // Start all tasks
     registerDefaultTasks(agentManager);
@@ -389,25 +430,30 @@ async function main() {
     // Start Cache Cleanup
     startCacheCleanup(60000);
 
-    // Graceful Shutdown
-    const shutdown = async (signal: string) => {
-      logger.info(`Shutting down (${signal})...`);
+    // Graceful Shutdown with Task Checkpointing
+    // Register cleanup callbacks with the graceful shutdown handler
+    gracefulShutdownHandler.onShutdown(async () => {
       watchdog.stop();
       if (serverMonitor) serverMonitor.stop();
       if (marketScheduler) marketScheduler.stop();
       agentManager.stopAllTasks();
       supervisorService.stop();
+    });
+
+    gracefulShutdownHandler.onShutdown(async () => {
       await mainBot.stop();
       if (atlasBot) await atlasBot.stop();
       if (advisorBot) await advisorBot.stop();
+    });
+
+    gracefulShutdownHandler.onShutdown(async () => {
       await orchestratorServer.stop();
       getDatabase().close();
       removeLock();
-      process.exit(0);
-    };
+    });
 
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    // Install the graceful shutdown handlers (handles SIGINT/SIGTERM)
+    installShutdownHandlers(gracefulShutdownHandler, true);
 
   } catch (error) {
     logger.error('Failed to start AgentFlow', error);

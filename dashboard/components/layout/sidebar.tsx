@@ -77,12 +77,12 @@ const navigation: NavSection[] = [
       { name: 'Trading', href: '/trading', icon: LineChart },
       { name: 'Investments', href: '/investments', icon: TrendingUp },
       { name: 'Goals', href: '/goals', icon: Target },
+      { name: 'Spending Analytics', href: '/analytics', icon: PieChart },
     ]
   },
   {
     label: 'Insights',
     items: [
-      { name: 'Analytics', href: '/analytics', icon: BarChart3 },
       { name: 'Diagnostics', href: '/diagnostics', icon: Activity },
     ]
   },

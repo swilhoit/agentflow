@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -8,446 +8,635 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
-  Database,
-  TrendingUp,
-  Wallet,
-  Settings,
-  CheckCircle,
+  Activity,
   AlertTriangle,
-  XCircle,
-  ArrowLeft,
-  RefreshCw,
   Bot,
-  DollarSign,
-  LineChart,
-  LayoutDashboard
+  CheckCircle,
+  Clock,
+  Database,
+  ExternalLink,
+  Globe,
+  MessageSquare,
+  RefreshCw,
+  Server,
+  Shield,
+  TrendingUp,
+  Wifi,
+  WifiOff,
+  XCircle,
+  Zap,
+  Timer,
+  AlertCircle,
+  ArrowRight,
+  Play,
+  CircleDot
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
-interface DiagnosticCheck {
-  name: string;
-  status: 'success' | 'warning' | 'error';
-  message: string;
-  details?: string;
-  count?: number;
+interface DiagnosticsData {
+  timestamp: string;
+  responseTime: number;
+  systemHealth: {
+    score: number;
+    status: 'healthy' | 'degraded' | 'critical';
+    overallSuccessRate: number;
+    totalAgents: number;
+    healthyAgents: number;
+    criticalAgents: number;
+    tasksNeedingAttention: number;
+  };
+  agentStats: {
+    totalTasks: number;
+    enabledTasks: number;
+    disabledTasks: number;
+    totalExecutions: number;
+    successfulExecutions: number;
+    failedExecutions: number;
+    agents: Array<{
+      agentName: string;
+      displayName: string;
+      status: string;
+      isEnabled: boolean;
+      lastActiveAt: string | null;
+      agentType: string;
+      taskCount: number;
+      totalRuns: number;
+      successfulRuns: number;
+      failedRuns: number;
+      successRate: number;
+    }>;
+  };
+  services: {
+    database: {
+      connected: boolean;
+      latency: number | null;
+      serverTime: string;
+      tables: {
+        agents: number;
+        tasks: number;
+        executions: number;
+        conversations: number;
+        logs: number;
+      } | null;
+      error?: string;
+    };
+    discord: { configured: boolean; status: string };
+    supabase: { configured: boolean; status: string };
+    openai: { configured: boolean; status: string };
+    anthropic: { configured: boolean; status: string };
+    vercel: { configured: boolean; status: string };
+    alpaca: { configured: boolean; status: string };
+    teller: { configured: boolean; status: string };
+  };
+  activity: {
+    timeline: Array<{ hour: string; total: number; successful: number; failed: number }>;
+    recentExecutions: any[];
+    failedExecutions: any[];
+    tasksNeedingAttention: any[];
+  };
+  errors: {
+    recent: any[];
+    count24h: number;
+  };
+  toolStats: Array<{
+    toolName: string;
+    totalCalls: number;
+    successfulCalls: number;
+    failedCalls: number;
+    avgDuration: number;
+    successRate: number;
+  }>;
 }
-
-interface DiagnosticSection {
-  title: string;
-  icon: React.ElementType;
-  checks: DiagnosticCheck[];
-}
-
-const StatusIcon = ({ status }: { status: 'success' | 'warning' | 'error' }) => {
-  if (status === 'success') return <CheckCircle className="w-5 h-5 text-success" />;
-  if (status === 'warning') return <AlertTriangle className="w-5 h-5 text-warning" />;
-  return <XCircle className="w-5 h-5 text-destructive" />;
-};
 
 function DiagnosticsPageSkeleton() {
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-8">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-96" />
+      <div className="p-8 space-y-6">
+        <div className="flex justify-between items-start">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <Skeleton className="h-10 w-24" />
         </div>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-center">
-              <Skeleton className="h-10 w-48" />
-              <Skeleton className="h-20 w-24" />
-            </div>
-            <Skeleton className="h-3 w-full mt-6" />
-          </CardContent>
-        </Card>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardHeader>
-                <Skeleton className="h-5 w-32" />
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {[1, 2, 3].map((j) => (
-                    <Skeleton key={j} className="h-20 w-full" />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <Skeleton key={i} className="h-32" />
           ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Skeleton className="h-80 lg:col-span-2" />
+          <Skeleton className="h-80" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Skeleton className="h-64" />
+          <Skeleton className="h-64" />
         </div>
       </div>
     </DashboardLayout>
   );
 }
 
-export default function DiagnosticsPage() {
-  const [diagnostics, setDiagnostics] = useState<DiagnosticSection[]>([]);
-  const [loading, setLoading] = useState(true);
+function formatTimeAgo(date: Date | string | null): string {
+  if (!date) return 'Never';
+  const now = new Date();
+  const then = new Date(date);
+  const diffMs = now.getTime() - then.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
 
-  useEffect(() => {
-    runDiagnostics();
+  if (diffSecs < 60) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return then.toLocaleDateString();
+}
+
+function getHealthGradient(score: number) {
+  if (score >= 90) return 'from-emerald-500 to-green-500';
+  if (score >= 70) return 'from-amber-500 to-yellow-500';
+  return 'from-red-500 to-rose-500';
+}
+
+function getHealthBg(score: number) {
+  if (score >= 90) return 'bg-emerald-500/10';
+  if (score >= 70) return 'bg-amber-500/10';
+  return 'bg-red-500/10';
+}
+
+function getHealthText(score: number) {
+  if (score >= 90) return 'text-emerald-500';
+  if (score >= 70) return 'text-amber-500';
+  return 'text-red-500';
+}
+
+export default function DiagnosticsPage() {
+  const [data, setData] = useState<DiagnosticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  const fetchDiagnostics = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const res = await fetch('/api/diagnostics');
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        setLastRefresh(new Date());
+      }
+    } catch (error) {
+      console.error('Failed to fetch diagnostics:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  async function runDiagnostics() {
-    setLoading(true);
-    const sections: DiagnosticSection[] = [];
+  useEffect(() => {
+    fetchDiagnostics();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => fetchDiagnostics(true), 30000);
+    return () => clearInterval(interval);
+  }, [fetchDiagnostics]);
 
-    // Database Diagnostics (Cloud)
-    const dbChecks: DiagnosticCheck[] = [];
-    try {
-      const financeRes = await fetch('/api/finances/overview');
-      if (financeRes.ok) {
-        dbChecks.push({
-          name: 'Database Connection',
-          status: 'success',
-          message: 'Supabase cloud database connected',
-          details: 'PostgreSQL via Supabase'
-        });
-      } else {
-        dbChecks.push({
-          name: 'Database Connection',
-          status: 'error',
-          message: 'Failed to connect to database',
-          details: 'Check Supabase credentials'
-        });
-      }
+  if (loading) return <DiagnosticsPageSkeleton />;
+  if (!data) return <DiagnosticsPageSkeleton />;
 
-      const financeData = financeRes.ok ? await financeRes.json() : null;
-      if (financeData && !financeData.error) {
-        dbChecks.push({
-          name: 'Financial Data',
-          status: financeData.recentTransactions?.length > 0 ? 'success' : 'warning',
-          message: financeData.recentTransactions?.length > 0
-            ? 'Transaction data available'
-            : 'No transactions found',
-          count: financeData.recentTransactions?.length || 0
-        });
-      }
-    } catch (error: any) {
-      dbChecks.push({
-        name: 'Database Diagnostics',
-        status: 'error',
-        message: 'Failed to run database diagnostics',
-        details: error.message
-      });
-    }
+  const { systemHealth, agentStats, services, activity, errors, toolStats } = data;
 
-    sections.push({
-      title: 'Database',
-      icon: Database,
-      checks: dbChecks
-    });
-
-    // Market Data Diagnostics
-    const marketChecks: DiagnosticCheck[] = [];
-    try {
-      const investRes = await fetch('/api/investments');
-      if (investRes.ok) {
-        const investData = await investRes.json();
-
-        marketChecks.push({
-          name: 'Market Data Feed',
-          status: investData.watchlist?.length > 0 ? 'success' : 'warning',
-          message: investData.watchlist?.length > 0 ? 'Market data available' : 'No market data',
-          count: investData.watchlist?.length || 0
-        });
-
-        if (investData.lastUpdated) {
-          const dataAge = Date.now() - new Date(investData.lastUpdated).getTime();
-          const hoursOld = Math.floor(dataAge / (1000 * 60 * 60));
-
-          marketChecks.push({
-            name: 'Data Freshness',
-            status: hoursOld < 24 ? 'success' : hoursOld < 72 ? 'warning' : 'error',
-            message: hoursOld < 24 ? 'Data is current' : `Data is ${hoursOld}h old`,
-            details: `Last update: ${new Date(investData.lastUpdated).toLocaleString()}`
-          });
-        }
-
-        const thesisTickers = ['UEC', 'CCJ', 'URNM', 'URA', 'DNN', 'UUUU', 'LEU'];
-        const availableTickers = new Set((investData.watchlist || []).map((m: any) => m.symbol));
-        const foundTickers = thesisTickers.filter(t => availableTickers.has(t));
-
-        marketChecks.push({
-          name: 'Thesis Portfolio Coverage',
-          status: foundTickers.length > 0 ? 'success' : 'warning',
-          message: `${foundTickers.length}/${thesisTickers.length} thesis tickers tracked`,
-          details: foundTickers.join(', ') || 'None'
-        });
-      }
-    } catch (error: any) {
-      marketChecks.push({
-        name: 'Market Data',
-        status: 'error',
-        message: 'Failed to check market data',
-        details: error.message
-      });
-    }
-
-    sections.push({
-      title: 'Market Data',
-      icon: TrendingUp,
-      checks: marketChecks
-    });
-
-    // Financial Data Diagnostics
-    const financeChecks: DiagnosticCheck[] = [];
-    try {
-      const goalsRes = await fetch('/api/goals');
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
-
-        financeChecks.push({
-          name: 'Monthly Income',
-          status: goalsData.currentMonth?.income?.actual > 0 ? 'success' : 'warning',
-          message: goalsData.currentMonth?.income?.actual > 0
-            ? `$${Number(goalsData.currentMonth.income.actual || 0).toFixed(2)} this month`
-            : 'No income recorded',
-          count: Math.round(goalsData.currentMonth?.income?.actual || 0)
-        });
-
-        financeChecks.push({
-          name: 'Monthly Expenses',
-          status: goalsData.currentMonth?.expenses?.actual > 0 ? 'success' : 'warning',
-          message: goalsData.currentMonth?.expenses?.actual > 0
-            ? `$${Number(goalsData.currentMonth.expenses.actual || 0).toFixed(2)} this month`
-            : 'No expenses recorded',
-          count: Math.round(goalsData.currentMonth?.expenses?.actual || 0)
-        });
-
-        financeChecks.push({
-          name: 'Savings Rate',
-          status: goalsData.currentMonth?.savingsRate?.actual > 0 ? 'success' : 'warning',
-          message: `${Number(goalsData.currentMonth?.savingsRate?.actual || 0).toFixed(1)}% savings rate`,
-          details: `Net savings: $${Number(goalsData.currentMonth?.savingsRate?.netSavings || 0).toFixed(2)}`
-        });
-      }
-    } catch (error: any) {
-      financeChecks.push({
-        name: 'Financial Data',
-        status: 'error',
-        message: 'Failed to check financial data',
-        details: error.message
-      });
-    }
-
-    sections.push({
-      title: 'Financial Data',
-      icon: Wallet,
-      checks: financeChecks
-    });
-
-    // Environment Checks
-    const systemChecks: DiagnosticCheck[] = [];
-
-    systemChecks.push({
-      name: 'Database Type',
-      status: 'success',
-      message: 'Cloud (Supabase PostgreSQL)',
-      details: 'No local database files used'
-    });
-
-    systemChecks.push({
-      name: 'Environment',
-      status: 'success',
-      message: process.env.NODE_ENV || 'development',
-      details: 'Next.js Dashboard'
-    });
-
-    sections.push({
-      title: 'System Health',
-      icon: Settings,
-      checks: systemChecks
-    });
-
-    setDiagnostics(sections);
-    setLoading(false);
-  }
-
-  if (loading) {
-    return <DiagnosticsPageSkeleton />;
-  }
-
-  const allChecks = diagnostics.flatMap(s => s.checks);
-  const successCount = allChecks.filter(c => c.status === 'success').length;
-  const warningCount = allChecks.filter(c => c.status === 'warning').length;
-  const errorCount = allChecks.filter(c => c.status === 'error').length;
-  const totalChecks = allChecks.length;
-  const healthScore = totalChecks > 0 ? Math.round((successCount / totalChecks) * 100) : 0;
-
-  const quickLinks = [
-    { href: '/agents', icon: Bot, label: 'Agent Manager' },
-    { href: '/finances', icon: DollarSign, label: 'Finances' },
-    { href: '/investments', icon: LineChart, label: 'Investments' },
-    { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  const serviceList = [
+    { key: 'database', name: 'PostgreSQL', icon: Database, critical: true },
+    { key: 'discord', name: 'Discord', icon: MessageSquare, critical: true },
+    { key: 'openai', name: 'OpenAI', icon: Zap, critical: true },
+    { key: 'anthropic', name: 'Anthropic', icon: Bot, critical: true },
+    { key: 'supabase', name: 'Supabase', icon: Database, critical: false },
+    { key: 'vercel', name: 'Vercel', icon: Globe, critical: false },
+    { key: 'alpaca', name: 'Alpaca', icon: TrendingUp, critical: false },
+    { key: 'teller', name: 'Teller', icon: Shield, critical: false },
   ];
 
   return (
     <DashboardLayout>
-      <div className="p-8 space-y-8">
+      <div className="p-8 space-y-6">
         {/* Header */}
         <div className="flex justify-between items-start">
           <div>
-            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2">
-              <ArrowLeft className="w-3 h-3" />
-              Back to Dashboard
-            </Link>
-            <h1 className="text-2xl font-semibold text-foreground">System Diagnostics</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Cloud database health and data verification
-            </p>
+            <div className="flex items-center gap-3">
+              <div className={cn("p-2 rounded-lg", getHealthBg(systemHealth.score))}>
+                <Activity className={cn("w-6 h-6", getHealthText(systemHealth.score))} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold">System Diagnostics</h1>
+                <p className="text-sm text-muted-foreground">
+                  Real-time health monitoring for AgentFlow
+                </p>
+              </div>
+            </div>
           </div>
-          <button
-            onClick={runDiagnostics}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-secondary hover:bg-secondary/80 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              Updated {formatTimeAgo(lastRefresh)}
+            </span>
+            <button
+              onClick={() => fetchDiagnostics(true)}
+              disabled={refreshing}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-colors",
+                "bg-secondary hover:bg-secondary/80",
+                refreshing && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <RefreshCw className={cn("w-4 h-4", refreshing && "animate-spin")} />
+              Refresh
+            </button>
+          </div>
         </div>
 
-        {/* Overall Health Score */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold mb-2">Overall System Health</h2>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <CheckCircle className="w-4 h-4 text-success" />
-                    {successCount} successful
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <AlertTriangle className="w-4 h-4 text-warning" />
-                    {warningCount} warnings
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <XCircle className="w-4 h-4 text-destructive" />
-                    {errorCount} errors
-                  </span>
-                </div>
+        {/* Health Score + Key Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Health Score Card */}
+          <Card className="md:col-span-1 overflow-hidden">
+            <div className={cn("h-1 bg-gradient-to-r", getHealthGradient(systemHealth.score))} />
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm text-muted-foreground">Health Score</span>
+                <Badge variant={systemHealth.status === 'healthy' ? 'default' : systemHealth.status === 'degraded' ? 'secondary' : 'destructive'}>
+                  {systemHealth.status}
+                </Badge>
               </div>
-              <div className="text-right">
-                <div className={cn(
-                  "text-5xl font-bold tabular-nums",
-                  healthScore >= 90 ? 'text-success' :
-                  healthScore >= 70 ? 'text-warning' :
-                  'text-destructive'
-                )}>
-                  {healthScore}%
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  {totalChecks} checks completed
-                </div>
+              <div className={cn("text-5xl font-bold tabular-nums", getHealthText(systemHealth.score))}>
+                {systemHealth.score}
               </div>
-            </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                {data.responseTime}ms response time
+              </div>
+            </CardContent>
+          </Card>
 
-            <div className="mt-6 w-full h-2 bg-secondary rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all",
-                  healthScore >= 90 ? 'bg-success' :
-                  healthScore >= 70 ? 'bg-warning' :
-                  'bg-destructive'
+          {/* Agents Card */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Bot className="w-4 h-4" />
+                <span className="text-sm">Agents</span>
+              </div>
+              <div className="text-3xl font-semibold">
+                {systemHealth.healthyAgents}/{systemHealth.totalAgents}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {systemHealth.criticalAgents > 0 ? (
+                  <span className="text-red-500">{systemHealth.criticalAgents} critical</span>
+                ) : (
+                  'All healthy'
                 )}
-                style={{ width: `${healthScore}%` }}
-              />
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-        {/* Diagnostic Sections */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {diagnostics.map((section, idx) => {
-            const Icon = section.icon;
-            return (
-              <Card key={idx}>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Icon className="w-4 h-4" />
-                    {section.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {section.checks.map((check, checkIdx) => (
-                      <div
-                        key={checkIdx}
-                        className={cn(
-                          "p-4 rounded-lg border",
-                          check.status === 'success' ? 'border-success/30 bg-success/5' :
-                          check.status === 'warning' ? 'border-warning/30 bg-warning/5' :
-                          'border-destructive/30 bg-destructive/5'
+          {/* Success Rate Card */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <CheckCircle className="w-4 h-4" />
+                <span className="text-sm">Success Rate</span>
+              </div>
+              <div className={cn("text-3xl font-semibold", getHealthText(systemHealth.overallSuccessRate))}>
+                {systemHealth.overallSuccessRate}%
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {agentStats.totalExecutions.toLocaleString()} total executions
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Issues Card */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm">Issues</span>
+              </div>
+              <div className={cn(
+                "text-3xl font-semibold",
+                (systemHealth.tasksNeedingAttention + errors.count24h) > 0 ? "text-amber-500" : "text-emerald-500"
+              )}>
+                {systemHealth.tasksNeedingAttention + errors.count24h}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {systemHealth.tasksNeedingAttention} stale tasks, {errors.count24h} errors
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Agent Health */}
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Bot className="w-4 h-4" />
+                  Agent Health
+                </CardTitle>
+                <Link
+                  href="/agents"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  View all <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {agentStats.agents.map((agent) => (
+                  <div
+                    key={agent.agentName}
+                    className={cn(
+                      "p-4 rounded-lg border transition-colors",
+                      agent.status === 'error' ? "border-red-500/30 bg-red-500/5" :
+                      agent.successRate < 80 ? "border-amber-500/30 bg-amber-500/5" :
+                      "border-border hover:bg-muted/50"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <CircleDot className={cn(
+                            "w-3 h-3 flex-shrink-0",
+                            agent.status === 'active' ? "text-emerald-500" :
+                            agent.status === 'error' ? "text-red-500" : "text-gray-400"
+                          )} />
+                          <span className="font-medium text-sm truncate">{agent.displayName}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {agent.agentType}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                          <span>{agent.taskCount} tasks</span>
+                          <span>{agent.totalRuns.toLocaleString()} runs</span>
+                          <span>Last active {formatTimeAgo(agent.lastActiveAt)}</span>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className={cn(
+                          "text-lg font-semibold tabular-nums",
+                          agent.successRate >= 95 ? "text-emerald-500" :
+                          agent.successRate >= 80 ? "text-amber-500" : "text-red-500"
+                        )}>
+                          {agent.successRate}%
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {agent.successfulRuns}/{agent.totalRuns}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Service Status */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Server className="w-4 h-4" />
+                Service Status
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {serviceList.map(({ key, name, icon: Icon, critical }) => {
+                  const service = services[key as keyof typeof services];
+                  const isConnected = key === 'database'
+                    ? (service as any).connected
+                    : (service as any).configured;
+
+                  return (
+                    <div
+                      key={key}
+                      className={cn(
+                        "flex items-center justify-between p-3 rounded-lg",
+                        isConnected ? "bg-muted/50" : critical ? "bg-red-500/10" : "bg-amber-500/10"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon className={cn(
+                          "w-4 h-4",
+                          isConnected ? "text-emerald-500" : critical ? "text-red-500" : "text-amber-500"
+                        )} />
+                        <span className="text-sm font-medium">{name}</span>
+                        {critical && (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            required
+                          </Badge>
                         )}
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="font-medium text-sm">{check.name}</div>
-                            <div className={cn(
-                              "text-sm mt-1",
-                              check.status === 'success' ? 'text-success' :
-                              check.status === 'warning' ? 'text-warning' :
-                              'text-destructive'
-                            )}>
-                              {check.message}
-                            </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {key === 'database' && (service as any).latency && (
+                          <span className="text-xs text-muted-foreground">
+                            {(service as any).latency}ms
+                          </span>
+                        )}
+                        {isConnected ? (
+                          <Wifi className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <WifiOff className="w-4 h-4 text-red-500" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Database Stats */}
+              {services.database.connected && services.database.tables && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <div className="text-xs font-medium text-muted-foreground mb-3">Database Records</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="flex justify-between px-2 py-1 rounded bg-muted/50">
+                      <span className="text-muted-foreground">Agents</span>
+                      <span className="font-medium">{services.database.tables.agents}</span>
+                    </div>
+                    <div className="flex justify-between px-2 py-1 rounded bg-muted/50">
+                      <span className="text-muted-foreground">Tasks</span>
+                      <span className="font-medium">{services.database.tables.tasks}</span>
+                    </div>
+                    <div className="flex justify-between px-2 py-1 rounded bg-muted/50">
+                      <span className="text-muted-foreground">Executions</span>
+                      <span className="font-medium">{services.database.tables.executions.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between px-2 py-1 rounded bg-muted/50">
+                      <span className="text-muted-foreground">Logs</span>
+                      <span className="font-medium">{services.database.tables.logs.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Bottom Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Errors */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-500" />
+                  Recent Errors
+                </CardTitle>
+                <Badge variant={errors.count24h > 0 ? "destructive" : "secondary"}>
+                  {errors.count24h} in 24h
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {errors.recent.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CheckCircle className="w-8 h-8 mx-auto mb-2 text-emerald-500" />
+                  <p className="text-sm">No errors in the last 24 hours</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {errors.recent.slice(0, 5).map((error: any, idx: number) => (
+                    <div key={idx} className="p-3 rounded-lg bg-red-500/5 border border-red-500/20">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">
+                            {error.agent_id || error.task_id || 'System'}
                           </div>
-                          <div className="flex items-center gap-2">
-                            {check.count !== undefined && (
-                              <Badge variant="secondary" className="text-xs tabular-nums">
-                                {check.count}
-                              </Badge>
-                            )}
-                            <StatusIcon status={check.status} />
+                          <div className="text-xs text-red-400 mt-1 line-clamp-2">
+                            {error.message || error.content || 'Unknown error'}
                           </div>
                         </div>
-                        {check.details && (
-                          <div className="text-xs text-muted-foreground mt-2">
-                            {check.details}
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {formatTimeAgo(error.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Activity */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Play className="w-4 h-4" />
+                  Recent Executions
+                </CardTitle>
+                <Link
+                  href="/agents/executions"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  View all <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {activity.recentExecutions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No recent executions</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {activity.recentExecutions.slice(0, 8).map((exec: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "flex items-center gap-3 p-2 rounded-lg",
+                        exec.status === 'success' ? "bg-emerald-500/5" :
+                        exec.status === 'failed' ? "bg-red-500/5" : "bg-muted/50"
+                      )}
+                    >
+                      {exec.status === 'success' ? (
+                        <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                      ) : exec.status === 'failed' ? (
+                        <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      ) : (
+                        <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {exec.task_name || exec.taskName}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {exec.agent_name || exec.agentName}
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-xs text-muted-foreground">
+                          {formatTimeAgo(exec.started_at || exec.startedAt)}
+                        </div>
+                        {exec.duration && (
+                          <div className="text-[10px] text-muted-foreground">
+                            {exec.duration}ms
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Quick Actions */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Settings className="w-4 h-4" />
-              Quick Actions
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {quickLinks.map((link) => {
-                const LinkIcon = link.icon;
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className="p-4 rounded-lg border border-border hover:bg-muted transition-colors text-center group"
-                  >
-                    <LinkIcon className="w-6 h-6 mx-auto mb-2 text-muted-foreground group-hover:text-primary transition-colors" />
-                    <div className="text-sm font-medium">{link.label}</div>
-                  </Link>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Tool Performance (if available) */}
+        {toolStats && toolStats.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Timer className="w-4 h-4" />
+                Tool Performance
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {toolStats.slice(0, 12).map((tool) => (
+                  <div key={tool.toolName} className="p-3 rounded-lg bg-muted/50">
+                    <div className="text-xs font-medium truncate mb-1">{tool.toolName}</div>
+                    <div className="flex items-baseline justify-between">
+                      <span className={cn(
+                        "text-lg font-semibold",
+                        tool.successRate >= 95 ? "text-emerald-500" :
+                        tool.successRate >= 80 ? "text-amber-500" : "text-red-500"
+                      )}>
+                        {tool.successRate}%
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {tool.totalCalls} calls
+                      </span>
+                    </div>
+                    {tool.avgDuration > 0 && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        avg {Math.round(tool.avgDuration)}ms
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Last Updated */}
-        <div className="text-center text-xs text-muted-foreground">
-          Last checked: {new Date().toLocaleString()}
+        {/* Footer */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Last checked: {new Date(data.timestamp).toLocaleString()}</span>
+          <span>Auto-refresh every 30s</span>
         </div>
       </div>
     </DashboardLayout>

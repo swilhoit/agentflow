@@ -1156,7 +1156,20 @@ export class StrategicPlanner {
 export class SelfMonitor {
   private memory: ExecutionMemory;
   private progressWindow: number[] = [];  // Recent progress scores
-  private stuckThreshold = 3;  // Iterations without progress before considered stuck
+
+  // IMPROVED: Higher thresholds to reduce premature stuck detection
+  private stuckThreshold = 5;  // Iterations without progress before considered stuck (was 3)
+  private stuckSameActionThreshold = 5;  // Same action repetitions before stuck (was implicit 2)
+
+  // NEW: Rate limiting for user questions to prevent spam
+  private lastUserQuestionTime: number = 0;
+  private readonly USER_QUESTION_COOLDOWN_MS = parseInt(process.env.USER_QUESTION_COOLDOWN_MS || '60000');  // 1 minute
+  private userQuestionsAsked: number = 0;
+  private readonly MAX_USER_QUESTIONS_PER_TASK = parseInt(process.env.MAX_USER_QUESTIONS_PER_TASK || '3');
+
+  // NEW: Iteration tracking for smarter decisions
+  private currentIteration: number = 0;
+  private readonly STUCK_ITERATION_THRESHOLD = parseInt(process.env.STUCK_ITERATION_THRESHOLD || '15');
 
   constructor() {
     this.memory = {
@@ -1167,6 +1180,13 @@ export class SelfMonitor {
       pivots: [],
       delegations: []
     };
+  }
+
+  /**
+   * Set current iteration (called by executor)
+   */
+  setIteration(iteration: number): void {
+    this.currentIteration = iteration;
   }
 
   /**
@@ -1249,25 +1269,31 @@ export class SelfMonitor {
   }
 
   private detectStuck(): boolean {
-    // Check for repeated failures
-    const recentFailures = this.memory.failedAttempts.slice(-3);
-    if (recentFailures.length >= 3) {
+    // IMPROVED: Only check if we've been running for a reasonable number of iterations
+    if (this.currentIteration < 5) {
+      return false;  // Too early to determine stuck
+    }
+
+    // Check for repeated failures with same tool (3+ consecutive failures)
+    const recentFailures = this.memory.failedAttempts.slice(-4);
+    if (recentFailures.length >= 4) {
       const sameToolFailures = recentFailures.every(f => f.tool === recentFailures[0].tool);
       if (sameToolFailures) return true;
     }
 
-    // Check for lack of progress
+    // IMPROVED: Check for lack of progress (require more iterations)
     const recentProgress = this.progressWindow.slice(-this.stuckThreshold);
     if (recentProgress.length >= this.stuckThreshold && recentProgress.every(p => p === 0)) {
       return true;
     }
 
-    // Check for repeated tool calls with same input
-    const recentCalls = this.memory.toolCallHistory.slice(-5);
-    if (recentCalls.length >= 3) {
+    // IMPROVED: Check for repeated tool calls with same input (higher threshold)
+    const recentCalls = this.memory.toolCallHistory.slice(-7);
+    if (recentCalls.length >= this.stuckSameActionThreshold) {
       const signatures = recentCalls.map(c => `${c.tool}:${JSON.stringify(c.input).substring(0, 100)}`);
       const uniqueSignatures = new Set(signatures);
-      if (uniqueSignatures.size <= 2) return true;  // Only 1-2 unique calls in last 5
+      // Only consider stuck if 2 or fewer unique actions in last 7 calls
+      if (uniqueSignatures.size <= 2) return true;
     }
 
     return false;
@@ -1315,17 +1341,56 @@ export class SelfMonitor {
   }
 
   private shouldAskUser(): boolean {
+    // RATE LIMITING: Don't ask if we haven't been running long enough
+    if (this.currentIteration < this.STUCK_ITERATION_THRESHOLD) {
+      return false;
+    }
+
+    // RATE LIMITING: Don't ask too frequently
+    const timeSinceLastQuestion = Date.now() - this.lastUserQuestionTime;
+    if (this.lastUserQuestionTime > 0 && timeSinceLastQuestion < this.USER_QUESTION_COOLDOWN_MS) {
+      return false;
+    }
+
+    // RATE LIMITING: Don't ask too many times per task
+    if (this.userQuestionsAsked >= this.MAX_USER_QUESTIONS_PER_TASK) {
+      return false;
+    }
+
+    // Only ask if actually stuck
+    if (!this.detectStuck()) {
+      return false;
+    }
+
     // Ask if we've failed multiple times and pivoted already
     if (this.memory.pivots.length >= 2) {
       return true;
     }
 
     // Ask if we're stuck and no clear pivot path
-    if (this.detectStuck() && this.memory.failedAttempts.length >= 5) {
+    if (this.memory.failedAttempts.length >= 5) {
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * Record that a user question was asked (for rate limiting)
+   */
+  recordUserQuestionAsked(): void {
+    this.lastUserQuestionTime = Date.now();
+    this.userQuestionsAsked++;
+    logger.info(`📝 User question asked (${this.userQuestionsAsked}/${this.MAX_USER_QUESTIONS_PER_TASK})`);
+  }
+
+  /**
+   * Check if we can ask user (for external callers)
+   */
+  canAskUser(): boolean {
+    const timeSinceLastQuestion = Date.now() - this.lastUserQuestionTime;
+    return this.userQuestionsAsked < this.MAX_USER_QUESTIONS_PER_TASK &&
+           (this.lastUserQuestionTime === 0 || timeSinceLastQuestion >= this.USER_QUESTION_COOLDOWN_MS);
   }
 
   private getQuestionForUser(): string {
@@ -1402,8 +1467,92 @@ export class SelfMonitor {
       `   Phases completed: ${this.memory.completedPhases.length}`,
       `   Failed attempts: ${this.memory.failedAttempts.length}`,
       `   Strategy pivots: ${this.memory.pivots.length}`,
-      `   Delegations: ${this.memory.delegations.length}`
+      `   Delegations: ${this.memory.delegations.length}`,
+      `   User questions asked: ${this.userQuestionsAsked}/${this.MAX_USER_QUESTIONS_PER_TASK}`
     ].join('\n');
+  }
+
+  /**
+   * Get state for checkpointing
+   */
+  getStateForCheckpoint(): {
+    toolCallHistory: any[];
+    failedAttempts: any[];
+    pivots: any[];
+    completedPhases: string[];
+    discoveries: string[];
+    userQuestionsAsked: number;
+    currentIteration: number;
+  } {
+    return {
+      toolCallHistory: this.memory.toolCallHistory.slice(-20),  // Keep last 20
+      failedAttempts: this.memory.failedAttempts,
+      pivots: this.memory.pivots,
+      completedPhases: this.memory.completedPhases,
+      discoveries: this.memory.discoveredFacts,
+      userQuestionsAsked: this.userQuestionsAsked,
+      currentIteration: this.currentIteration
+    };
+  }
+
+  /**
+   * Restore state from checkpoint (for task resume)
+   */
+  restoreFromCheckpoint(state: {
+    toolCallHistory?: any[];
+    failedAttempts?: any[];
+    pivots?: any[];
+    completedPhases?: string[];
+    discoveries?: string[];
+    userQuestionsAsked?: number;
+    currentIteration?: number;
+  }): void {
+    if (state.toolCallHistory) {
+      this.memory.toolCallHistory = state.toolCallHistory;
+    }
+    if (state.failedAttempts) {
+      this.memory.failedAttempts = state.failedAttempts;
+    }
+    if (state.pivots) {
+      this.memory.pivots = state.pivots;
+    }
+    if (state.completedPhases) {
+      this.memory.completedPhases = state.completedPhases;
+    }
+    if (state.discoveries) {
+      this.memory.discoveredFacts = state.discoveries;
+    }
+    if (state.userQuestionsAsked !== undefined) {
+      this.userQuestionsAsked = state.userQuestionsAsked;
+    }
+    if (state.currentIteration !== undefined) {
+      this.currentIteration = state.currentIteration;
+    }
+
+    // Rebuild progress window from tool call history
+    this.progressWindow = this.memory.toolCallHistory.slice(-10).map(tc =>
+      tc.success && tc.insightsGained?.length > 0 ? 1 : 0
+    );
+
+    logger.info(`🔄 SelfMonitor state restored: iteration ${this.currentIteration}, ${this.memory.toolCallHistory.length} tool calls`);
+  }
+
+  /**
+   * Reset the monitor for a new task
+   */
+  reset(): void {
+    this.memory = {
+      toolCallHistory: [],
+      discoveredFacts: [],
+      completedPhases: [],
+      failedAttempts: [],
+      pivots: [],
+      delegations: []
+    };
+    this.progressWindow = [];
+    this.lastUserQuestionTime = 0;
+    this.userQuestionsAsked = 0;
+    this.currentIteration = 0;
   }
 }
 
