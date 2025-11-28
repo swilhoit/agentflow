@@ -90,19 +90,10 @@ export class TaskManager {
     const taskId = this.generateTaskId();
     logger.info(`🚀 Starting new task: ${taskId} in channel ${task.context.channelId}`);
 
-    // PERSISTENCE: Save user command to database
+    // PERSISTENCE: Create agent task record (user message already saved by Discord bot)
     if (this.pgDb) {
       // Use PostgreSQL (self-hosted)
       try {
-        await this.pgDb.saveConversation({
-          guildId: task.context.guildId,
-          channelId: task.context.channelId,
-          userId: task.context.userId,
-          username: 'User',
-          message: task.command,
-          messageType: 'text'
-        });
-        
         await this.pgDb.createAgentTask({
           agentId: taskId,
           guildId: task.context.guildId,
@@ -119,18 +110,7 @@ export class TaskManager {
       try {
         const db = getSQLiteDatabase();
 
-        // Save user message
-        db.saveMessage({
-          guildId: task.context.guildId,
-          channelId: task.context.channelId,
-          userId: task.context.userId,
-          username: 'User',
-          message: task.command,
-          messageType: 'voice',
-          timestamp: new Date()
-        });
-
-        // Save initial task state to DB
+        // User message already saved by Discord bot, only create task record
         db.createAgentTask({
           agentId: taskId,
           guildId: task.context.guildId,
