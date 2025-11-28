@@ -412,6 +412,7 @@ export class CognitiveToolExecutor {
     while (startIdx > 1 && startIdx < messages.length) {
       const msg = messages[startIdx];
       const prevMsg = messages[startIdx - 1];
+      if (!msg || !prevMsg) break;  // Safety check for undefined
 
       // Check if previous message has tool_use that needs a tool_result
       if (prevMsg.role === 'assistant' && Array.isArray(prevMsg.content)) {
@@ -642,8 +643,10 @@ export class CognitiveToolExecutor {
 
         // Find last safe starting point - must be a user message not containing tool_result for orphaned tool_use
         let safeStart = messages.length - 6;  // Try last 3 exchanges
-        while (safeStart > 1) {
+        if (safeStart < 0) safeStart = 0;  // Ensure non-negative start
+        while (safeStart > 1 && safeStart < messages.length) {
           const msg = messages[safeStart];
+          if (!msg) break;  // Safety check for undefined
           if (msg.role === 'user') {
             // Check this isn't a tool_result for a truncated tool_use
             if (!Array.isArray(msg.content) || !msg.content.some((b: any) => b.type === 'tool_result')) {
