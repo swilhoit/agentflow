@@ -212,7 +212,7 @@ export default function GoalsPage() {
                 />
               </div>
               <div className="text-xs text-muted-foreground tabular-nums">
-                {data.currentMonth.income.percentage.toFixed(1)}% complete
+                {Number(data.currentMonth.income.percentage || 0).toFixed(1)}% complete
               </div>
             </CardContent>
           </Card>
@@ -246,7 +246,7 @@ export default function GoalsPage() {
                 "text-xs tabular-nums flex items-center gap-1",
                 data.currentMonth.expenses.percentage > 100 ? 'text-destructive' : 'text-muted-foreground'
               )}>
-                {data.currentMonth.expenses.percentage.toFixed(1)}% of limit
+                {Number(data.currentMonth.expenses.percentage || 0).toFixed(1)}% of limit
                 {data.currentMonth.expenses.percentage > 100 && (
                   <>
                     <AlertTriangle className="w-3 h-3 ml-1" />
@@ -270,7 +270,7 @@ export default function GoalsPage() {
                 )} />
               </div>
               <div className="text-2xl font-semibold tabular-nums mb-1">
-                {data.currentMonth.savingsRate.actual.toFixed(1)}%
+                {Number(data.currentMonth.savingsRate.actual || 0).toFixed(1)}%
               </div>
               <div className="text-xs text-muted-foreground mb-4">
                 goal: {data.currentMonth.savingsRate.target}%
@@ -357,7 +357,7 @@ export default function GoalsPage() {
                   />
                   <YAxis
                     tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                    tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                    tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                   />
                   <Tooltip
                     contentStyle={{
@@ -402,7 +402,7 @@ export default function GoalsPage() {
                       borderRadius: '8px',
                       fontSize: 12
                     }}
-                    formatter={(value: any) => [`${value.toFixed(1)}%`, 'Savings Rate']}
+                    formatter={(value: any) => [`${Number(value || 0).toFixed(1)}%`, 'Savings Rate']}
                   />
                   <Bar dataKey="savingsRate" fill="hsl(var(--primary))" name="Savings Rate" radius={[4, 4, 0, 0]} />
                 </BarChart>

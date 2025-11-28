@@ -204,7 +204,7 @@ export default function DiagnosticsPage() {
           name: 'Monthly Income',
           status: goalsData.currentMonth?.income?.actual > 0 ? 'success' : 'warning',
           message: goalsData.currentMonth?.income?.actual > 0
-            ? `$${goalsData.currentMonth.income.actual.toFixed(2)} this month`
+            ? `$${Number(goalsData.currentMonth.income.actual || 0).toFixed(2)} this month`
             : 'No income recorded',
           count: Math.round(goalsData.currentMonth?.income?.actual || 0)
         });
@@ -213,7 +213,7 @@ export default function DiagnosticsPage() {
           name: 'Monthly Expenses',
           status: goalsData.currentMonth?.expenses?.actual > 0 ? 'success' : 'warning',
           message: goalsData.currentMonth?.expenses?.actual > 0
-            ? `$${goalsData.currentMonth.expenses.actual.toFixed(2)} this month`
+            ? `$${Number(goalsData.currentMonth.expenses.actual || 0).toFixed(2)} this month`
             : 'No expenses recorded',
           count: Math.round(goalsData.currentMonth?.expenses?.actual || 0)
         });
@@ -221,8 +221,8 @@ export default function DiagnosticsPage() {
         financeChecks.push({
           name: 'Savings Rate',
           status: goalsData.currentMonth?.savingsRate?.actual > 0 ? 'success' : 'warning',
-          message: `${goalsData.currentMonth?.savingsRate?.actual?.toFixed(1) || 0}% savings rate`,
-          details: `Net savings: $${goalsData.currentMonth?.savingsRate?.netSavings?.toFixed(2) || 0}`
+          message: `${Number(goalsData.currentMonth?.savingsRate?.actual || 0).toFixed(1)}% savings rate`,
+          details: `Net savings: $${Number(goalsData.currentMonth?.savingsRate?.netSavings || 0).toFixed(2)}`
         });
       }
     } catch (error: any) {

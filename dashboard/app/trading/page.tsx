@@ -113,9 +113,10 @@ export default function TradingPage() {
   };
 
   const formatPercent = (value: number | null | undefined) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.00%';
-    const sign = value >= 0 ? '+' : '';
-    return `${sign}${value.toFixed(2)}%`;
+    const numValue = Number(value);
+    if (value === null || value === undefined || isNaN(numValue)) return '0.00%';
+    const sign = numValue >= 0 ? '+' : '';
+    return `${sign}${numValue.toFixed(2)}%`;
   };
 
   const formatDate = (dateStr: string) => {
@@ -251,7 +252,7 @@ export default function TradingPage() {
                     />
                     <YAxis
                       tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                      tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`}
                       axisLine={false}
                       tickLine={false}
                       width={60}
@@ -494,7 +495,7 @@ function PositionsTable({ positions, formatCurrency, formatPercent, activeMode }
                 <div className="font-medium">{p.symbol}</div>
                 <div className="text-xs text-muted-foreground">{p.side}</div>
               </td>
-              <td className="py-3 px-4 text-right tabular-nums">{p.qty.toFixed(4)}</td>
+              <td className="py-3 px-4 text-right tabular-nums">{Number(p.qty || 0).toFixed(4)}</td>
               <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.avgEntryPrice)}</td>
               <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.currentPrice)}</td>
               <td className="py-3 px-4 text-right tabular-nums">{formatCurrency(p.marketValue)}</td>

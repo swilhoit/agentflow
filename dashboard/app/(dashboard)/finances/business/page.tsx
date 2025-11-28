@@ -322,7 +322,7 @@ export default function BusinessExpensesPage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    label={({ percent }) => percent ? `${(percent * 100).toFixed(1)}%` : ''}
+                    label={({ percent }) => percent ? `${(Number(percent) * 100).toFixed(1)}%` : ''}
                     labelLine={{ stroke: 'hsl(var(--border))' }}
                   >
                     {data.categoryBreakdown.map((entry, index) => (
@@ -385,7 +385,7 @@ export default function BusinessExpensesPage() {
                 />
                 <YAxis
                   tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                  tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                 />
                 <Tooltip
                   contentStyle={{

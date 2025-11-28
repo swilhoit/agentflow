@@ -411,7 +411,7 @@ export default function LoansPage() {
                 <Percent className="w-4 h-4" />
                 <span className="text-xs font-medium">Avg Interest</span>
               </div>
-              <div className="text-2xl font-semibold tabular-nums">{data.totalInterestRate.toFixed(1)}%</div>
+              <div className="text-2xl font-semibold tabular-nums">{Number(data.totalInterestRate || 0).toFixed(1)}%</div>
               <div className="text-xs text-muted-foreground mt-1">Weighted average</div>
             </CardContent>
           </Card>
@@ -527,7 +527,7 @@ export default function LoansPage() {
                     <div className="mb-4">
                       <div className="flex justify-between text-xs text-muted-foreground mb-2">
                         <span>Progress</span>
-                        <span className="tabular-nums">{loan.percentPaid?.toFixed(1)}% paid</span>
+                        <span className="tabular-nums">{Number(loan.percentPaid || 0).toFixed(1)}% paid</span>
                       </div>
                       <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
                         <div

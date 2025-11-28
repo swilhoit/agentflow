@@ -1,6 +1,19 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/postgres';
 
+/**
+ * Financial Overview API
+ *
+ * Data Conventions (from Teller API):
+ * - Checking accounts: positive = deposits/income, negative = payments/expenses
+ * - Credit cards: positive = purchases (card_payment), negative = payments/refunds
+ *
+ * To calculate correct totals:
+ * - Income: checking account positive transactions (excluding transfers from other accounts)
+ * - Expenses: checking account negative (excluding CC payments) + credit card purchases (positive amounts)
+ * - Transfers: CC payments from checking, CC refund entries (double-entry)
+ */
+
 interface FinancialOverview {
   summary: {
     totalIncome: number;
@@ -39,6 +52,7 @@ interface FinancialOverview {
     amount: number;
     category: string | null;
     merchant: string | null;
+    accountName: string | null;
   }>;
 }
 
@@ -51,31 +65,60 @@ export async function GET(request: Request) {
     const thisMonthStart = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
     const nextMonthStart = `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`;
 
-    // Get income this month (positive amounts)
+    // INCOME: Checking account positive amounts, excluding internal transfers
+    // Internal transfers pattern: "ONLINE FROM" (from savings), account verification micro-deposits
     const incomeResult = await query(
-      `SELECT amount FROM financial_transactions
-       WHERE amount > 0 AND date >= $1 AND date < $2
-       AND (category IS NULL OR category != 'transfer')`,
+      `SELECT amount, description FROM financial_transactions
+       WHERE amount > 0
+       AND date >= $1 AND date < $2
+       AND type = 'transaction'
+       AND account_type = 'depository'
+       AND description NOT ILIKE '%ACCTVERIFY%'`,
       [thisMonthStart, nextMonthStart]
     );
     const totalIncome = (incomeResult.rows || []).reduce((sum: number, tx: any) => sum + Number(tx.amount), 0);
 
-    // Get expenses this month (negative amounts)
-    const expenseResult = await query(
-      `SELECT amount FROM financial_transactions
-       WHERE amount < 0 AND date >= $1 AND date < $2
-       AND (category IS NULL OR category != 'transfer')`,
+    // EXPENSES: Two sources
+    // 1. Credit card purchases (type='card_payment', stored as positive, ARE expenses)
+    // 2. Checking account debits EXCLUDING credit card payments (type='transaction', negative)
+
+    // Credit card purchases (stored positive, are actual spending)
+    const ccExpenseResult = await query(
+      `SELECT amount, description FROM financial_transactions
+       WHERE type = 'card_payment'
+       AND date >= $1 AND date < $2`,
       [thisMonthStart, nextMonthStart]
     );
-    const totalExpenses = (expenseResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
+    const ccExpenses = (ccExpenseResult.rows || []).reduce((sum: number, tx: any) => sum + Number(tx.amount), 0);
 
-    // Business expenses - transactions with category 'Business'
+    // Checking account expenses (stored negative) - EXCLUDE credit card payments
+    // CC payment patterns: "ACH PMT AMEX", "WEB PMTS", "PAYMENT VENMO" etc
+    const checkingExpenseResult = await query(
+      `SELECT amount, description FROM financial_transactions
+       WHERE amount < 0
+       AND date >= $1 AND date < $2
+       AND type = 'transaction'
+       AND account_type = 'depository'
+       AND description NOT ILIKE '%ACH PMT AMEX%'
+       AND description NOT ILIKE '%WEB PMTS%'`,
+      [thisMonthStart, nextMonthStart]
+    );
+    const checkingExpenses = (checkingExpenseResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
+
+    const totalExpenses = ccExpenses + checkingExpenses;
+
+    // Business expenses - estimate from credit card transactions with business-like merchants
+    // (Claude AI, domain registrars, cloud services, etc.)
+    const businessPatterns = ['CLAUDE.AI', 'MIDJOURNEY', 'OPENAI', 'ANTHROPIC', 'VERCEL', 'GITHUB', 'AWS', 'GOOGLE CLOUD', 'DIGITALOCEAN', 'HETZNER', 'NAMECHEAP', 'GODADDY', 'ZOOM', 'SLACK', 'FIGMA', 'NOTION'];
+    const businessConditions = businessPatterns.map((_, i) => `description ILIKE $${i + 3}`).join(' OR ');
     const businessResult = await query(
       `SELECT amount FROM financial_transactions
-       WHERE amount < 0 AND date >= $1 AND date < $2 AND category = 'Business'`,
-      [thisMonthStart, nextMonthStart]
+       WHERE type = 'card_payment'
+       AND date >= $1 AND date < $2
+       AND (${businessConditions})`,
+      [thisMonthStart, nextMonthStart, ...businessPatterns.map(p => `%${p}%`)]
     );
-    const businessExpenses = (businessResult.rows || []).reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount)), 0);
+    const businessExpenses = (businessResult.rows || []).reduce((sum: number, tx: any) => sum + Number(tx.amount), 0);
 
     // Get loan payments from loans table
     let loanPayments = 0;
@@ -88,12 +131,22 @@ export async function GET(request: Request) {
       // Loans table might not have data
     }
 
-    // Get unique accounts from transactions
+    // Account balances - calculate net position for each account
+    // For credit cards: sum of card_payments (owed) minus refunds (paid)
+    // For checking: sum of all transactions
     const accountsResult = await query(
-      `SELECT DISTINCT account_name as name, account_type as type, institution,
-       (SELECT SUM(amount) FROM financial_transactions ft2 WHERE ft2.account_id = ft.account_id) as balance
-       FROM financial_transactions ft
+      `SELECT
+        account_name as name,
+        account_type as type,
+        institution,
+        account_id,
+        SUM(CASE
+          WHEN account_type = 'credit' THEN -amount  -- Flip sign for credit cards
+          ELSE amount
+        END) as balance
+       FROM financial_transactions
        WHERE account_name IS NOT NULL
+       GROUP BY account_name, account_type, institution, account_id
        ORDER BY account_name`
     );
     const accounts = (accountsResult.rows || []).map((acc: any) => ({
@@ -103,64 +156,104 @@ export async function GET(request: Request) {
       institution: acc.institution || 'Unknown'
     }));
 
-    // Monthly trend - last 6 months
+    // Monthly trend - last 6 months with CORRECT income/expense calculation
     const sixMonthsAgo = new Date(now);
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
 
     const monthlyResult = await query(
-      `SELECT date, amount, category FROM financial_transactions
-       WHERE date >= $1 AND (category IS NULL OR category != 'transfer')
+      `SELECT date, amount, type, account_type, description FROM financial_transactions
+       WHERE date >= $1
        ORDER BY date`,
       [sixMonthsAgoStr]
     );
 
-    // Group by month
+    // Group by month with correct calculation
     const monthlyMap = new Map<string, { income: number; expenses: number }>();
     (monthlyResult.rows || []).forEach((tx: any) => {
       const dateStr = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date);
-      const month = dateStr.substring(0, 7); // YYYY-MM
+      const month = dateStr.substring(0, 7);
       if (!monthlyMap.has(month)) {
         monthlyMap.set(month, { income: 0, expenses: 0 });
       }
       const entry = monthlyMap.get(month)!;
       const amount = Number(tx.amount);
-      if (amount > 0) {
-        entry.income += amount;
-      } else {
-        entry.expenses += Math.abs(amount);
+      const desc = (tx.description || '').toUpperCase();
+
+      // Skip transfers/payments between accounts
+      if (tx.type === 'refund' ||
+          desc.includes('ACH PMT AMEX') ||
+          desc.includes('WEB PMTS') ||
+          desc.includes('ACCTVERIFY')) {
+        return;
+      }
+
+      if (tx.type === 'card_payment') {
+        // Credit card purchases are expenses
+        entry.expenses += amount;
+      } else if (tx.account_type === 'depository') {
+        if (amount > 0) {
+          entry.income += amount;
+        } else {
+          entry.expenses += Math.abs(amount);
+        }
       }
     });
 
     const monthlyTrend = Array.from(monthlyMap.entries())
       .map(([month, data]) => ({
         month,
-        income: data.income,
-        expenses: data.expenses,
-        net: data.income - data.expenses
+        income: Math.round(data.income * 100) / 100,
+        expenses: Math.round(data.expenses * 100) / 100,
+        net: Math.round((data.income - data.expenses) * 100) / 100
       }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    // Category breakdown
-    const categoryResult = await query(
-      `SELECT category, amount FROM financial_transactions
-       WHERE amount < 0 AND date >= $1 AND date < $2
-       AND category IS NOT NULL AND category != 'transfer'`,
+    // Category breakdown - based on merchant/description patterns since category is often null
+    // Group expenses by detected category
+    const allExpensesResult = await query(
+      `SELECT description, amount, type, account_type FROM financial_transactions
+       WHERE date >= $1 AND date < $2
+       AND ((type = 'card_payment') OR (type = 'transaction' AND amount < 0 AND account_type = 'depository'))
+       AND description NOT ILIKE '%ACH PMT AMEX%'
+       AND description NOT ILIKE '%WEB PMTS%'`,
       [thisMonthStart, nextMonthStart]
     );
 
     const categoryMap = new Map<string, number>();
-    (categoryResult.rows || []).forEach((tx: any) => {
-      const cat = tx.category || 'Uncategorized';
-      categoryMap.set(cat, (categoryMap.get(cat) || 0) + Math.abs(Number(tx.amount)));
+    (allExpensesResult.rows || []).forEach((tx: any) => {
+      const desc = (tx.description || '').toUpperCase();
+      const amount = tx.type === 'card_payment' ? Number(tx.amount) : Math.abs(Number(tx.amount));
+
+      // Categorize by merchant patterns
+      let category = 'Other';
+      if (desc.includes('WHOLEFDS') || desc.includes('WHOLE FOODS') || desc.includes('TRADER JOE') || desc.includes('GROCERY') || desc.includes('SAFEWAY') || desc.includes('KROGER')) {
+        category = 'Groceries';
+      } else if (desc.includes('UBER EATS') || desc.includes('DOORDASH') || desc.includes('GRUBHUB') || desc.includes('POSTMATES') || desc.includes('RESTAURANT') || desc.includes('CAFE') || desc.includes('COFFEE') || desc.includes('BAR ') || desc.includes('LOUNGE') || desc.includes('FOGO') || desc.includes('ROKA AKOR')) {
+        category = 'Dining';
+      } else if (desc.includes('AMAZON') || desc.includes('APPLE') || desc.includes('TARGET') || desc.includes('WALMART')) {
+        category = 'Shopping';
+      } else if (desc.includes('HILTON') || desc.includes('MARRIOTT') || desc.includes('HOTEL') || desc.includes('AIRBNB') || desc.includes('UNITED') || desc.includes('DELTA') || desc.includes('SOUTHWEST') || desc.includes('AIRLINE')) {
+        category = 'Travel';
+      } else if (desc.includes('CLAUDE') || desc.includes('MIDJOURNEY') || desc.includes('OPENAI') || desc.includes('GITHUB') || desc.includes('VERCEL') || desc.includes('NOTION') || desc.includes('ZOOM') || desc.includes('FIGMA')) {
+        category = 'Software/Tech';
+      } else if (desc.includes('AT&T') || desc.includes('VERIZON') || desc.includes('T-MOBILE') || desc.includes('COMCAST') || desc.includes('SPECTRUM')) {
+        category = 'Utilities';
+      } else if (desc.includes('GAS') || desc.includes('SHELL') || desc.includes('CHEVRON') || desc.includes('EXXON') || desc.includes('BP ')) {
+        category = 'Gas';
+      } else if (desc.includes('VENMO') || desc.includes('PAYPAL') || desc.includes('ZELLE') || desc.includes('CASH APP')) {
+        category = 'Transfers/P2P';
+      }
+
+      categoryMap.set(category, (categoryMap.get(category) || 0) + amount);
     });
 
     const totalCategoryAmount = Array.from(categoryMap.values()).reduce((sum, val) => sum + val, 0);
     const categoryBreakdown = Array.from(categoryMap.entries())
       .map(([category, amount]) => ({
         category,
-        amount,
-        percentage: totalCategoryAmount > 0 ? (amount / totalCategoryAmount) * 100 : 0
+        amount: Math.round(amount * 100) / 100,
+        percentage: totalCategoryAmount > 0 ? Math.round((amount / totalCategoryAmount) * 1000) / 10 : 0
       }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 8);
@@ -185,33 +278,38 @@ export async function GET(request: Request) {
       // Loans table might not have data
     }
 
-    // Recent transactions
+    // Recent transactions (excluding internal transfers)
     const recentResult = await query(
-      `SELECT date, description, amount, category, merchant
+      `SELECT date, description, amount, category, merchant, account_name, type
        FROM financial_transactions
-       WHERE category IS NULL OR category != 'transfer'
-       ORDER BY date DESC LIMIT 10`
+       WHERE type != 'refund'
+       AND description NOT ILIKE '%ACH PMT AMEX%'
+       AND description NOT ILIKE '%WEB PMTS%'
+       AND description NOT ILIKE '%ACCTVERIFY%'
+       ORDER BY date DESC LIMIT 15`
     );
 
     const recentTransactions = (recentResult.rows || []).map((tx: any) => ({
       date: tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date),
       description: tx.description || '',
-      amount: Number(tx.amount),
+      // Flip sign for credit card purchases to show as negative (expense)
+      amount: tx.type === 'card_payment' ? -Number(tx.amount) : Number(tx.amount),
       category: tx.category,
-      merchant: tx.merchant
+      merchant: tx.merchant,
+      accountName: tx.account_name
     }));
 
     // Calculate summary
-    const netSavings = totalIncome - totalExpenses - businessExpenses - loanPayments;
+    const netSavings = totalIncome - totalExpenses;
     const savingsRate = totalIncome > 0 ? (netSavings / totalIncome) * 100 : 0;
 
     const overview: FinancialOverview = {
       summary: {
-        totalIncome,
-        totalExpenses,
-        netSavings,
-        savingsRate,
-        businessExpenses,
+        totalIncome: Math.round(totalIncome * 100) / 100,
+        totalExpenses: Math.round(totalExpenses * 100) / 100,
+        netSavings: Math.round(netSavings * 100) / 100,
+        savingsRate: Math.round(savingsRate * 10) / 10,
+        businessExpenses: Math.round(businessExpenses * 100) / 100,
         loanPayments
       },
       accounts,

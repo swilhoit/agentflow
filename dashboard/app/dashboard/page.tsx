@@ -208,7 +208,7 @@ export default function DashboardOverview() {
                   {formatCurrency(netSavings)}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {savingsRate.toFixed(1)}% savings rate
+                  {Number(savingsRate || 0).toFixed(1)}% savings rate
                 </div>
               </CardContent>
             </Card>

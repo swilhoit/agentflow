@@ -152,7 +152,7 @@ export default function AnalyticsPage() {
                 "text-2xl font-semibold tabular-nums",
                 changeIsPositive ? 'text-destructive' : 'text-success'
               )}>
-                {changeIsPositive ? '+' : ''}{data.monthlyComparison.change.toFixed(1)}%
+                {changeIsPositive ? '+' : ''}{Number(data.monthlyComparison.change || 0).toFixed(1)}%
               </div>
             </CardContent>
           </Card>
@@ -175,7 +175,7 @@ export default function AnalyticsPage() {
                   <XAxis
                     type="number"
                     tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                    tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                    tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                   />
                   <YAxis
                     type="category"

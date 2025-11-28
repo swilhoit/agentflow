@@ -25,7 +25,8 @@ export function formatDate(date: Date | string): string {
 
 // Format percentage
 export function formatPercentage(value: number, decimals: number = 2): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(decimals)}%`;
+  const numValue = Number(value) || 0;
+  return `${numValue >= 0 ? '+' : ''}${numValue.toFixed(decimals)}%`;
 }
 
 // Calculate percentage change

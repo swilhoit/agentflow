@@ -172,7 +172,7 @@ export default function IncomeTrackerPage() {
                 "text-xs mt-1 tabular-nums",
                 data.summary.changeFromLastMonth >= 0 ? 'text-success' : 'text-destructive'
               )}>
-                {data.summary.changeFromLastMonth >= 0 ? '+' : ''}{data.summary.changeFromLastMonth.toFixed(1)}% vs last month
+                {data.summary.changeFromLastMonth >= 0 ? '+' : ''}{Number(data.summary.changeFromLastMonth || 0).toFixed(1)}% vs last month
               </div>
             </CardContent>
           </Card>
@@ -226,7 +226,7 @@ export default function IncomeTrackerPage() {
                 />
                 <YAxis
                   tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                  tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                 />
                 <Tooltip
                   contentStyle={{
@@ -267,7 +267,7 @@ export default function IncomeTrackerPage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    label={({ percent }) => percent ? `${(percent * 100).toFixed(1)}%` : ''}
+                    label={({ percent }) => percent ? `${(Number(percent) * 100).toFixed(1)}%` : ''}
                     labelLine={{ stroke: 'hsl(var(--border))' }}
                   >
                     {data.sources.map((entry, index) => (

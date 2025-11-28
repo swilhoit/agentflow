@@ -244,8 +244,8 @@ export default async function RecurringTasksPage() {
 
                         {taskStats.avgDuration > 0 && (
                           <div className="mt-2 text-xs text-muted-foreground">
-                            Avg duration: {(taskStats.avgDuration / 1000).toFixed(1)}s
-                            {taskStats.maxDuration > 0 && ` · Max: ${(taskStats.maxDuration / 1000).toFixed(1)}s`}
+                            Avg duration: {(Number(taskStats.avgDuration) / 1000).toFixed(1)}s
+                            {taskStats.maxDuration > 0 && ` · Max: ${(Number(taskStats.maxDuration) / 1000).toFixed(1)}s`}
                           </div>
                         )}
                       </div>

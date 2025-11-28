@@ -205,12 +205,13 @@ export default function InvestmentsPage() {
   };
 
   const formatCurrency = (amount: number | null | undefined) => {
-    if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
-    if (amount >= 1e12) return `$${(amount / 1e12).toFixed(2)}T`;
-    if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
-    if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
-    if (amount >= 1e3) return `$${(amount / 1e3).toFixed(2)}K`;
-    return `$${amount.toFixed(2)}`;
+    const numAmount = Number(amount);
+    if (amount === null || amount === undefined || isNaN(numAmount)) return '$0.00';
+    if (numAmount >= 1e12) return `$${(numAmount / 1e12).toFixed(2)}T`;
+    if (numAmount >= 1e9) return `$${(numAmount / 1e9).toFixed(2)}B`;
+    if (numAmount >= 1e6) return `$${(numAmount / 1e6).toFixed(2)}M`;
+    if (numAmount >= 1e3) return `$${(numAmount / 1e3).toFixed(2)}K`;
+    return `$${numAmount.toFixed(2)}`;
   };
 
   const formatDate = (dateStr: string) => {
@@ -222,9 +223,10 @@ export default function InvestmentsPage() {
   };
 
   const formatPercent = (value: number | null | undefined, showSign = true) => {
-    if (value === null || value === undefined || isNaN(value)) return '—';
-    const sign = showSign && value >= 0 ? '+' : '';
-    return `${sign}${value.toFixed(2)}%`;
+    const numValue = Number(value);
+    if (value === null || value === undefined || isNaN(numValue)) return '—';
+    const sign = showSign && numValue >= 0 ? '+' : '';
+    return `${sign}${numValue.toFixed(2)}%`;
   };
 
   if (loading) {
@@ -467,7 +469,7 @@ export default function InvestmentsPage() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <span className="text-sm tabular-nums">${stock.price.toFixed(2)}</span>
+                          <span className="text-sm tabular-nums">${Number(stock.price || 0).toFixed(2)}</span>
                         </td>
                         <td className={cn(
                           "py-3 px-4 text-right text-sm tabular-nums",
@@ -524,7 +526,7 @@ export default function InvestmentsPage() {
                                     />
                                     <YAxis
                                       tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                                      tickFormatter={(value) => `$${value.toFixed(0)}`}
+                                      tickFormatter={(value) => `$${Number(value).toFixed(0)}`}
                                       domain={['dataMin', 'dataMax']}
                                     />
                                     <Tooltip
@@ -534,7 +536,7 @@ export default function InvestmentsPage() {
                                         borderRadius: '8px',
                                         fontSize: 12
                                       }}
-                                      formatter={(value: any) => [`$${value.toFixed(2)}`, 'Price']}
+                                      formatter={(value: any) => [`$${Number(value || 0).toFixed(2)}`, 'Price']}
                                       labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                                     />
                                     <Line

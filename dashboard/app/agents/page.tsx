@@ -318,7 +318,7 @@ export default async function AgentsPage() {
                         {exec.duration && (
                           <>
                             <span>·</span>
-                            <span className="tabular-nums">{(exec.duration / 1000).toFixed(1)}s</span>
+                            <span className="tabular-nums">{(Number(exec.duration) / 1000).toFixed(1)}s</span>
                           </>
                         )}
                       </div>

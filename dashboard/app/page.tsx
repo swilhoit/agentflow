@@ -118,7 +118,7 @@ export default function Home() {
                       />
                       <YAxis
                         tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                         axisLine={false}
                         tickLine={false}
                         width={50}

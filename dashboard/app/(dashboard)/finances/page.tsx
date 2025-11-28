@@ -153,7 +153,7 @@ export default function FinancesPage() {
                 {formatCurrency(overview.summary.netSavings)}
               </div>
               <div className="text-xs text-muted-foreground mt-1 tabular-nums">
-                {overview.summary.savingsRate.toFixed(1)}% savings rate
+                {Number(overview.summary.savingsRate || 0).toFixed(1)}% savings rate
               </div>
             </CardContent>
           </Card>
@@ -246,7 +246,7 @@ export default function FinancesPage() {
                   />
                   <YAxis
                     tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                    tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                    tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`}
                   />
                   <Tooltip
                     contentStyle={{
@@ -279,7 +279,7 @@ export default function FinancesPage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    label={({ name, percent }) => name && percent ? `${name}: ${(percent * 100).toFixed(0)}%` : ''}
+                    label={({ name, percent }) => name && percent ? `${name}: ${(Number(percent) * 100).toFixed(0)}%` : ''}
                     labelLine={{ stroke: 'hsl(var(--border))' }}
                   >
                     {overview.categoryBreakdown.map((entry: any, index: number) => (
@@ -348,7 +348,7 @@ export default function FinancesPage() {
                       />
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 tabular-nums">
-                      {cat.percentage.toFixed(1)}% of total spending
+                      {Number(cat.percentage || 0).toFixed(1)}% of total spending
                     </div>
                   </div>
                 ))}
