@@ -613,9 +613,15 @@ export class ServerMonitorService extends EventEmitter {
       this.alertHistory.shift();
     }
 
-    // Log
-    const logFn = alert.level === 'critical' ? logger.error : alert.level === 'warning' ? logger.warn : logger.info;
-    logFn(`[Monitor] ${alert.title}: ${alert.message}`);
+    // Log (use direct calls to preserve 'this' binding)
+    const msg = `[Monitor] ${alert.title}: ${alert.message}`;
+    if (alert.level === 'critical') {
+      logger.error(msg);
+    } else if (alert.level === 'warning') {
+      logger.warn(msg);
+    } else {
+      logger.info(msg);
+    }
 
     // Emit event
     this.emit('alert', alert);
