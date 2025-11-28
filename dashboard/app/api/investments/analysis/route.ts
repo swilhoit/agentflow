@@ -26,7 +26,17 @@ export async function GET(request: Request) {
     }
 
     if (!latestThesis) {
-      return NextResponse.json({ error: 'No investment thesis found' }, { status: 404 });
+      // Return 200 with empty state instead of 404 to prevent frontend errors
+      return NextResponse.json({
+        configured: false,
+        message: 'No investment thesis found. Configure your investment thesis in the database.',
+        analysis: null,
+        thesis: null,
+        watchlist: [],
+        timestamp: new Date().toISOString(),
+        source: 'None',
+        date: new Date().toISOString().split('T')[0]
+      });
     }
 
     // Try to get latest market data date and watchlist

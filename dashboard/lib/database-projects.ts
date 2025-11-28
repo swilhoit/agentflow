@@ -33,12 +33,27 @@ export interface ProjectCard {
   due_date?: string;
   labels?: string[];
   assignee?: string;
+  assigned_agent?: string;
+  completed_by_agent?: string;
   estimated_hours?: number;
   actual_hours?: number;
   is_completed?: boolean;
   completed_at?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface CardActivity {
+  id?: string;
+  card_id: string;
+  project_id: string;
+  agent_name?: string;
+  user_id?: string;
+  action_type: 'created' | 'updated' | 'moved' | 'completed' | 'reopened' | 'assigned' | 'unassigned' | 'commented' | 'priority_changed' | 'due_date_changed';
+  action_details?: Record<string, any>;
+  from_value?: string;
+  to_value?: string;
+  created_at?: string;
 }
 
 export interface ProjectLabel {
@@ -368,6 +383,14 @@ export const db_queries_projects = {
           setClauses.push(`completed_at = NULL`);
         }
       }
+      if (updates.assigned_agent !== undefined) {
+        setClauses.push(`assigned_agent = $${paramIndex++}`);
+        values.push(updates.assigned_agent);
+      }
+      if (updates.completed_by_agent !== undefined) {
+        setClauses.push(`completed_by_agent = $${paramIndex++}`);
+        values.push(updates.completed_by_agent);
+      }
 
       setClauses.push(`updated_at = NOW()`);
       values.push(cardId);
@@ -550,6 +573,213 @@ export const db_queries_projects = {
       return true;
     } catch (e) {
       console.error('Error deleting label:', e);
+      throw e;
+    }
+  },
+
+  // Card Activity Tracking
+  logCardActivity: async (activity: Omit<CardActivity, 'id' | 'created_at'>): Promise<CardActivity> => {
+    try {
+      const result = await query(
+        `INSERT INTO card_activity (card_id, project_id, agent_name, user_id, action_type, action_details, from_value, to_value)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          activity.card_id,
+          activity.project_id,
+          activity.agent_name,
+          activity.user_id,
+          activity.action_type,
+          JSON.stringify(activity.action_details || {}),
+          activity.from_value,
+          activity.to_value,
+        ]
+      );
+      return result.rows[0];
+    } catch (e) {
+      console.error('Error logging card activity:', e);
+      throw e;
+    }
+  },
+
+  getCardActivity: async (cardId: string, limit: number = 50): Promise<CardActivity[]> => {
+    try {
+      const result = await query(
+        `SELECT * FROM card_activity
+         WHERE card_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [cardId, limit]
+      );
+      return result.rows || [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  getProjectActivity: async (projectId: string, limit: number = 100): Promise<CardActivity[]> => {
+    try {
+      const result = await query(
+        `SELECT ca.*, pc.title as card_title
+         FROM card_activity ca
+         LEFT JOIN project_cards pc ON ca.card_id = pc.id
+         WHERE ca.project_id = $1
+         ORDER BY ca.created_at DESC
+         LIMIT $2`,
+        [projectId, limit]
+      );
+      return result.rows || [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  getAgentActivity: async (agentName: string, projectId?: string, limit: number = 50): Promise<CardActivity[]> => {
+    try {
+      let sql = `SELECT ca.*, pc.title as card_title
+                 FROM card_activity ca
+                 LEFT JOIN project_cards pc ON ca.card_id = pc.id
+                 WHERE ca.agent_name = $1`;
+      const params: any[] = [agentName];
+
+      if (projectId) {
+        params.push(projectId);
+        sql += ` AND ca.project_id = $${params.length}`;
+      }
+
+      params.push(limit);
+      sql += ` ORDER BY ca.created_at DESC LIMIT $${params.length}`;
+
+      const result = await query(sql, params);
+      return result.rows || [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  // Get cards assigned to a specific agent
+  getAgentAssignedCards: async (agentName: string, projectId?: string): Promise<ProjectCard[]> => {
+    try {
+      let sql = `SELECT * FROM project_cards WHERE assigned_agent = $1`;
+      const params: any[] = [agentName];
+
+      if (projectId) {
+        params.push(projectId);
+        sql += ` AND project_id = $${params.length}`;
+      }
+
+      sql += ` ORDER BY priority DESC NULLS LAST, due_date ASC NULLS LAST`;
+
+      const result = await query(sql, params);
+      return result.rows || [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  // Get agent workload summary for a project
+  getAgentWorkload: async (projectId: string): Promise<{ agent_name: string; assigned: number; completed: number; pending: number }[]> => {
+    try {
+      const result = await query(
+        `SELECT
+           assigned_agent as agent_name,
+           COUNT(*) as assigned,
+           COUNT(*) FILTER (WHERE is_completed = true) as completed,
+           COUNT(*) FILTER (WHERE is_completed = false) as pending
+         FROM project_cards
+         WHERE project_id = $1 AND assigned_agent IS NOT NULL
+         GROUP BY assigned_agent
+         ORDER BY assigned DESC`,
+        [projectId]
+      );
+      return result.rows.map((row: any) => ({
+        agent_name: row.agent_name,
+        assigned: parseInt(row.assigned) || 0,
+        completed: parseInt(row.completed) || 0,
+        pending: parseInt(row.pending) || 0,
+      }));
+    } catch (e) {
+      return [];
+    }
+  },
+
+  // Get tasks completed by agents in a project
+  getAgentCompletions: async (projectId: string): Promise<{ agent_name: string; count: number }[]> => {
+    try {
+      const result = await query(
+        `SELECT
+           completed_by_agent as agent_name,
+           COUNT(*) as count
+         FROM project_cards
+         WHERE project_id = $1 AND completed_by_agent IS NOT NULL
+         GROUP BY completed_by_agent
+         ORDER BY count DESC`,
+        [projectId]
+      );
+      return result.rows.map((row: any) => ({
+        agent_name: row.agent_name,
+        count: parseInt(row.count) || 0,
+      }));
+    } catch (e) {
+      return [];
+    }
+  },
+
+  // Assign agent to card (with activity logging)
+  assignAgentToCard: async (cardId: string, agentName: string, projectId: string, actorType: 'agent' | 'user' = 'user', actorId?: string): Promise<ProjectCard> => {
+    try {
+      // Get current assignment
+      const currentCard = await db_queries_projects.getCard(cardId);
+      const previousAgent = currentCard?.assigned_agent;
+
+      // Update the card
+      const result = await query(
+        `UPDATE project_cards SET assigned_agent = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [agentName, cardId]
+      );
+
+      // Log activity
+      await db_queries_projects.logCardActivity({
+        card_id: cardId,
+        project_id: projectId,
+        agent_name: actorType === 'agent' ? actorId : undefined,
+        user_id: actorType === 'user' ? actorId : undefined,
+        action_type: 'assigned',
+        from_value: previousAgent || undefined,
+        to_value: agentName,
+        action_details: { assigned_agent: agentName },
+      });
+
+      return result.rows[0];
+    } catch (e) {
+      console.error('Error assigning agent to card:', e);
+      throw e;
+    }
+  },
+
+  // Complete card by agent (with activity logging)
+  completeCardByAgent: async (cardId: string, agentName: string, projectId: string): Promise<ProjectCard> => {
+    try {
+      const result = await query(
+        `UPDATE project_cards
+         SET is_completed = true, completed_at = NOW(), completed_by_agent = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [agentName, cardId]
+      );
+
+      // Log activity
+      await db_queries_projects.logCardActivity({
+        card_id: cardId,
+        project_id: projectId,
+        agent_name: agentName,
+        action_type: 'completed',
+        action_details: { completed_by: agentName },
+      });
+
+      return result.rows[0];
+    } catch (e) {
+      console.error('Error completing card by agent:', e);
       throw e;
     }
   },

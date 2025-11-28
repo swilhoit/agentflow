@@ -11,6 +11,10 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'AgentFlow Dashboard',
   description: 'Personal management dashboard for finances, goals, and productivity',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon.svg',
+  },
 };
 
 export default function RootLayout({

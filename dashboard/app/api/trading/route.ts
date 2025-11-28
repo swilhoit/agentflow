@@ -36,12 +36,35 @@ export async function GET(request: Request) {
     // Check if credentials are configured
     const credentials = getAlpacaCredentials(isPaper);
     if (!credentials.apiKey || !credentials.secretKey) {
+      // Return 200 with unconfigured state to prevent frontend retry loops
       return NextResponse.json({
-        error: 'Trading API not configured',
-        details: `Alpaca ${isPaper ? 'paper' : 'live'} trading credentials not set`,
         configured: false,
-        isPaper
-      }, { status: 503 });
+        isPaper,
+        message: `Alpaca ${isPaper ? 'paper' : 'live'} trading credentials not set`,
+        account: null,
+        positions: [],
+        openOrders: [],
+        closedOrders: [],
+        portfolioHistory: [],
+        metrics: {
+          totalEquity: 0,
+          portfolioValue: 0,
+          cash: 0,
+          buyingPower: 0,
+          dailyChange: 0,
+          dailyChangePercent: 0,
+          totalUnrealizedPL: 0,
+          totalUnrealizedPLPercent: 0,
+          positionsCount: 0,
+          openOrdersCount: 0,
+          totalTrades: 0,
+          buyOrdersCount: 0,
+          sellOrdersCount: 0,
+          daytradeCount: 0,
+          patternDayTrader: false
+        },
+        lastUpdated: new Date().toISOString()
+      });
     }
 
     const client = getAlpacaClient(isPaper);

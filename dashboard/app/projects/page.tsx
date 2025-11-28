@@ -21,7 +21,7 @@ import {
   Check,
   AlertCircle,
 } from 'lucide-react';
-import { ProjectCard, ProjectColumn, Project } from '@/lib/database-projects';
+import { ProjectCard, ProjectColumn, Project, CardActivity } from '@/lib/database-projects';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'board' | 'calendar' | 'table';
@@ -43,6 +43,13 @@ interface ProjectStats {
   completionRate: number;
 }
 
+interface AgentConfig {
+  agent_name: string;
+  display_name: string;
+  agent_type: string;
+  status: string;
+}
+
 const DEFAULT_USER_ID = 'default-user';
 
 export default function ProjectsPage() {
@@ -58,6 +65,37 @@ export default function ProjectsPage() {
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [cardActivity, setCardActivity] = useState<CardActivity[]>([]);
+
+  // Fetch agents list
+  const fetchAgents = useCallback(async () => {
+    try {
+      const response = await fetch('/api/agents');
+      if (response.ok) {
+        const data = await response.json();
+        setAgents(data.agents || []);
+      }
+    } catch (e: any) {
+      console.error('Error fetching agents:', e);
+    }
+  }, []);
+
+  // Fetch card activity
+  const fetchCardActivity = useCallback(async (cardId: string) => {
+    try {
+      const response = await fetch(`/api/projects/cards/${cardId}/activity`);
+      if (response.ok) {
+        const data = await response.json();
+        setCardActivity(data.activity || []);
+      } else {
+        setCardActivity([]);
+      }
+    } catch (e: any) {
+      console.error('Error fetching card activity:', e);
+      setCardActivity([]);
+    }
+  }, []);
 
   // Fetch all projects
   const fetchProjects = useCallback(async () => {
@@ -108,7 +146,8 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     fetchProjects();
-  }, [fetchProjects]);
+    fetchAgents();
+  }, [fetchProjects, fetchAgents]);
 
   useEffect(() => {
     fetchProjectData();
@@ -239,9 +278,12 @@ export default function ProjectsPage() {
     }
   };
 
-  const handleCardClick = (card: ProjectCard) => {
+  const handleCardClick = async (card: ProjectCard) => {
     setSelectedCard(card);
     setIsModalOpen(true);
+    if (card.id) {
+      await fetchCardActivity(card.id);
+    }
   };
 
   const allCards = projectData?.columns.flatMap((col) => col.cards) || [];
@@ -491,10 +533,13 @@ export default function ProjectsPage() {
           <CardDetailModal
             card={selectedCard}
             columns={projectData?.columns || []}
+            agents={agents}
+            activity={cardActivity}
             isOpen={isModalOpen}
             onClose={() => {
               setIsModalOpen(false);
               setSelectedCard(null);
+              setCardActivity([]);
             }}
             onUpdate={handleUpdateCard}
             onDelete={handleDeleteCard}

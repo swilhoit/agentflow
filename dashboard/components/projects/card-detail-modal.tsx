@@ -14,16 +14,28 @@ import {
   AlignLeft,
   Layout,
   MoreHorizontal,
-  Flag
+  Flag,
+  Bot,
+  ArrowRight,
+  Zap
 } from 'lucide-react';
-import { ProjectCard, ProjectColumn } from '@/lib/database-projects';
+import { ProjectCard, ProjectColumn, CardActivity } from '@/lib/database-projects';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
+interface AgentConfig {
+  agent_name: string;
+  display_name: string;
+  agent_type: string;
+  status: string;
+}
+
 interface CardDetailModalProps {
   card: ProjectCard | null;
   columns: ProjectColumn[];
+  agents?: AgentConfig[];
+  activity?: CardActivity[];
   isOpen: boolean;
   onClose: () => void;
   onUpdate: (cardId: string, updates: Partial<ProjectCard>) => Promise<void>;
@@ -41,6 +53,8 @@ const PRIORITIES = [
 export function CardDetailModal({
   card,
   columns,
+  agents = [],
+  activity = [],
   isOpen,
   onClose,
   onUpdate,
@@ -56,6 +70,7 @@ export function CardDetailModal({
   const [labels, setLabels] = useState<string[]>([]);
   const [newLabel, setNewLabel] = useState('');
   const [isCompleted, setIsCompleted] = useState(false);
+  const [assignedAgent, setAssignedAgent] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -69,6 +84,7 @@ export function CardDetailModal({
       setActualHours(card.actual_hours?.toString() || '');
       setLabels(card.labels || []);
       setIsCompleted(card.is_completed || false);
+      setAssignedAgent(card.assigned_agent || '');
     }
   }, [card]);
 
@@ -87,6 +103,7 @@ export function CardDetailModal({
         actual_hours: actualHours ? parseFloat(actualHours) : undefined,
         labels: labels.length > 0 ? labels : undefined,
         is_completed: isCompleted,
+        assigned_agent: assignedAgent || undefined,
       });
       onClose();
     } catch (e) {
@@ -176,22 +193,23 @@ export function CardDetailModal({
                 />
               </div>
 
-              {/* Activity / Comments (Placeholder) */}
+              {/* Activity History */}
               <div className="space-y-3 pt-6 border-t border-border/50">
                 <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                   <ActivityIcon className="w-4 h-4" />
                   Activity
                 </div>
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
-                    ME
+                {activity.length > 0 ? (
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                    {activity.map((act) => (
+                      <ActivityItem key={act.id} activity={act} />
+                    ))}
                   </div>
-                  <div className="flex-1">
-                    <div className="bg-muted/30 border border-border rounded-md p-3 text-sm text-muted-foreground">
-                      Comment functionality coming soon...
-                    </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground py-4 text-center">
+                    No activity recorded yet
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
@@ -247,19 +265,41 @@ export function CardDetailModal({
                     </select>
                   </div>
 
-                  {/* Assignee */}
+                  {/* Agent Assignment */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <User className="w-4 h-4" />
-                      Assignee
+                      <Bot className="w-4 h-4" />
+                      Agent
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary">
-                        ME
-                      </div>
-                      <span className="text-sm">Me</span>
-                    </div>
+                    <select
+                      value={assignedAgent}
+                      onChange={(e) => setAssignedAgent(e.target.value)}
+                      className="bg-transparent text-sm text-right focus:outline-none cursor-pointer hover:text-primary max-w-[140px]"
+                    >
+                      <option value="">Unassigned</option>
+                      {agents.map((agent) => (
+                        <option key={agent.agent_name} value={agent.agent_name}>
+                          {agent.display_name || agent.agent_name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+
+                  {/* Show completed by agent if applicable */}
+                  {card.is_completed && card.completed_by_agent && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        Completed by
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-green-100 flex items-center justify-center">
+                          <Bot className="w-3 h-3 text-green-700" />
+                        </div>
+                        <span className="text-sm text-green-700 font-medium">{card.completed_by_agent}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Due Date */}
                   <div className="flex items-center justify-between">
@@ -380,5 +420,77 @@ function ActivityIcon(props: React.SVGProps<SVGSVGElement>) {
     >
       <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
     </svg>
+  );
+}
+
+const ACTION_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  created: { label: 'created this task', icon: <Zap className="w-3 h-3" />, color: 'text-blue-600' },
+  updated: { label: 'updated this task', icon: <AlignLeft className="w-3 h-3" />, color: 'text-slate-600' },
+  moved: { label: 'moved this task', icon: <ArrowRight className="w-3 h-3" />, color: 'text-purple-600' },
+  completed: { label: 'completed this task', icon: <CheckCircle2 className="w-3 h-3" />, color: 'text-green-600' },
+  reopened: { label: 'reopened this task', icon: <Circle className="w-3 h-3" />, color: 'text-orange-600' },
+  assigned: { label: 'assigned', icon: <Bot className="w-3 h-3" />, color: 'text-violet-600' },
+  unassigned: { label: 'unassigned', icon: <User className="w-3 h-3" />, color: 'text-slate-600' },
+  commented: { label: 'commented', icon: <AlignLeft className="w-3 h-3" />, color: 'text-blue-600' },
+  priority_changed: { label: 'changed priority', icon: <Flag className="w-3 h-3" />, color: 'text-orange-600' },
+  due_date_changed: { label: 'changed due date', icon: <Calendar className="w-3 h-3" />, color: 'text-blue-600' },
+};
+
+function ActivityItem({ activity }: { activity: CardActivity }) {
+  const actionInfo = ACTION_LABELS[activity.action_type] || {
+    label: activity.action_type,
+    icon: <Zap className="w-3 h-3" />,
+    color: 'text-muted-foreground',
+  };
+
+  const actor = activity.agent_name || activity.user_id || 'System';
+  const isAgent = !!activity.agent_name;
+
+  const formatTime = (dateStr?: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  return (
+    <div className="flex gap-3 items-start">
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+        isAgent
+          ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
+          : 'bg-primary/10 text-primary'
+      }`}>
+        {isAgent ? <Bot className="w-3.5 h-3.5" /> : actor.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-sm">{actor}</span>
+          <span className={`text-sm ${actionInfo.color}`}>{actionInfo.label}</span>
+          {activity.from_value && activity.to_value && (
+            <span className="text-xs text-muted-foreground">
+              from <span className="font-medium">{activity.from_value}</span> to{' '}
+              <span className="font-medium">{activity.to_value}</span>
+            </span>
+          )}
+          {activity.to_value && !activity.from_value && activity.action_type === 'assigned' && (
+            <span className="text-xs text-muted-foreground">
+              to <span className="font-medium">{activity.to_value}</span>
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          {formatTime(activity.created_at)}
+        </div>
+      </div>
+    </div>
   );
 }

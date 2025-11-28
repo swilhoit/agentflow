@@ -10,7 +10,9 @@ import {
   Trash2,
   Edit2,
   X,
-  MoreHorizontal
+  MoreHorizontal,
+  Bot,
+  User
 } from 'lucide-react';
 import { ProjectCard, ProjectColumn } from '@/lib/database-projects';
 import { Badge } from '@/components/ui/badge';
@@ -240,8 +242,8 @@ export function BoardView({
                   {card.due_date && (
                     <span className={cn(
                       "flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border",
-                      isOverdue(card.due_date) 
-                        ? "bg-red-50 text-red-700 border-red-200" 
+                      isOverdue(card.due_date)
+                        ? "bg-red-50 text-red-700 border-red-200"
                         : "bg-slate-50 text-slate-600 border-slate-200"
                     )}>
                       <Calendar className="w-3 h-3" />
@@ -255,6 +257,33 @@ export function BoardView({
                     </span>
                   ))}
                 </div>
+
+                {/* Agent Assignment / Completion Badge */}
+                {(card.assigned_agent || card.completed_by_agent) && (
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/50">
+                    {card.assigned_agent && (
+                      <div className="flex items-center gap-1.5">
+                        <div className={cn(
+                          "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold",
+                          "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
+                        )}>
+                          <Bot className="w-3 h-3" />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground font-medium">
+                          {card.assigned_agent}
+                        </span>
+                      </div>
+                    )}
+                    {card.is_completed && card.completed_by_agent && (
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3 h-3 text-green-600" />
+                        <span className="text-[10px] text-green-600 font-medium">
+                          by {card.completed_by_agent}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
 
