@@ -312,6 +312,7 @@ async function main() {
         switch (taskConfig.type) {
         case 'morning_briefing': await supervisorService.runDailyBriefing('Morning Kickoff'); return { success: true };
         case 'evening_wrapup': await supervisorService.runDailyBriefing('Evening Wrap-up'); return { success: true };
+        case 'health_check': return { success: true }; // Health check runs internally via serverMonitor
         default: throw new Error(`Unknown supervisor task: ${taskConfig.type}`);
         }
       });
