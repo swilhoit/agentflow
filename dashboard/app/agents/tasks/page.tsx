@@ -53,9 +53,9 @@ export default async function RecurringTasksPage() {
   const agentStatsMap = new Map(agentNames.map((name, i) => [name, agentStatsArray[i]]));
 
   const taskStatsArray = await Promise.all(
-    allTasks.map(task => db_queries_agents.getTaskExecutionStats(task.id))
+    allTasks.map((task: any) => db_queries_agents.getTaskExecutionStats(task.id))
   );
-  const taskStatsMap = new Map(allTasks.map((task, i) => [task.id, taskStatsArray[i]]));
+  const taskStatsMap = new Map(allTasks.map((task: any, i: number) => [task.id, taskStatsArray[i]]));
 
   return (
     <DashboardLayout>
