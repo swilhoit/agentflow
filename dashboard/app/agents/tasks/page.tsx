@@ -145,7 +145,7 @@ export default async function RecurringTasksPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {tasksNeedingAttention.map((task) => (
+              {tasksNeedingAttention.map((task: any) => (
                 <div key={task.id} className="p-4 rounded-lg border border-destructive/30 bg-background">
                   <div className="flex justify-between items-start mb-2">
                     <div>
