@@ -34,3 +34,4 @@
 ## Summary
 The "Recurring Tasks" module is currently empty and needs data population to be useful. The "Project Management" module works but feels like a low-fidelity wireframe. Both need polish to match the quality of the "Finance" dashboard.
 
+

@@ -70,3 +70,4 @@ CREATE POLICY "Service role full access agent_configs" ON public.agent_configs F
 CREATE POLICY "Service role full access recurring_tasks" ON public.recurring_tasks FOR ALL USING (true);
 CREATE POLICY "Service role full access task_executions" ON public.task_executions FOR ALL USING (true);
 
+
