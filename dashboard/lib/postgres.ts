@@ -24,7 +24,13 @@ export function getPool(): Pool {
 }
 
 export async function query(sql: string, params?: any[]): Promise<any> {
-  const pool = getPool();
-  const result = await pool.query(sql, params);
-  return result;
+  try {
+    const pool = getPool();
+    const result = await pool.query(sql, params);
+    return result;
+  } catch (error) {
+    console.error('PostgreSQL query error:', error);
+    // Return empty result to avoid crashing the page
+    return { rows: [], rowCount: 0 };
+  }
 }
