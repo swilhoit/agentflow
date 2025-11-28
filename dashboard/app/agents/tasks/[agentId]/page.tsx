@@ -79,13 +79,13 @@ export default async function AgentTasksDetailPage({ params }: PageProps) {
   const taskExecutionsArray = await Promise.all(
     tasks.map((task: any) => db_queries_agents.getTaskExecutions(task.id, 20))
   );
-  const taskExecutionsMap = new Map(tasks.map((task: any, i: number) => [task.id, taskExecutionsArray[i]]));
+  const taskExecutionsMap = new Map<string, any[]>(tasks.map((task: any, i: number) => [task.id, taskExecutionsArray[i]]));
 
   // Fetch execution stats for each task
   const taskStatsArray = await Promise.all(
     tasks.map((task: any) => db_queries_agents.getTaskExecutionStats(task.id))
   );
-  const taskStatsMap = new Map(tasks.map((task: any, i: number) => [task.id, taskStatsArray[i]]));
+  const taskStatsMap = new Map<string, any>(tasks.map((task: any, i: number) => [task.id, taskStatsArray[i]]));
 
   const successRate = agentStats.totalRuns > 0
     ? Math.round((agentStats.successfulRuns / agentStats.totalRuns) * 100)
