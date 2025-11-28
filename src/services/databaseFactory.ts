@@ -108,32 +108,64 @@ export function getAgentFlowDatabase(): PostgresDatabaseService | null {
  */
 function createPostgresWrapper(db: PostgresDatabaseService): IDatabase {
   return {
-    async saveMarketData(): Promise<number> {
-      logger.warn('Market data storage: implement in PostgresDatabaseService if needed');
-      return 0;
+    async saveMarketData(data: {
+      symbol: string;
+      name: string;
+      price: number;
+      changeAmount: number;
+      changePercent: number;
+      volume?: number;
+      marketCap?: number;
+      performance30d?: number;
+      performance90d?: number;
+      performance365d?: number;
+      date: string;
+    }): Promise<number> {
+      return db.saveMarketData(data);
     },
-    async saveMarketNews(): Promise<number | null> {
-      logger.warn('Market news storage: implement in PostgresDatabaseService if needed');
-      return null;
+    async saveMarketNews(news: {
+      articleId: number;
+      symbol: string;
+      headline: string;
+      summary: string;
+      source: string;
+      url: string;
+      publishedAt: Date;
+      category?: string;
+      sentiment?: string;
+      isSignificant?: boolean;
+    }): Promise<number | null> {
+      return db.saveMarketNews(news);
     },
-    async saveWeeklyAnalysis(): Promise<number> {
-      logger.warn('Weekly analysis storage: implement in PostgresDatabaseService if needed');
-      return 0;
+    async saveWeeklyAnalysis(analysis: {
+      weekStart: string;
+      weekEnd: string;
+      analysisType: 'thesis' | 'performance' | 'news';
+      title: string;
+      summary: string;
+      detailedAnalysis: string;
+      keyEvents?: string;
+      recommendations?: string;
+      metadata?: string;
+    }): Promise<number> {
+      return db.saveWeeklyAnalysis(analysis);
     },
-    async getMarketDataByDateRange(): Promise<any[]> {
-      return [];
+    async getMarketDataByDateRange(startDate: string, endDate: string): Promise<any[]> {
+      return db.getMarketDataByDateRange(startDate, endDate);
     },
-    async getMarketNewsByDateRange(): Promise<any[]> {
-      return [];
+    async getMarketNewsByDateRange(startDate: string, endDate: string): Promise<any[]> {
+      return db.getMarketNewsByDateRange(startDate, endDate);
     },
-    async getLatestWeeklyAnalysis(): Promise<any | null> {
-      return null;
+    async getLatestWeeklyAnalysis(analysisType?: 'thesis' | 'performance' | 'news'): Promise<any | null> {
+      return db.getLatestWeeklyAnalysis(analysisType);
     },
     getAllActiveAgentTasks(): any[] {
+      // Sync wrapper - caller should use async version
       logger.warn('getAllActiveAgentTasks: Use async method from PostgresDatabaseService');
       return [];
     },
     getFailedTasks(): any[] {
+      // Sync wrapper - caller should use async version
       logger.warn('getFailedTasks: Use async method from PostgresDatabaseService');
       return [];
     },

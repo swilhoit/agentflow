@@ -951,6 +951,172 @@ export class PostgresDatabaseService {
   }
 
   // ===========================================
+  // MARKET DATA
+  // ===========================================
+
+  async saveMarketData(data: {
+    symbol: string;
+    name: string;
+    price: number;
+    changeAmount: number;
+    changePercent: number;
+    volume?: number;
+    marketCap?: number;
+    performance30d?: number;
+    performance90d?: number;
+    performance365d?: number;
+    date: string;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO market_data (symbol, name, price, change_amount, change_percent, performance_30d, performance_90d, performance_365d, market_cap, volume, date)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (symbol, date) DO UPDATE SET
+        name = EXCLUDED.name,
+        price = EXCLUDED.price,
+        change_amount = EXCLUDED.change_amount,
+        change_percent = EXCLUDED.change_percent,
+        performance_30d = EXCLUDED.performance_30d,
+        performance_90d = EXCLUDED.performance_90d,
+        performance_365d = EXCLUDED.performance_365d,
+        market_cap = EXCLUDED.market_cap,
+        volume = EXCLUDED.volume
+      RETURNING id
+    `, [
+      data.symbol,
+      data.name,
+      data.price,
+      data.changeAmount,
+      data.changePercent,
+      data.performance30d || null,
+      data.performance90d || null,
+      data.performance365d || null,
+      data.marketCap || null,
+      data.volume || null,
+      data.date
+    ]);
+    return result.rows[0]?.id || 0;
+  }
+
+  async getMarketDataByDateRange(startDate: string, endDate: string): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM market_data
+      WHERE date >= $1 AND date <= $2
+      ORDER BY date DESC, symbol ASC
+    `, [startDate, endDate]);
+    return result.rows;
+  }
+
+  async getLatestMarketData(): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM market_data
+      WHERE date = (SELECT MAX(date) FROM market_data)
+      ORDER BY symbol ASC
+    `);
+    return result.rows;
+  }
+
+  // ===========================================
+  // MARKET NEWS
+  // ===========================================
+
+  async saveMarketNews(news: {
+    articleId?: number;
+    symbol: string;
+    headline: string;
+    summary: string;
+    source: string;
+    url: string;
+    publishedAt: Date;
+    category?: string;
+    sentiment?: string;
+    isSignificant?: boolean;
+  }): Promise<number | null> {
+    const result = await this.pool.query(`
+      INSERT INTO market_news (symbol, headline, summary, source, url, published_at, sentiment, is_significant)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id
+    `, [
+      news.symbol,
+      news.headline,
+      news.summary,
+      news.source,
+      news.url,
+      news.publishedAt,
+      news.sentiment || null,
+      news.isSignificant || false
+    ]);
+    return result.rows[0]?.id || null;
+  }
+
+  async getMarketNewsByDateRange(startDate: string, endDate: string): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM market_news
+      WHERE published_at >= $1 AND published_at <= $2
+      ORDER BY published_at DESC
+    `, [startDate, endDate]);
+    return result.rows;
+  }
+
+  async getSignificantNews(limit: number = 10): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM market_news
+      WHERE is_significant = true
+      ORDER BY published_at DESC
+      LIMIT $1
+    `, [limit]);
+    return result.rows;
+  }
+
+  // ===========================================
+  // WEEKLY ANALYSIS
+  // ===========================================
+
+  async saveWeeklyAnalysis(analysis: {
+    weekStart: string;
+    weekEnd: string;
+    analysisType: 'thesis' | 'performance' | 'news';
+    title: string;
+    summary: string;
+    detailedAnalysis: string;
+    keyEvents?: string;
+    recommendations?: string;
+    metadata?: string;
+  }): Promise<number> {
+    const result = await this.pool.query(`
+      INSERT INTO weekly_analysis (week_start, week_end, analysis_type, title, executive_summary, detailed_analysis, recommendations)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id
+    `, [
+      analysis.weekStart,
+      analysis.weekEnd,
+      analysis.analysisType,
+      analysis.title,
+      analysis.summary,
+      analysis.detailedAnalysis,
+      analysis.recommendations || null
+    ]);
+    return result.rows[0]?.id || 0;
+  }
+
+  async getLatestWeeklyAnalysis(analysisType?: 'thesis' | 'performance' | 'news'): Promise<any | null> {
+    let query = `
+      SELECT * FROM weekly_analysis
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (analysisType) {
+      query += ` AND analysis_type = $1`;
+      params.push(analysisType);
+    }
+
+    query += ` ORDER BY week_start DESC LIMIT 1`;
+
+    const result = await this.pool.query(query, params);
+    return result.rows[0] || null;
+  }
+
+  // ===========================================
   // UTILITY
   // ===========================================
 

@@ -147,7 +147,7 @@ export class AgentManagerService {
     ];
 
     try {
-      for (const agent of agents) {
+    for (const agent of agents) {
         await db.upsertAgentConfig({
           ...agent,
           config: JSON.stringify({}),
@@ -258,13 +258,13 @@ export class AgentManagerService {
     const task = tasks.find(t => t.id === taskId);
     
     if (task) {
-      task.isEnabled = isEnabled;
+        task.isEnabled = isEnabled;
       await db.upsertRecurringTask(task);
       
-      if (isEnabled) {
-        this.scheduleTask(task);
-      } else {
-        this.unscheduleTask(taskId);
+        if (isEnabled) {
+          this.scheduleTask(task);
+        } else {
+          this.unscheduleTask(taskId);
       }
     }
   }
@@ -283,7 +283,7 @@ export class AgentManagerService {
   async updateTaskStats(taskId: number, success: boolean): Promise<void> {
     const db = getPostgresDatabase();
     await db.updateTaskLastRun(taskId, success);
-  }
+    }
 
   /**
    * Log task execution

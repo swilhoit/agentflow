@@ -110,7 +110,7 @@ async function main() {
     // Initialize DB & Trello
     let trelloService: TrelloService | undefined;
     if (config.trelloApiKey && config.trelloApiToken) {
-      trelloService = new TrelloService(config.trelloApiKey, config.trelloApiToken);
+        trelloService = new TrelloService(config.trelloApiKey, config.trelloApiToken);
     }
 
     // Orchestrator
@@ -121,11 +121,11 @@ async function main() {
     // 1. Main Bot (Realtime API)
     logger.info('🎙️ Starting Main Bot (Realtime API)...');
     const mainBot = new DiscordBotRealtime(config);
-    
+
     // Wire up Orchestrator -> Main Bot
-    orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
+      orchestratorServer.setDiscordMessageHandler(async (channelId: string, message: string) => {
       await mainBot.sendTextMessage(channelId, message);
-    });
+      });
     orchestratorServer.setDiscordClient(mainBot.getClient());
 
     await mainBot.start();
@@ -239,130 +239,130 @@ async function main() {
     servicesInitialized.push('Supervisor');
 
     const agentManager = new AgentManagerService(mainBot.getClient());
-    
+
     // Register Task Executors
     // Market Scheduler
-    let marketScheduler: MarketUpdateScheduler | undefined;
-    if (config.marketUpdatesEnabled && config.marketUpdatesGuildId) {
+      let marketScheduler: MarketUpdateScheduler | undefined;
+      if (config.marketUpdatesEnabled && config.marketUpdatesGuildId) {
       // Use Atlas client if available, otherwise Main
       const marketClient = atlasBot ? atlasBot.getClient() : mainBot.getClient();
-      marketScheduler = new MarketUpdateScheduler(
+          marketScheduler = new MarketUpdateScheduler(
         marketClient,
-        {
-          ...DEFAULT_SCHEDULE_CONFIG,
-          guildId: config.marketUpdatesGuildId,
-          dailyUpdateCron: config.marketUpdatesDailyCron!,
-          marketCloseCron: config.marketUpdatesCloseCron!,
-          newsCheckCron: config.marketUpdatesNewsCron!,
-          weeklyAnalysisCron: config.marketUpdatesWeeklyCron!,
-          timezone: config.marketUpdatesTimezone!,
-          enabled: true,
-          finnhubApiKey: config.finnhubApiKey,
-          anthropicApiKey: config.anthropicApiKey,
-          perplexityApiKey: config.perplexityApiKey
-        },
-        config.systemNotificationChannelId,
-        process.env.MARKET_UPDATES_CHANNEL_ID
-      );
-      marketScheduler.start();
+            {
+              ...DEFAULT_SCHEDULE_CONFIG,
+              guildId: config.marketUpdatesGuildId,
+              dailyUpdateCron: config.marketUpdatesDailyCron!,
+              marketCloseCron: config.marketUpdatesCloseCron!,
+              newsCheckCron: config.marketUpdatesNewsCron!,
+              weeklyAnalysisCron: config.marketUpdatesWeeklyCron!,
+              timezone: config.marketUpdatesTimezone!,
+              enabled: true,
+              finnhubApiKey: config.finnhubApiKey,
+              anthropicApiKey: config.anthropicApiKey,
+              perplexityApiKey: config.perplexityApiKey
+            },
+            config.systemNotificationChannelId,
+            process.env.MARKET_UPDATES_CHANNEL_ID
+          );
+          marketScheduler.start();
       
-      agentManager.registerTaskExecutor('market-scheduler', async (task) => {
-        const taskConfig = task.config ? JSON.parse(task.config) : {};
-        switch (taskConfig.type) {
+        agentManager.registerTaskExecutor('market-scheduler', async (task) => {
+          const taskConfig = task.config ? JSON.parse(task.config) : {};
+          switch (taskConfig.type) {
           case 'daily_update': await marketScheduler!.triggerDailyUpdate(); return { success: true };
           case 'market_close': await marketScheduler!.triggerMarketCloseSummary(); return { success: true };
           case 'news_check': await marketScheduler!.triggerNewsCheck(); return { success: true };
           case 'weekly_analysis': await marketScheduler!.triggerWeeklyAnalysis(); return { success: true };
           default: throw new Error(`Unknown market task: ${taskConfig.type}`);
-        }
-      });
+          }
+        });
       servicesInitialized.push('Market Scheduler');
-    }
+      }
 
     // Supervisor Tasks
-    agentManager.registerTaskExecutor('supervisor', async (task) => {
-      const taskConfig = task.config ? JSON.parse(task.config) : {};
-      switch (taskConfig.type) {
+      agentManager.registerTaskExecutor('supervisor', async (task) => {
+        const taskConfig = task.config ? JSON.parse(task.config) : {};
+        switch (taskConfig.type) {
         case 'morning_briefing': await supervisorService.runDailyBriefing('Morning Kickoff'); return { success: true };
         case 'evening_wrapup': await supervisorService.runDailyBriefing('Evening Wrap-up'); return { success: true };
         default: throw new Error(`Unknown supervisor task: ${taskConfig.type}`);
-      }
-    });
+        }
+      });
 
     // Mr. Krabs Tasks
     if (transactionSyncService) {
-      agentManager.registerTaskExecutor('mr-krabs', async (task) => {
-        const taskConfig = task.config ? JSON.parse(task.config) : {};
-        switch (taskConfig.type) {
-          case 'daily_budget': 
+          agentManager.registerTaskExecutor('mr-krabs', async (task) => {
+            const taskConfig = task.config ? JSON.parse(task.config) : {};
+            switch (taskConfig.type) {
+              case 'daily_budget':
             if (categoryBudgetService) await categoryBudgetService.sendDailyUpdate(); 
             return { success: true };
-          case 'weekly_summary': 
+              case 'weekly_summary':
             if (weeklyBudgetService) await weeklyBudgetService.sendWeeklySummary(); 
             return { success: true };
-          case 'transaction_sync': 
+              case 'transaction_sync':
             const result = await transactionSyncService!.triggerSync(); 
             return { success: result.success, stats: result.stats };
           default: throw new Error(`Unknown mr-krabs task: ${taskConfig.type}`);
-        }
-      });
+            }
+          });
     }
 
     // 5. Deployment Tracker
-    if (process.env.DEPLOYMENTS_CHANNEL_ID) {
+      if (process.env.DEPLOYMENTS_CHANNEL_ID) {
       const deploymentTracker = createDeploymentTrackerFromEnv();
-      if (deploymentTracker) {
+          if (deploymentTracker) {
         deploymentTracker.setDiscordClient(mainBot.getClient());
-        deploymentTracker.start();
-        
-        agentManager.registerTaskExecutor('deployment-check', async () => {
-          await deploymentTracker.triggerCheck();
-        });
+            deploymentTracker.start();
+            
+            agentManager.registerTaskExecutor('deployment-check', async () => {
+              await deploymentTracker.triggerCheck();
+            });
         servicesInitialized.push('Deployment Tracker');
+        }
       }
-    }
 
     // 6. Server Monitor
-    let serverMonitor: ServerMonitorService | null = null;
-    if (process.env.HETZNER_SERVER_IP) {
-      serverMonitor = getServerMonitor({
-        serverIp: process.env.HETZNER_SERVER_IP,
-        sshUser: process.env.HETZNER_SSH_USER || 'root',
+      let serverMonitor: ServerMonitorService | null = null;
+      if (process.env.HETZNER_SERVER_IP) {
+          serverMonitor = getServerMonitor({
+            serverIp: process.env.HETZNER_SERVER_IP,
+            sshUser: process.env.HETZNER_SSH_USER || 'root',
         checkIntervalMs: 5 * 60 * 1000,
-        discordChannelId: process.env.SERVER_MONITOR_CHANNEL_ID || process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
+            discordChannelId: process.env.SERVER_MONITOR_CHANNEL_ID || process.env.SYSTEM_NOTIFICATION_CHANNEL_ID,
         autoCleanup: { enabled: true, diskThresholdPercent: 80, dockerCacheThresholdGb: 15 }
-      });
+          });
       serverMonitor.setDiscordClient(mainBot.getClient());
-      serverMonitor.start();
+          serverMonitor.start();
       
       agentManager.registerTaskExecutor('server-health-check', async () => await serverMonitor!.forceCheck());
       agentManager.registerTaskExecutor('server-cleanup', async () => await serverMonitor!.cleanupDocker());
-      
+
       servicesInitialized.push('Server Monitor');
-    }
+      }
 
     // 7. Trading Scheduler
     if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
       const paperTradingChannelId = '1443627673501962300';
       const tradingScheduler = startTradingScheduler(mainBot.getClient(), {
-        tradingChannelId: paperTradingChannelId,
+              tradingChannelId: paperTradingChannelId,
         autoExecute: true
       });
       servicesInitialized.push('Trading Scheduler');
-    }
+      }
 
     // 8. Watchdog
-    const watchdog = getWatchdog({
+      const watchdog = getWatchdog({
       checkIntervalMs: 60000,
       memoryTrendWindowMs: 5 * 60 * 1000,
       memoryGrowthThreshold: 25,
-      botName: 'AgentFlow',
-      alertChannelId: config.systemNotificationChannelId,
-      alertWebhookUrl: process.env.WATCHDOG_WEBHOOK_URL,
+        botName: 'AgentFlow',
+        alertChannelId: config.systemNotificationChannelId,
+        alertWebhookUrl: process.env.WATCHDOG_WEBHOOK_URL,
       onCritical: async (reason) => logger.error(`[Watchdog] Critical: ${reason}`)
-    });
+      });
     watchdog.setDiscordClient(mainBot.getClient());
-    watchdog.start();
+      watchdog.start();
     servicesInitialized.push('Watchdog');
 
     // 9. Event Bus Wiring (The Boardroom)
