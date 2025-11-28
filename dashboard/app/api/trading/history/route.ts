@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
 import Alpaca from '@alpacahq/alpaca-trade-api';
 
-function getAlpacaClient(paper: boolean = true): Alpaca {
-  const credentials = paper ? {
+function getAlpacaCredentials(paper: boolean = true) {
+  return paper ? {
     apiKey: process.env.ALPACA_PAPER_API_KEY || process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_PAPER_SECRET_KEY || process.env.ALPACA_SECRET_KEY || '',
   } : {
     apiKey: process.env.ALPACA_LIVE_API_KEY || process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_LIVE_SECRET_KEY || process.env.ALPACA_SECRET_KEY || '',
   };
+}
+
+function getAlpacaClient(paper: boolean = true): Alpaca {
+  const credentials = getAlpacaCredentials(paper);
 
   return new Alpaca({
     keyId: credentials.apiKey,
@@ -24,6 +28,17 @@ export async function GET(request: Request) {
     const isPaper = searchParams.get('paper') !== 'false';
     const period = searchParams.get('period') || '1M';
     const timeframe = searchParams.get('timeframe') || '1D';
+
+    // Check if credentials are configured
+    const credentials = getAlpacaCredentials(isPaper);
+    if (!credentials.apiKey || !credentials.secretKey) {
+      return NextResponse.json({
+        error: 'Trading API not configured',
+        details: `Alpaca ${isPaper ? 'paper' : 'live'} trading credentials not set`,
+        configured: false,
+        isPaper
+      }, { status: 503 });
+    }
 
     const client = getAlpacaClient(isPaper);
 
