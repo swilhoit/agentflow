@@ -24,6 +24,9 @@ import { EventBus, EventType } from './services/eventBus';
 import { initializeGracefulShutdown, installShutdownHandlers, getGracefulShutdownHandler } from './services/gracefulShutdown';
 import { initializeTaskLifecycleManager, getTaskLifecycleManager } from './services/taskLifecycleManager';
 import { initializeWorkspaceRegistry, getWorkspaceRegistry } from './services/workspaceRegistry';
+// Calendar & VIX Trading Services
+import { getEconomicCalendarService } from './services/economicCalendarService';
+import { getVIXTradingBot } from './services/vixTradingBot';
 
 import { AtlasBot } from './atlas/atlasBot';
 import { AdvisorBot } from './advisor/advisorBot';
@@ -379,7 +382,58 @@ async function main() {
       servicesInitialized.push('Trading Scheduler');
       }
 
-    // 8. Watchdog
+    // 8. Economic Calendar & VIX Trading Bot
+    let calendarService: ReturnType<typeof getEconomicCalendarService> | undefined;
+    let vixTradingBot: ReturnType<typeof getVIXTradingBot> | undefined;
+
+    if (process.env.FINNHUB_API_KEY) {
+      logger.info('📅 Starting Economic Calendar Service...');
+      calendarService = getEconomicCalendarService();
+      calendarService.setDiscordClient(mainBot.getClient());
+      calendarService.startAutoSync(6); // Sync every 6 hours
+      servicesInitialized.push('Economic Calendar');
+
+      // Register calendar task executors
+      agentManager.registerTaskExecutor('calendar', async (task) => {
+        const taskConfig = task.config ? JSON.parse(task.config) : {};
+        switch (taskConfig.type) {
+          case 'sync':
+            await calendarService!.syncAllCalendars();
+            return { success: true };
+          case 'notify':
+            await calendarService!.checkAndNotifyUpcomingEvents();
+            return { success: true };
+          default:
+            throw new Error(`Unknown calendar task: ${taskConfig.type}`);
+        }
+      });
+    }
+
+    if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
+      logger.info('📊 Starting VIX Trading Bot...');
+      vixTradingBot = getVIXTradingBot();
+      vixTradingBot.setDiscordClient(mainBot.getClient());
+      vixTradingBot.startAutoAnalysis(30); // Analyze every 30 minutes
+      servicesInitialized.push('VIX Trading Bot');
+
+      // Register VIX trading task executors
+      agentManager.registerTaskExecutor('vix-trading', async (task) => {
+        const taskConfig = task.config ? JSON.parse(task.config) : {};
+        switch (taskConfig.type) {
+          case 'analyze':
+            const analysis = await vixTradingBot!.runAnalysis();
+            return { success: true, analysis };
+          case 'execute_signal':
+            if (!taskConfig.signalId) throw new Error('signalId required');
+            const position = await vixTradingBot!.executeSignal(taskConfig.signalId);
+            return { success: true, position };
+          default:
+            throw new Error(`Unknown vix-trading task: ${taskConfig.type}`);
+        }
+      });
+    }
+
+    // 9. Watchdog (was 8)
       const watchdog = getWatchdog({
       checkIntervalMs: 60000,
       memoryTrendWindowMs: 5 * 60 * 1000,
@@ -393,7 +447,7 @@ async function main() {
       watchdog.start();
     servicesInitialized.push('Watchdog');
 
-    // 9. Event Bus Wiring (The Boardroom)
+    // 10. Event Bus Wiring (The Boardroom)
     EventBus.getInstance().subscribeAll((event) => {
       logger.info(`🧠 [Boardroom] Detected ${event.type} from ${event.source} (${event.severity})`);
 
@@ -405,7 +459,7 @@ async function main() {
       }
     });
 
-    // 10. Periodic Workspace Cleanup (clean orphaned workspaces from failed tasks)
+    // 11. Periodic Workspace Cleanup (clean orphaned workspaces from failed tasks)
     const WORKSPACE_CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
     setInterval(async () => {
       try {
@@ -437,6 +491,8 @@ async function main() {
       watchdog.stop();
       if (serverMonitor) serverMonitor.stop();
       if (marketScheduler) marketScheduler.stop();
+      if (calendarService) calendarService.stopAutoSync();
+      if (vixTradingBot) vixTradingBot.stopAutoAnalysis();
       agentManager.stopAllTasks();
       supervisorService.stop();
     });

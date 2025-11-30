@@ -22,6 +22,8 @@ import {
   PieChart,
   Search,
   Command,
+  CalendarDays,
+  Gauge,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -75,6 +77,8 @@ const navigation: NavSection[] = [
       },
       { name: 'Loans', href: '/loans', icon: CreditCard },
       { name: 'Trading', href: '/trading', icon: LineChart },
+      { name: 'VIX Trading', href: '/vix-trading', icon: Gauge },
+      { name: 'Calendar', href: '/calendar', icon: CalendarDays },
       { name: 'Investments', href: '/investments', icon: TrendingUp },
       { name: 'Goals', href: '/goals', icon: Target },
       { name: 'Spending Analytics', href: '/analytics', icon: PieChart },
